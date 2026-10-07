@@ -33,6 +33,15 @@ Scenario 생성이 끝나면 다음을 immutable cohort identity로 저장한다
 사용자가 기존 Event 입력 cohort를 고정하라고 명시하면 이 목록은 이번 campaign뿐 아니라 후속 logic/config
 고도화에서도 immutable하다. catalog/binding 자체가 바뀌지 않는 한 새 Event·Group·Scenario를 만들지 않는다.
 
+사용자가 **기존 대비 Group 순증**과 생성 결과 재평가를 명시한 경우는 예외적으로 `same_logical_inputs/add-only`
+campaign으로 분리한다. 동일 ordered Event 입력을 다시 사용하되 기존 Group을 soft/hard delete하거나 수정하지
+않고, 새 Group/Scenario ID가 기존 ID와 disjoint인지 증명한다. 이는 동일 저장 ID Before/After 비교가 아니므로
+두 결과를 섞지 않는다.
+
+단, 사용자가 **Event cohort 확장부터**라고 명시하면 이 예외도 적용하지 않는다. 이 경우
+`expanded-event-cohort-campaign.md`로 전환해 baseline과 비중복인 Event를 먼저 고정한다. 동일 Event 재생성
+증적은 최종 expanded-cohort 평가에 포함하지 않는다.
+
 ## 2. Before read-back과 실행 후보
 
 먼저 read-only evidence를 만들고 그 뒤에 proposal을 실행한다. 실행 후보는 다음을 모두 만족해야 한다.
@@ -49,6 +58,47 @@ Scenario 생성이 끝나면 다음을 immutable cohort identity로 저장한다
 
 Before 실행은 `run_proposal_only.py`로 명시 Group/Scenario만 실행한다. confirmation·callback·outer retry는
 사용하지 않는다. 각 Scenario의 DB read-back을 마친 뒤 전체 cohort evidence를 다시 생성한다.
+
+### 대표 Scenario 3개/Group 모드
+
+Group마다 일부 Scenario만 제안하는 요청은 전체 Scenario를 먼저 read-only preflight한 뒤 정확히 3개를 고른다.
+
+1. lifecycle/catalog/runtime candidate와 uncovered guard를 통과한 Scenario를 우선 후보로 둔다. Group 전체에
+   실행 후보가 3개보다 적으면 대표성 기준으로 3개 ID는 유지하되 비실행 Scenario를 `preflight coverage limit`로
+   표시하고 LLM/write를 호출하지 않는다.
+2. baseline, floor, ceiling이 있으면 각각 포함하는 조합을 우선한다. baseline이 floor/ceiling과 같은 Scenario면
+   mixed 또는 중앙 pressure Scenario를 세 번째 대표로 보완한다.
+3. 대표성 조건을 만족하는 조합 사이에서는 runtime canonical Parameter type set 완전 동일, pairwise Jaccard,
+   공통 Parameter 수, pressure/cell 다양성 순으로 결정한다.
+4. 선정된 3개 ID를 immutable plan에 저장하고 Proposal은 `run_proposal_only.py --scenario-id ... --execute`로
+   Scenario별 최대 1회만 수행한다.
+
+선정과 결과 평가는 다음 도구를 사용한다.
+
+```bash
+python tests/manual/model_parameter_agent/evaluate_representative_trios.py select \
+  --scenario-campaign-summary <campaign_summary.json> \
+  --baseline-scenario-summary <baseline_campaign_summary.json> \
+  --preflight-evidence <all_scenarios_read_only.json> \
+  --output <representative_trio_plan.json>
+
+python tests/manual/model_parameter_agent/evaluate_representative_trios.py freeze \
+  --plan <representative_trio_plan.json> \
+  --output tests/fixtures/model_parameter_agent/<dataset>.json
+
+python tests/manual/model_parameter_agent/evaluate_representative_trios.py evaluate \
+  --plan <representative_trio_plan.json> \
+  --execution-evidence <proposal_execution_part_1.json> \
+  --execution-evidence <proposal_execution_part_2.json> \
+  --output-json <quality_report.json> \
+  --output-markdown <quality_report.md> \
+  --testset-input tests/fixtures/model_parameter_agent/<dataset>.json
+```
+
+`--execution-evidence`는 비중복 실행 조각에 반복할 수 있다. release identity가 다르거나 동일 Scenario attempt가
+둘 이상이면 evaluator가 실패한다. 재사용 fixture는 Proposal 실행 전에 생성하고 덮어쓰지 않는다. expanded campaign은
+20 Group·60 Scenario, 기존 Event 풀 재생성 campaign은 40 Group·120 대표 Scenario의 ID/역할/cell/preflight
+Parameter set과 release contract를 고정하며 실제 LLM 결과는 별도 report의 관측값으로 둔다.
 
 ## 3. 진단과 허용되는 개선
 
@@ -107,6 +157,20 @@ python .claude/skills/model-parameter-multi-event-quality/scripts/compare_same_c
 별도로 계산하고, 신규 covered·잔여 uncovered·regression·Parameter별 proposal delta를 기록한다. 기존 output은
 덮어쓰지 않는다. cohort mismatch 또는 covered regression은 non-zero exit다.
 
+대표 3개/Group 모드에서는 아래 KPI를 추가한다.
+
+- `triple success`: Group의 대표 3개 Proposal이 모두 성공한 비율
+- `Parameter type consistency`: triple-success Group 중 세 canonical Parameter name set이 동일한 비율
+- `value signature differentiation`: type-consistent Group 중 대표 3개의 전체 proposedValue signature가 서로 모두
+  다른 비율. Parameter별 proposed value를 순서 독립 multiset으로 정규화해 cell 배열 순서만 바뀐 경우는 값 변별로
+  세지 않는다.
+- `exact-slot differentiation`: Parameter name과 모든 model 좌표가 세 Scenario에서 동일한 cell에 한정한 값 차이
+- 대표성, scenario/group identity, `mi_event_id=NULL`, callback/confirmation 미호출, retry/token/latency
+- preflight→Proposal 전환율, semantic-empty율, 실패 attempt의 무저장 원자성
+
+type/value 비교는 triple-success Group만 분모로 사용한다. exact slot 교집합이 없는 경우는 실패가 아니라
+`not comparable`로 별도 집계하며, Proposal 실패와 semantic abstain은 전체 Proposal coverage에 남긴다.
+
 ## 6. 테스트·config·fallback
 
 수정 범위의 focused regression과 owning Agent suite를 먼저 실행한 뒤 release suite를 실행한다. 최소 증적은 다음이다.
@@ -122,8 +186,12 @@ python .claude/skills/model-parameter-multi-event-quality/scripts/compare_same_c
 - proposal/API/DB 비교 정밀도
 - capability/workbook/canonical 및 local/Kubernetes config parity
 
-원격 Object Storage가 실패해 packaged fallback을 썼다면 release ID, capability SHA, workbook SHA, semantic schema와
-resource fingerprint가 현재 승인 계약과 일치하는지 확인한다. 다른 release의 packaged resource를 교차 사용하지 않는다.
+활성 MI Base의 원격 Object Storage가 실패하면 기본값은 같은 case/run/linked-file identity와 workbook
+SHA/contract를 재검증한 `verified_cache`다. 사용자가 명시적으로 configured fallback을 승인한 campaign에만
+`active_case_unavailable_mode=configured_fallback`을 적용하며, current remote identity를 관측하기 전의 client/head
+가용성 실패로 한정한다. linked input 불완전 또는 remote metadata 관측 뒤 download/hash/contract 실패에는
+fallback하지 않는다. configured fallback은 release ID, capability SHA, workbook SHA, semantic schema와 resource
+fingerprint를 검증하고 policy/source를 evidence와 보고서에 남긴다.
 
 ## 7. 결과 보고
 
@@ -138,6 +206,7 @@ resource fingerprint가 현재 승인 계약과 일치하는지 확인한다. �
 7. 신규 성공과 잔여 abstain의 Scenario별 이유
 8. signpost·price-only·inactive·no-binding·no-coordinate 등 의도적 skip
 9. 테스트, config double-check, DB read-back, tag/image/deployment 상태
-10. non-blocking 운영 경고와 packaged fallback 판정
+10. non-blocking 운영 경고와 verified/configured fallback 판정
+11. 재사용 fixture 경로, 고정 cohort contract와 관측 baseline 구분
 
 보고서에는 비밀값, 전체 prompt 또는 DB 자격증명을 넣지 않는다.

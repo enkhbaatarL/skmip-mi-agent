@@ -25,6 +25,7 @@ from apps.agents.model_parameter_agent.utils.resource_runtime import (
     get_model_parameter_resource_paths,
 )
 from apps.agents.model_parameter_agent.utils.workbook_contract import (
+    PACKAGE_RESOURCE_DIR,
     ModelParameterWorkbookContract,
     load_workbook_contract,
     workbook_sha256,
@@ -32,9 +33,14 @@ from apps.agents.model_parameter_agent.utils.workbook_contract import (
 from apps.agents.model_parameter_agent.utils.workbook_reference import (
     extract_workbook_references,
 )
-from apps.common.configs.config import ModelParameterResourceStorageConfig, get_settings
+from apps.common.configs.config import (
+    ModelParameterMiBaseFallbackConfig,
+    ModelParameterResourceStorageConfig,
+    get_settings,
+)
 from apps.common.exceptions.custom import MIBaseError
 from apps.common.logging.logger_config import logger
+from apps.common.values.error_codes import ErrorCode
 from apps.connectors.object_storage import DownloadedObject, ObjectMetadata, S3ObjectStorageClient
 from apps.persistence.mi_base.schema import MiBaseFilePayload, MiBaseSnapshot
 
@@ -44,6 +50,7 @@ RUN_RELATION_CODES = ("SCNRCASEH", "SCNRCASEHI", "SCNRCASEHTF")
 _ROLE_PATTERN = re.compile(r"\b(demand|supply|trade)\s+model[_ ]input\b", re.IGNORECASE)
 _COMPLETE_FILE_NAME = ".complete.json"
 _LOCK_FILE_NAME = ".mi-base.lock"
+_CACHE_MARKER_SCHEMA_VERSION = 1
 
 
 class ObjectStorageReader(Protocol):
@@ -84,7 +91,7 @@ class _SelectedInput:
 
 @dataclass(frozen=True, slots=True)
 class MiBaseResourceSelection:
-    source: Literal["mi_base", "configured_fallback"]
+    source: Literal["mi_base", "verified_cache", "configured_fallback"]
     basecase_dir: Path
     workbook_resource_root: Path
     workbook_contract: ModelParameterWorkbookContract
@@ -167,7 +174,10 @@ def _fallback_selection(
     return MiBaseResourceSelection(
         source="configured_fallback",
         basecase_dir=resource_paths.basecase_dir,
-        workbook_resource_root=resource_paths.root,
+        # The configured release root owns the legacy Basecase/LUT runtime,
+        # while versioned v4 workbooks are immutable package artifacts.  A
+        # remote or packaged wrapper release does not contain basecase_v4/.
+        workbook_resource_root=PACKAGE_RESOURCE_DIR,
         workbook_contract=contract,
         case_id=snapshot.case_id if snapshot is not None else None,
         run_seq=snapshot.run_seq if snapshot is not None else None,
@@ -269,6 +279,38 @@ def _metadata_fingerprint(
     ).hexdigest()
 
 
+def _linked_file_fingerprint(
+    snapshot: MiBaseSnapshot,
+    inputs: tuple[_SelectedInput, ...],
+) -> str:
+    """Build an Object-Storage-independent identity for the selected input set."""
+    payload = {
+        "case_id": snapshot.case_id,
+        "last_run_id": snapshot.last_run_id,
+        "run_seq": snapshot.run_seq,
+        "files": [
+            {
+                "role": item.role,
+                "file_no": item.file.file_no,
+                "file_rel_obj_spt_cd": item.file.file_rel_obj_spt_cd,
+                "file_rel_obj_dstg_no": item.file.file_rel_obj_dstg_no,
+                "org_file_nm": item.file.org_file_nm,
+                "strg_file_nm": item.file.strg_file_nm,
+                "strg_path_nm": item.file.strg_path_nm,
+                "file_size": item.file.file_size,
+                "filex_nm": item.file.filex_nm,
+                "mime_type_nm": item.file.mime_type_nm,
+                "bucket": item.location.bucket,
+                "object_key": item.location.object_key,
+            }
+            for item in inputs
+        ],
+    }
+    return hashlib.sha256(
+        json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8"),
+    ).hexdigest()
+
+
 def _contract_with_hashes(
     contract: ModelParameterWorkbookContract,
     *,
@@ -348,22 +390,61 @@ async def _head_inputs(
     return metadata
 
 
+def _matching_cache_payload(
+    *,
+    marker: Path,
+    snapshot: MiBaseSnapshot,
+    linked_file_fingerprint: str,
+    remote_metadata_fingerprint: str | None,
+) -> dict[str, object] | None:
+    try:
+        payload = json.loads(marker.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(payload, dict) or payload.get("schema_version") != _CACHE_MARKER_SCHEMA_VERSION:
+        return None
+    if payload.get("case_id") != snapshot.case_id or payload.get("run_seq") != snapshot.run_seq:
+        return None
+    if payload.get("last_run_id") != snapshot.last_run_id:
+        return None
+    if payload.get("linked_file_fingerprint") != linked_file_fingerprint:
+        return None
+    if (
+        remote_metadata_fingerprint is not None
+        and payload.get("remote_metadata_fingerprint") != remote_metadata_fingerprint
+    ):
+        return None
+    return payload
+
+
 def _cached_selection(
     *,
     release_root: Path,
     snapshot: MiBaseSnapshot,
     configured_paths: ModelParameterResourcePaths,
+    linked_file_fingerprint: str,
+    remote_metadata_fingerprint: str | None,
+    source: Literal["mi_base", "verified_cache"],
+    fallback_reason: str | None = None,
 ) -> MiBaseResourceSelection | None:
     marker = release_root / _COMPLETE_FILE_NAME
     if not marker.is_file():
         return None
+    payload = _matching_cache_payload(
+        marker=marker,
+        snapshot=snapshot,
+        linked_file_fingerprint=linked_file_fingerprint,
+        remote_metadata_fingerprint=remote_metadata_fingerprint,
+    )
+    if payload is None:
+        return None
     try:
-        payload = json.loads(marker.read_text(encoding="utf-8"))
         hashes = payload["workbook_sha256"]
-        if not isinstance(hashes, dict):
+        contract_template = configured_paths.workbook_contract or load_workbook_contract()
+        if not isinstance(hashes, dict) or set(hashes) != set(contract_template.workbooks):
             return None
         contract = _contract_with_hashes(
-            configured_paths.workbook_contract or load_workbook_contract(),
+            contract_template,
             hashes={str(key): str(value) for key, value in hashes.items()},
         )
         for artifact in contract.workbooks.values():
@@ -378,14 +459,54 @@ def _cached_selection(
     except (KeyError, OSError, ValueError, MIBaseError):
         return None
     return MiBaseResourceSelection(
-        source="mi_base",
+        source=source,
         basecase_dir=release_root / "basecase",
         workbook_resource_root=release_root,
         workbook_contract=contract,
         case_id=snapshot.case_id,
         run_seq=snapshot.run_seq,
         linked_file_counts=_linked_file_counts(snapshot),
+        fallback_reason=fallback_reason,
     )
+
+
+def _verified_cached_selection(
+    *,
+    releases_root: Path,
+    snapshot: MiBaseSnapshot,
+    configured_paths: ModelParameterResourcePaths,
+    linked_file_fingerprint: str,
+    fallback_reason: str,
+) -> MiBaseResourceSelection | None:
+    candidates: list[MiBaseResourceSelection] = []
+    for release_root in sorted(releases_root.glob(f"case-{snapshot.case_id}-*")):
+        candidate = _cached_selection(
+            release_root=release_root,
+            snapshot=snapshot,
+            configured_paths=configured_paths,
+            linked_file_fingerprint=linked_file_fingerprint,
+            remote_metadata_fingerprint=None,
+            source="verified_cache",
+            fallback_reason=fallback_reason,
+        )
+        if candidate is not None:
+            candidates.append(candidate)
+    if not candidates:
+        return None
+
+    workbook_hash_sets = {
+        tuple(
+            sorted((role, artifact.sha256) for role, artifact in candidate.workbook_contract.workbooks.items()),
+        )
+        for candidate in candidates
+    }
+    if len(workbook_hash_sets) != 1:
+        message = (
+            "Multiple MI Base cache contents match the same linked-file identity: "
+            f"case_id={snapshot.case_id} run_seq={snapshot.run_seq}"
+        )
+        raise MiBaseResourceFallbackError(message)
+    return candidates[-1]
 
 
 async def _download_release(
@@ -399,6 +520,8 @@ async def _download_release(
     storage: ModelParameterResourceStorageConfig,
     client: ObjectStorageReader,
     deadline: float,
+    linked_file_fingerprint: str,
+    remote_metadata_fingerprint: str,
 ) -> MiBaseResourceSelection:
     staging_root = cache_root / f"staging-{uuid.uuid4().hex}"
     contract = configured_paths.workbook_contract or load_workbook_contract()
@@ -448,8 +571,12 @@ async def _download_release(
         marker.write_text(
             json.dumps(
                 {
+                    "schema_version": _CACHE_MARKER_SCHEMA_VERSION,
                     "case_id": snapshot.case_id,
+                    "last_run_id": snapshot.last_run_id,
                     "run_seq": snapshot.run_seq,
+                    "linked_file_fingerprint": linked_file_fingerprint,
+                    "remote_metadata_fingerprint": remote_metadata_fingerprint,
                     "workbook_sha256": workbook_hashes,
                 },
                 sort_keys=True,
@@ -473,29 +600,68 @@ async def _download_release(
         raise
 
 
-async def _prepare_mi_base_release(
+async def _prepare_mi_base_release(  # noqa: C901
     snapshot: MiBaseSnapshot,
     *,
     configured_paths: ModelParameterResourcePaths,
     storage: ModelParameterResourceStorageConfig,
+    fallback_policy: ModelParameterMiBaseFallbackConfig,
     client_factory: Callable[[ModelParameterResourceStorageConfig], ObjectStorageReader],
 ) -> MiBaseResourceSelection:
-    if not storage.enabled:
-        message = "Object Storage resource loading is disabled"
-        raise MiBaseResourceFallbackError(message)
     inputs = _classify_inputs(snapshot, bucket=storage.bucket)
     cache_root, releases_root = await asyncio.to_thread(
         _prepare_cache_directories,
         storage.local_root,
     )
+    linked_fingerprint = _linked_file_fingerprint(snapshot, inputs)
+
+    async def unavailable_fallback(reason: str) -> MiBaseResourceSelection | None:
+        mode = fallback_policy.active_case_unavailable_mode
+        if mode == "configured_fallback":
+            return _fallback_selection(
+                snapshot=snapshot,
+                reason=reason,
+                resource_paths=configured_paths,
+            )
+        if mode != "verified_cache":
+            return None
+        async with _ProcessFileLock(
+            cache_root / _LOCK_FILE_NAME,
+            timeout_seconds=storage.lock_timeout_seconds,
+        ):
+            return _verified_cached_selection(
+                releases_root=releases_root,
+                snapshot=snapshot,
+                configured_paths=configured_paths,
+                linked_file_fingerprint=linked_fingerprint,
+                fallback_reason=reason,
+            )
+
+    if not storage.enabled:
+        message = "Object Storage resource loading is disabled"
+        fallback = await unavailable_fallback(message)
+        if fallback is not None:
+            return fallback
+        raise MiBaseResourceFallbackError(message)
+
     deadline = time.monotonic() + storage.bootstrap_timeout_seconds
-    client = client_factory(storage)
+    try:
+        client = client_factory(storage)
+    except (MiBaseResourceFallbackError, MIBaseError, OSError, ValueError) as exc:
+        reason = _safe_reason(exc)
+        fallback = await unavailable_fallback(reason)
+        if fallback is not None:
+            return fallback
+        raise MiBaseResourceFallbackError(str(exc)) from exc
+
+    remote_identity_observed = False
     try:
         last_error: Exception | None = None
         for _attempt in range(1, storage.max_attempts + 1):
             try:
                 first_metadata = await _head_inputs(client, inputs)
                 fingerprint = _metadata_fingerprint(snapshot, inputs, first_metadata)
+                remote_identity_observed = True
                 release_root = releases_root / f"case-{snapshot.case_id}-{fingerprint[:16]}"
                 async with _ProcessFileLock(
                     cache_root / _LOCK_FILE_NAME,
@@ -505,6 +671,9 @@ async def _prepare_mi_base_release(
                         release_root=release_root,
                         snapshot=snapshot,
                         configured_paths=configured_paths,
+                        linked_file_fingerprint=linked_fingerprint,
+                        remote_metadata_fingerprint=fingerprint,
+                        source="mi_base",
                     )
                     if cached is not None:
                         return cached
@@ -520,6 +689,8 @@ async def _prepare_mi_base_release(
                         storage=storage,
                         client=client,
                         deadline=deadline,
+                        linked_file_fingerprint=linked_fingerprint,
+                        remote_metadata_fingerprint=fingerprint,
                     )
             except MiBaseResourceFallbackError:
                 raise
@@ -528,6 +699,12 @@ async def _prepare_mi_base_release(
                 if time.monotonic() >= deadline:
                     break
         message = str(last_error or "MI Base resource preparation failed")
+        if not remote_identity_observed:
+            fallback = await unavailable_fallback(
+                _safe_reason(last_error or MiBaseResourceFallbackError(message)),
+            )
+            if fallback is not None:
+                return fallback
         raise MiBaseResourceFallbackError(message) from last_error
     finally:
         await client.close()
@@ -545,43 +722,83 @@ def _safe_reason(exc: Exception) -> str:
     return f"{type(exc).__name__}: {exc}"[:500]
 
 
+def mi_base_resource_identity(
+    selection: MiBaseResourceSelection,
+) -> dict[str, object]:
+    """Return a path-free identity suitable for graph and campaign evidence."""
+    return {
+        "source": selection.source,
+        "case_id": selection.case_id,
+        "run_seq": selection.run_seq,
+        "workbook_sha256": {
+            role: selection.workbook_contract.workbooks[role].sha256
+            for role in sorted(selection.workbook_contract.workbooks)
+        },
+    }
+
+
 async def resolve_mi_base_resources(
     snapshot: MiBaseSnapshot | None,
     *,
     client_factory: Callable[[ModelParameterResourceStorageConfig], ObjectStorageReader] = _create_client,
 ) -> MiBaseResourceSelection:
-    """Resolve request-local MI Base input files with configured-resource fallback."""
+    """Resolve request-local MI Base inputs under the configured fallback boundary."""
     configured_paths = get_model_parameter_resource_paths()
+    settings = get_settings()
+    fallback_policy = settings.model_parameter_mi_base_fallback
     if snapshot is None:
-        return _fallback_selection(
-            snapshot=None,
-            reason="No active MI Base; using configured Basecase resources",
-            resource_paths=configured_paths,
+        if fallback_policy.no_active_case_mode == "configured_fallback":
+            return _fallback_selection(
+                snapshot=None,
+                reason="No active MI Base; using explicitly enabled configured Basecase fallback",
+                resource_paths=configured_paths,
+            )
+        raise MIBaseError(
+            ErrorCode.DATA_RETRIEVAL_FAILED,
+            detail="No active MI Base is available for the model parameter proposal",
         )
     try:
         selection = await _prepare_mi_base_release(
             snapshot,
             configured_paths=configured_paths,
-            storage=get_settings().model_parameter_resource_storage,
+            storage=settings.model_parameter_resource_storage,
+            fallback_policy=fallback_policy,
             client_factory=client_factory,
         )
     except (MiBaseResourceFallbackError, MIBaseError, OSError, ValueError) as exc:
         reason = _safe_reason(exc)
-        logger.warning(
-            "[model-parameter] MI Base input fallback | case_id={} run_seq={} reason={}",
+        logger.error(
+            "[model-parameter] MI Base input unavailable | case_id={} run_seq={} reason={}",
             snapshot.case_id,
             snapshot.run_seq,
             reason,
         )
-        return _fallback_selection(
-            snapshot=snapshot,
-            reason=reason,
-            resource_paths=configured_paths,
+        raise MIBaseError(
+            ErrorCode.DATA_RETRIEVAL_FAILED,
+            detail=(
+                "Selected MI Base input workbooks are unavailable: "
+                f"case_id={snapshot.case_id}, run_seq={snapshot.run_seq}"
+            ),
+        ) from exc
+    if selection.source == "verified_cache":
+        logger.warning(
+            "[model-parameter] verified MI Base cache fallback active | case_id={} run_seq={} reason={}",
+            snapshot.case_id,
+            snapshot.run_seq,
+            selection.fallback_reason,
+        )
+    elif selection.source == "configured_fallback":
+        logger.warning(
+            "[model-parameter] configured Basecase fallback active | case_id={} run_seq={} reason={}",
+            snapshot.case_id,
+            snapshot.run_seq,
+            selection.fallback_reason,
         )
     logger.info(
-        "[model-parameter] MI Base inputs ready | case_id={} run_seq={} linked_file_counts={}",
+        "[model-parameter] MI Base inputs ready | case_id={} run_seq={} source={} linked_file_counts={}",
         snapshot.case_id,
         snapshot.run_seq,
+        selection.source,
         dict(selection.linked_file_counts),
     )
     return selection
@@ -591,5 +808,6 @@ __all__ = [
     "MI_BASE_RELATION_CODE",
     "RUN_RELATION_CODES",
     "MiBaseResourceSelection",
+    "mi_base_resource_identity",
     "resolve_mi_base_resources",
 ]

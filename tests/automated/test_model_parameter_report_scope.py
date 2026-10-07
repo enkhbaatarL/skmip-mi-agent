@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from copy import deepcopy
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import pytest
@@ -385,6 +386,12 @@ def test_evaluate_scenario_preserves_partial_trace_on_output_failure(
         knowledge_base_args.update(kwargs)
         return object()
 
+    async def fake_trace_resources(_raw_state: object) -> SimpleNamespace:
+        return SimpleNamespace(
+            workbook_contract=None,
+            workbook_resource_root=None,
+        )
+
     monkeypatch.setattr(proposal_evaluation, "ModelParameterService", FakeService)
     monkeypatch.setattr(
         proposal_evaluation,
@@ -399,8 +406,18 @@ def test_evaluate_scenario_preserves_partial_trace_on_output_failure(
     monkeypatch.setattr(proposal_evaluation, "RAW_GRAPH", FakeGraph())
     monkeypatch.setattr(
         proposal_evaluation,
+        "_resolve_trace_mi_base_resources",
+        fake_trace_resources,
+    )
+    monkeypatch.setattr(
+        proposal_evaluation,
+        "mi_base_resource_identity",
+        lambda _selection: {"case_id": None, "run_seq": None, "workbook_sha256": {}},
+    )
+    monkeypatch.setattr(
+        proposal_evaluation,
         "build_basecase_records",
-        lambda _kb, _candidates, _context: ([], []),
+        lambda _kb, _candidates, _context, **_kwargs: ([], []),
     )
     monkeypatch.setattr(proposal_evaluation, "to_output", raise_output_error)
 

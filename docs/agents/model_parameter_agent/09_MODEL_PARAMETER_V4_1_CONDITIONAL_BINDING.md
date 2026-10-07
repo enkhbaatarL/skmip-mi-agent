@@ -31,7 +31,9 @@ v4.1 Scenario Group/Scenario ID는 변경하지 않는다. 비교 코호트가 �
 `v4.1.2`는 v4.1.1의 catalog·binding·workbook 계약을 바꾸지 않고, 요청 접수 시점의 활성
 MI Base `case_id`를 proposal에 고정한다. `SCNRCASE` Demand·Supply·Trade 입력 3종만
 기준값 계산에 사용하고, 최신 `run_seq`에 연결된 `SCNRCASEH/HI/HTF`는 metadata만
-조회한다. 활성 Base 입력을 안전하게 준비하지 못하면 기존 설정 resource로 fallback한다.
+조회한다. 선택된 활성 Base의 Object Storage를 확인할 수 없을 때는 동일 case/run/file identity와
+workbook hash/contract를 검증한 cache만 허용하며, 없으면 다른 Basecase로 바꾸지 않고 실패한다.
+활성 Base 부재 시 기존 설정 resource 사용은 명시적 운영 설정에서만 허용하고 기본은 fail closed다.
 이 변경은 public API JSON을 늘리지 않으며 sibling mgmt v0037의 nullable
 `tmm_mi_model_param_proposal_m.mi_base_case_id`로 요청별 선택을 저장한다.
 

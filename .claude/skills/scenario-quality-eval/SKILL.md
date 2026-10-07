@@ -22,6 +22,25 @@ description: MI Scenario Group Agent의 create/validation/signpost sync 결과�
 
 기본 입력은 `local/output/sync_pipeline_api_test/<batch_id>/` 아래의 batch 증적이다.
 
+Event Type별 add-only 고정 코호트 또는 `expanded_event_cohort/add-only`처럼
+`tests/reports/scenario_group_agent/<campaign>/` 아래에 Group별
+`final_group.json`과 `campaign_summary.json`을 남기는 campaign은 표준 SQLite batch로 가장하지 않는다. 이 경우
+먼저 API/version/strategy/catalog full pin, completed stage, `parameterMappingReady`, Dimension 3~6개, Scenario 3개
+이상, baseline 정확히 1개, floor/ceiling 존재, cell 조합 고유성의 결정적 검사를 campaign 전체에 적용한다.
+확장 코호트는 추가로 expanded Event ID 20개 고유성, baseline Event ID와 비중복, add-only Group ID 순증과 기존
+Group 삭제 0을 hard gate로 검사한다. 동일 Event를 재생성한 오범위 campaign은 최종 평가 입력에서 제외한다.
+단, 사용자가 기존 Event 풀로 Scenario부터 재생성하라고 명시한
+`existing_event_pool/add-only-regenerated-scenarios` campaign은 오범위가 아니다. 이 경우 원본 ordered Event ID 40개
+exact 재사용, 신규 Group 40개 고유·원본 Group과 비중복, 원본 Group 40개 보존, 기존 삭제 0, v4/v4.1 catalog pin을
+hard gate로 검사하고 Event 비중복은 요구하지 않는다.
+후속 Model Parameter 대표 3개 평가는
+`tests/manual/model_parameter_agent/evaluate_representative_trios.py`의 selection plan에 이 결과를 함께 고정한다.
+사용자가 최종 평가 cohort 재사용을 요청하면 Proposal 전에 evaluator의 `freeze` 명령으로
+`tests/fixtures/model_parameter_agent/`에 고정 Group/Scenario selection과 release contract를 저장하고 덮어쓰지 않는다.
+LLM 결과는 fixture 밖의 변동 가능한 관측 결과로 분리한다.
+Agent Judge·mutation probe·signpost 평가를 생략하면 그 이유를 명시하고 표준 batch의 종합 품질 점수와 혼합하지
+않는다.
+
 - `selected_events.json`
 - create/validation/signpost/confirmation 단계별 callback JSON
 - 가능하면 `<mi_event_id>_event_detail.json`

@@ -85,6 +85,10 @@ model_parameter_resource_storage:
   bootstrap_timeout_seconds: 420
   lock_timeout_seconds: 500
 
+model_parameter_mi_base_fallback:
+  no_active_case_mode: fail
+  active_case_unavailable_mode: verified_cache
+
 model_parameter_resources:
   basecase:
     demand:

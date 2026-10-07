@@ -63,6 +63,7 @@ from apps.agents.model_parameter_agent.utils.lut.models import (
     SlotCatalog,
 )
 from apps.agents.model_parameter_agent.utils.mi_base_resources import (
+    mi_base_resource_identity,
     resolve_mi_base_resources,
 )
 from apps.agents.model_parameter_agent.utils.parameter_mapping import (
@@ -253,6 +254,199 @@ def _adjustment_debug_summary(
                 },
             )
     return summaries
+
+
+def _candidate_trace_summary(
+    candidates: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Return only the candidate identity needed for quality diagnosis."""
+    return [
+        {
+            key: candidate.get(key)
+            for key in (
+                "candidate_key",
+                "canonical_parameter_name",
+                "parameter_name",
+                "mapping_method",
+                "mapping_strategy",
+                "scenario_dimension_key",
+                "source_dimension_id",
+                "lever_code",
+                "binding_selection_mode",
+                "binding_role",
+            )
+            if candidate.get(key) is not None
+        }
+        for candidate in candidates
+    ]
+
+
+def _routing_task_trace_summary(
+    routing_tasks: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    return [
+        {
+            "dimension_key": task.get("dimension_key"),
+            "selection_mode": task.get("selection_mode"),
+            "candidate_keys": [
+                str(candidate.get("candidate_key") or "")
+                for candidate in task.get("candidates") or []
+                if isinstance(candidate, dict) and str(candidate.get("candidate_key") or "")
+            ],
+            "parameter_names": _parameter_names(
+                [candidate for candidate in task.get("candidates") or [] if isinstance(candidate, dict)],
+            ),
+        }
+        for task in routing_tasks
+    ]
+
+
+def _routing_decision_trace_summary(
+    decisions: list[RoutingDecision],
+) -> list[dict[str, Any]]:
+    return [
+        {
+            "dimension_key": decision.dimension_key,
+            "selected_candidate_keys": list(decision.selected_candidate_keys),
+        }
+        for decision in decisions
+    ]
+
+
+def _semantic_trace_evidence(
+    state: ModelParameterProposalState,
+    *,
+    stage: str,
+    candidates: list[dict[str, Any]] | None = None,
+    parameter_slots: list[dict[str, Any]] | None = None,
+    parameter_adjustments: list[dict[str, Any]] | None = None,
+    llm_calls: list[dict[str, Any]] | None = None,
+    stage_details: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Keep safe partial-state evidence when a semantic abstention exits the graph.
+
+    Full prompts, messages, Scenario context, and workbook rows are deliberately
+    excluded. The evidence is request-local and consumed only by quality runners.
+    """
+    selected_candidates = list(state.candidate_mappings if candidates is None else candidates)
+    selected_slots = list(state.parameter_slots if parameter_slots is None else parameter_slots)
+    selected_adjustments = list(
+        state.parameter_adjustments if parameter_adjustments is None else parameter_adjustments,
+    )
+    calls = list(state.llm_calls if llm_calls is None else llm_calls)
+    selected_slot_count = sum(slot.get("selected", True) is not False for slot in selected_slots)
+    selected_adjustment_count = sum(
+        adjustment.get("selected", True) is not False for adjustment in selected_adjustments
+    )
+    trace_mi_base_resource = (
+        mi_base_resource_identity(state.mi_base_resources)
+        if state.mi_base_resources is not None
+        else {}
+    )
+    termination_by_stage = {
+        "candidate_generation": "Step1 종료 - runtime candidate 없음",
+        "step1_5": "Step1.5 종료 - 후보 검증 후 selected parameter 없음",
+        "step2": "Step2 종료 - exact selected slot 없음",
+        "step3": "Step3 종료 - 변경 가능한 value 없음",
+    }
+    parameter_status = "ABSTAINED" if stage in {"candidate_generation", "step1_5"} else "PASS"
+    slot_status = "ABSTAINED" if stage == "step2" else "PASS" if stage == "step3" else "N/A"
+    value_status = "ABSTAINED" if stage == "step3" else "N/A"
+    return {
+        "observability_complete": True,
+        "partial_state_captured": True,
+        "trace_mi_base_resource": trace_mi_base_resource,
+        "llm_calls": calls,
+        "step_summary": {
+            "termination_stage": termination_by_stage.get(stage, stage),
+            "parameter_status": parameter_status,
+            "slot_status": slot_status,
+            "basecase_status": "PASS" if stage == "step3" else "N/A",
+            "value_status": value_status,
+            "validated_candidate_count": len(selected_candidates),
+            "selected_parameter_count": len(_parameter_names(selected_candidates)),
+            "proposal_parameter_count": 0,
+            "selected_slot_count": selected_slot_count,
+            "value_cell_count": sum(
+                len(adjustment.get("value_grid") or [])
+                for adjustment in selected_adjustments
+                if adjustment.get("selected", True) is not False
+            ),
+            "llm_steps": [str(call.get("step") or "") for call in calls],
+        },
+        "semantic_stage_evidence": {
+            "stage": stage,
+            "candidates": _candidate_trace_summary(selected_candidates),
+            "candidate_count": len(selected_candidates),
+            "parameter_names": _parameter_names(selected_candidates),
+            "selected_slot_count": selected_slot_count,
+            "selected_slots": _slot_debug_summary(selected_slots, selected_candidates),
+            "selected_adjustment_count": selected_adjustment_count,
+            "adjustments": _adjustment_debug_summary(selected_adjustments),
+            **(stage_details or {}),
+        },
+    }
+
+
+def _llm_retry_trace_from_exception(exc: BaseException) -> dict[str, Any]:
+    context = getattr(exc, "context", None)
+    raw = context.get("model_parameter_llm_retry") if isinstance(context, Mapping) else None
+    if not isinstance(raw, Mapping):
+        raw = getattr(exc, "_model_parameter_llm_retry", None)
+    return dict(raw) if isinstance(raw, Mapping) else {}
+
+
+def _attach_node_failure_trace(
+    exc: BaseException,
+    state: ModelParameterProposalState,
+    *,
+    stage: str,
+    step: str,
+    llm_started: float,
+    prompt_bytes: int,
+    prompt_limit_bytes: int,
+    parameter_bytes: dict[str, int],
+) -> None:
+    retry = _llm_retry_trace_from_exception(exc)
+    failed_call = _llm_call_trace(
+        step=step,
+        model_name=state.model_name,
+        elapsed_seconds=time.perf_counter() - llm_started,
+        usage=None,
+        success=False,
+        error=type(exc).__name__,
+        prompt_bytes=prompt_bytes,
+        prompt_limit_bytes=prompt_limit_bytes,
+        parameter_bytes=parameter_bytes,
+        attempt_count=int(retry.get("attempt_count") or 1),
+        retry_count=int(retry.get("retry_count") or 0),
+        retry_reasons=tuple(str(item) for item in retry.get("retry_reasons") or []),
+        retry_delays_seconds=tuple(float(item) for item in retry.get("retry_delays_seconds") or []),
+    )
+    evidence = {
+        "observability_complete": True,
+        "partial_state_captured": True,
+        "trace_mi_base_resource": (
+            mi_base_resource_identity(state.mi_base_resources)
+            if state.mi_base_resources is not None
+            else {}
+        ),
+        "llm_calls": [*state.llm_calls, failed_call],
+        "node_failure_stage": stage,
+        "node_stage_evidence": {
+            "stage": stage,
+            "candidate_count": len(state.candidate_mappings),
+            "parameter_names": _parameter_names(state.candidate_mappings),
+            "selected_slot_count": sum(
+                slot.get("selected", True) is not False for slot in state.parameter_slots
+            ),
+            "exception_type": type(exc).__name__,
+        },
+    }
+    try:
+        exc.__dict__["_model_parameter_node_trace"] = evidence
+    except Exception:
+        return
 
 
 def _value_selection_diagnostics(
@@ -786,6 +980,21 @@ async def validate_parameter_candidates(
             stage="candidate_generation",
             scenario_context=state.scenario_context,
             non_input_items=state.non_input_items,
+            trace_evidence=_semantic_trace_evidence(
+                state,
+                stage="candidate_generation",
+                candidates=[],
+                stage_details={
+                    "candidate_generation_count": 0,
+                    "exclusion_reason_codes": sorted(
+                        {
+                            str(item.get("reason_code") or "")
+                            for item in state.non_input_items
+                            if isinstance(item, dict) and str(item.get("reason_code") or "")
+                        },
+                    ),
+                },
+            ),
         )
         return output
 
@@ -799,6 +1008,7 @@ async def validate_parameter_candidates(
     validation_warnings: list[str] = []
     usage: dict[str, Any] | None = None
     llm_call: dict[str, Any] | None = None
+    routing_decisions: list[RoutingDecision] = []
 
     if routing_tasks:
         max_routing_candidates_per_dimension = get_settings().model_parameter_max_routing_candidates_per_dimension
@@ -841,6 +1051,7 @@ async def validate_parameter_candidates(
                 config=config,
             )
             llm_payload = result.result
+            routing_decisions = list(llm_payload.routing_decisions)
             usage = result.usage.model_dump() if result.usage is not None else None
             llm_call = _llm_call_trace(
                 step="Step1.5 routing selection",
@@ -861,6 +1072,16 @@ async def validate_parameter_candidates(
                 "[model-parameter] Step1.5 LLM call failed | scenario_id={} error={}",
                 state.scenario_id,
                 repr(exc),
+            )
+            _attach_node_failure_trace(
+                exc,
+                state,
+                stage="step1_5",
+                step="Step1.5 routing selection",
+                llm_started=llm_started,
+                prompt_bytes=prompt_bytes,
+                prompt_limit_bytes=prompt_limit_bytes,
+                parameter_bytes=parameter_bytes,
             )
             raise
 
@@ -918,6 +1139,28 @@ async def validate_parameter_candidates(
             scenario_context=state.scenario_context,
             candidates=state.candidate_mappings,
             non_input_items=state.non_input_items,
+            trace_evidence=_semantic_trace_evidence(
+                state,
+                stage="step1_5",
+                candidates=merged_candidates,
+                llm_calls=(
+                    [*state.llm_calls, llm_call]
+                    if llm_call is not None
+                    else list(state.llm_calls)
+                ),
+                stage_details={
+                    "input_candidates": _candidate_trace_summary(validation_candidates),
+                    "deterministic_candidate_keys": [
+                        str(candidate.get("candidate_key") or "")
+                        for candidate in deterministic_candidates
+                        if str(candidate.get("candidate_key") or "")
+                    ],
+                    "routing_tasks": _routing_task_trace_summary(routing_tasks),
+                    "routing_decisions": _routing_decision_trace_summary(routing_decisions),
+                    "sanitized_selected_candidate_keys": sorted(selected_candidate_keys),
+                    "validation_warnings": [*validation_warnings, *merge_warnings],
+                },
+            ),
         )
     return output
 
@@ -1041,6 +1284,11 @@ def load_basecase_samples(state: ModelParameterProposalState) -> dict[str, Any]:
                 )
             ),
             "model_parameter_lut_enabled": cfg.model_parameter_lut_enabled,
+            "mi_base_resource": (
+                mi_base_resource_identity(selected_resources)
+                if selected_resources is not None
+                else None
+            ),
             "model_parameter_lut_horizon_start_year": policy.start_year,
             "model_parameter_lut_horizon_end_year": policy.end_year,
             "model_parameter_basecase_value_max_decimal_places": (
@@ -1472,6 +1720,14 @@ def finalize_empty_parameter_values(state: ModelParameterProposalState) -> dict[
             non_input_items=state.non_input_items,
             slot_catalog=state.slot_catalog,
             slot_selection_diagnostics=state.slot_selection_diagnostics,
+            trace_evidence=_semantic_trace_evidence(
+                state,
+                stage="step2",
+                stage_details={
+                    "slot_selection_diagnostics": dict(state.slot_selection_diagnostics),
+                    "validation_warnings": list(state.validation_warnings),
+                },
+            ),
         )
     output = {
         "parameter_adjustments": _unselected_adjustments_for_missing_slots(
@@ -1503,6 +1759,15 @@ async def propose_parameter_values(
             non_input_items=state.non_input_items,
             slot_catalog=state.slot_catalog,
             slot_selection_diagnostics=state.slot_selection_diagnostics,
+            trace_evidence=_semantic_trace_evidence(
+                state,
+                stage="step2",
+                stage_details={
+                    "slot_selection_diagnostics": dict(state.slot_selection_diagnostics),
+                    "slot_candidate_count": len(state.slot_candidate_mappings),
+                    "validation_warnings": list(state.validation_warnings),
+                },
+            ),
         )
         output = {
             "parameter_adjustments": [],
@@ -1595,6 +1860,16 @@ async def propose_parameter_values(
             state.scenario_id,
             repr(exc),
         )
+        _attach_node_failure_trace(
+            exc,
+            state,
+            stage="step3",
+            step="Step3 value proposal",
+            llm_started=llm_started,
+            prompt_bytes=prompt_bytes,
+            prompt_limit_bytes=prompt_limit_bytes,
+            parameter_bytes=parameter_bytes,
+        )
         raise
 
     adjustments, validation_warnings = _sanitize_llm_adjustments(
@@ -1643,6 +1918,17 @@ async def propose_parameter_values(
             candidates=value_candidates,
             non_input_items=state.non_input_items,
             value_selection_diagnostics=value_selection_diagnostics,
+            trace_evidence=_semantic_trace_evidence(
+                state,
+                stage="step3",
+                candidates=value_candidates,
+                parameter_adjustments=adjustments,
+                llm_calls=[*state.llm_calls, llm_call],
+                stage_details={
+                    "value_selection_diagnostics": dict(value_selection_diagnostics),
+                    "validation_warnings": list(validation_warnings),
+                },
+            ),
         )
     return output
 
@@ -1733,6 +2019,16 @@ async def propose_parameter_slots(
             "[model-parameter] Step2 LLM call failed | scenario_id={} error={}",
             state.scenario_id,
             repr(exc),
+        )
+        _attach_node_failure_trace(
+            exc,
+            state,
+            stage="step2",
+            step="Step2 slot proposal",
+            llm_started=llm_started,
+            prompt_bytes=prompt_bytes,
+            prompt_limit_bytes=prompt_limit_bytes,
+            parameter_bytes=parameter_bytes,
         )
         raise
 

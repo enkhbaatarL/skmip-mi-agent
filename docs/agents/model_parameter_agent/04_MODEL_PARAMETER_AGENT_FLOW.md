@@ -238,8 +238,10 @@ system prompt는 dimension별 선택 개수를 0개부터 설정 상한 사이�
    `SCNRCASE + case_id`와 `SCNRCASEH/HI/HTF + run_seq`의 연결 파일 metadata를 읽는다.
 3. 계산에는 `SCNRCASE` Demand·Supply·Trade 입력 workbook 3종만 내려받아 사용한다.
    결과·중간·Trade Flow 파일은 존재 건수만 내부 log에 남기고 제안값을 계산하는 데 읽지 않는다.
-4. 활성 Base가 없거나 입력 3종·Object Storage·workbook contract를 안전하게 준비하지
-   못하면 기존 설정 resource로 fallback한다. 활성 Base가 복수이면 임의 선택하지 않고 실패한다.
+4. 활성 Base가 없으면 기본적으로 실패하고, 명시적 운영 설정에서만 기존 설정 resource를 사용한다.
+   선택된 Base의 Object Storage metadata를 확인할 수 없으면 같은 case/run/SCNRCASE 파일 identity와
+   workbook hash/contract를 검증한 cache만 사용한다. 입력 3종 구성 또는 workbook 검증이 잘못됐거나
+   검증 cache가 없으면 다른 Basecase로 바꾸지 않고 실패한다. 활성 Base가 복수여도 임의 선택하지 않는다.
 5. v1/v3는 선택된 request-local Basecase 경로에 DB `basecase_*` 설정을 적용해 읽는다.
 6. 정확히 v4 `multi_event_model_lever_dimensions`이면 `read_only_proposal` contract가 고정한
    `new-bc-v7` contract가 고정한 authoritative source를 읽고 DB model target과 일치하는지 검증한다.
@@ -693,6 +695,12 @@ timeout, transport 연결 오류, HTTP 408/425/429/5xx만 재시도하며 struct
 exact 좌표·근거 실패, unchanged/no-change와 DB/catalog/integrity 오류는 재시도하지 않는다. 공통 connector의
 내부 retry는 0으로 두어 이 정책과 중첩되지 않게 한다. 성공 trace와 실패 context에는 attempt/retry 수, 분류 사유,
 delay를 남기되 prompt 원문은 남기지 않는다. 이는 proposal graph나 DB write 전체를 다시 실행하는 outer retry가 아니다.
+
+Step1.5·Step2·Step3의 정상적인 미제안은 `ModelParameterSemanticEmptyError`에 structured reason code/stage와
+request-local `trace_evidence`를 싣는다. trace에는 종료 단계까지의 candidate/routing, slot, value sanitizer 요약과
+누적 LLM call/token/retry만 포함하고 full prompt/messages/Scenario context는 포함하지 않는다. API와 proposal DB의
+기존 `ABSTAINED_*` 계약은 바뀌지 않으며, 품질 runner는 이 증적을 일반 실행 오류와 분리해 `ABSTAINED`/`REVIEW`로
+집계한다.
 
 ### 3.5 `uncovered_only` proposal-only campaign
 

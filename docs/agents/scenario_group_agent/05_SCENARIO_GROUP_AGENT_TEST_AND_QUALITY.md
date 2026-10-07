@@ -337,6 +337,68 @@ Skill이 하는 일:
 - 누락되거나 실행할 수 없었던 Event Type과 이유
 - 전체 보고서와 증적 경로
 
+### 3-1. 기존 Group을 보존한 고정 Event 코호트 추가 생성
+
+요청 예시:
+
+> 기존 20개와 같은 Event Type/Event 입력으로 Scenario Group을 20개 더 만들고 비교해줘. 기존 Group은 보존해줘.
+
+Skill이 하는 일:
+
+- 기존 campaign의 ordered Event ID 20개를 immutable logical input으로 재사용한다.
+- 기존 Group을 삭제하거나 수정하지 않고 `v4` Group을 Event별로 하나씩 추가한다.
+- 완료된 동일 Event set 재생성은 허용하되 active operation 충돌이면 재시도하지 않고 중단·기록한다.
+- 새 Group ID가 기존 Group ID와 disjoint인지, Event cohort·catalog version/full checksum이 같은지 확인한다.
+- Validation과 Confirmation까지 수행하고, Signpost가 후속 품질/Proposal에 필요하지 않으면 생략 사유를 남긴다.
+
+사용자가 받는 결과:
+
+- 기존/신규 Group ID와 순증 수
+- 동일 Event cohort 및 Scenario Lever catalog pin 증명
+- Group별 Scenario 수, baseline·floor·ceiling·중복 cell 등 결정적 품질검사
+- 생성/Validation/Confirmation 성공률과 단계별 증적 경로
+- 후속 대표 3개 평가 cohort를 재사용할 경우 tracked test fixture 경로와 고정 Group/Scenario ID·release contract
+
+#### 기존 Scenario-only fixture의 Event 40개로 재생성
+
+reference fixture의 기존 Event 풀로 Scenario부터 다시 만들라는 요청은
+`existing_event_pool/add-only-regenerated-scenarios`로 기록한다. fixture SHA-256과 ordered Event ID 40개를 고정하고,
+원본 Group/Scenario를 삭제·수정하지 않은 채 Event별 신규 v4 Group 하나를 만든다. Validation과 Confirmation까지
+수행하되 Signpost가 후속 Proposal 입력에 필요하지 않으면 생략한다. 원본 Event 40개 exact 재사용, Event ID 고유성,
+신규 Group 40개 고유·원본 Group ID와 비중복, 원본 Group 40개 보존, 기존 삭제 0, Scenario Lever `v4.1` catalog
+version/full checksum과 후속 Proposal Flow `v4.1.2`를 hard gate로 둔다. 이 요청은 Event 확장이 아니므로 원본과
+재생성 Event ID의 중복이 정상이다. 후속 대표 3개 testset은 Proposal 실행 전에 고정하고 덮어쓰지 않는다.
+
+### 3-2. Event 코호트를 먼저 확장한 Group 추가 생성
+
+요청 예시:
+
+> 기존 Group은 보존하고, 기존 Event cohort와 겹치지 않는 Event 20개를 먼저 선정한 뒤 Scenario Group을
+> Event마다 하나씩 20개 추가해줘.
+
+Skill이 하는 일:
+
+- baseline campaign의 Event ID를 exclusion set으로 고정한다.
+- 추천 Event 또는 완료 Group 이력이 있는 Event를 우선해 신규 Event ID 20개를 선정하고, active·미완료 Group과
+  충돌하는 Event는 제외한다.
+- 쓰기 전에 `expanded_event_cohort/add-only` manifest에 baseline/신규 Event ID, 순서, Event Type, 선택 근거,
+  disjoint 판정, Scenario Lever version/full checksum과 후속 Proposal Flow release를 고정한다.
+- 기존 Group을 삭제·수정하지 않고 신규 Event마다 v4 Group 하나를 생성해 Validation과 Confirmation까지 수행한다.
+- Signpost가 후속 Proposal 평가에 필요하지 않으면 생략 이유를 기록한다.
+- 완료된 20개 Group 전체에 catalog pin, stage, Dimension/Scenario 구조, baseline·floor·ceiling과 cell 고유성을
+  결정적으로 검사한다.
+
+사용자가 받는 결과:
+
+- baseline/확장 Event ID와 비중복 판정, Event Type 분포
+- 신규 Group ID 20개, 기존 Group 삭제 0과 실제 순증 판정
+- 생성·Validation·Confirmation 성공률과 Group별 구조 품질
+- 대표 Scenario 3개씩의 Proposal 결과, 기존 KPI와 동일 종류·상이 값 KPI
+- 최종 선택을 고정하고 관측 결과를 분리한 재사용 test fixture
+
+동일 Event를 다시 사용해 만든 Group은 이 요청을 충족하지 않는다. 그런 증적이 먼저 생겼다면 삭제하지 않고 audit
+evidence로 보존하되 확장 cohort의 최종 평가와 fixture에서는 제외한다.
+
 ### 4. 여러 Event를 한 Group으로 전체 테스트
 
 요청 예시:

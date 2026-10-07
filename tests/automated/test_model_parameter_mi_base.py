@@ -24,8 +24,12 @@ from apps.agents.model_parameter_agent.utils.workbook_contract import (
     PACKAGE_RESOURCE_DIR,
     load_workbook_contract,
 )
-from apps.common.configs.config import ModelParameterResourceStorageConfig
+from apps.common.configs.config import (
+    ModelParameterMiBaseFallbackConfig,
+    ModelParameterResourceStorageConfig,
+)
 from apps.common.exceptions.custom import MIBaseError
+from apps.common.values.error_codes import ErrorCode
 from apps.connectors.object_storage import DownloadedObject, ObjectMetadata
 from apps.persistence.mi_base.repository import MiBaseRepository
 from apps.persistence.mi_base.schema import MiBaseFilePayload, MiBaseSnapshot
@@ -179,6 +183,133 @@ class _FakeStorageClient:
         self.closed = True
 
 
+class _UnavailableStorageClient:
+    def __init__(self) -> None:
+        self.download_calls: list[tuple[str, str]] = []
+        self.closed = False
+
+    async def head_object(
+        self,
+        *,
+        bucket: str,
+        object_key: str,
+        logical_name: str,
+    ) -> ObjectMetadata:
+        del bucket, object_key, logical_name
+        raise MIBaseError(
+            ErrorCode.DATA_RETRIEVAL_FAILED,
+            detail="Object Storage unavailable",
+        )
+
+    async def download_object(
+        self,
+        *,
+        bucket: str,
+        object_key: str,
+        logical_name: str,
+        destination: Path,
+        chunk_size_bytes: int,
+        deadline: float,
+    ) -> DownloadedObject:
+        del logical_name, destination, chunk_size_bytes, deadline
+        self.download_calls.append((bucket, object_key))
+        message = "download must not be attempted"
+        raise AssertionError(message)
+
+    async def close(self) -> None:
+        self.closed = True
+
+
+class _DownloadUnavailableStorageClient(_FakeStorageClient):
+    async def download_object(
+        self,
+        *,
+        bucket: str,
+        object_key: str,
+        logical_name: str,
+        destination: Path,
+        chunk_size_bytes: int,
+        deadline: float,
+    ) -> DownloadedObject:
+        del logical_name, destination, chunk_size_bytes, deadline
+        self.download_calls.append((bucket, object_key))
+        raise MIBaseError(
+            ErrorCode.DATA_RETRIEVAL_FAILED,
+            detail="Object Storage download unavailable",
+        )
+
+
+def _settings(
+    storage: ModelParameterResourceStorageConfig,
+    *,
+    no_active_case_mode: str = "fail",
+    active_case_unavailable_mode: str = "verified_cache",
+) -> SimpleNamespace:
+    return SimpleNamespace(
+        model_parameter_resource_storage=storage,
+        model_parameter_mi_base_fallback=ModelParameterMiBaseFallbackConfig(
+            no_active_case_mode=no_active_case_mode,
+            active_case_unavailable_mode=active_case_unavailable_mode,
+        ),
+    )
+
+
+def _configured_resource_paths() -> ModelParameterResourcePaths:
+    return ModelParameterResourcePaths(
+        source="packaged",
+        root=PACKAGE_RESOURCE_DIR,
+        basecase_dir=PACKAGE_RESOURCE_DIR / "basecase",
+        lut_root=PACKAGE_RESOURCE_DIR / "lut",
+        resource_config_path=PACKAGE_RESOURCE_DIR / "model-parameter-resources.yaml",
+        lut_registry=Mock(),
+        semantic_schema_hash="test",
+        workbook_contract=load_workbook_contract(),
+    )
+
+
+def _complete_snapshot(
+    *,
+    bucket: str,
+    objects: dict[tuple[str, str], bytes],
+    case_id: int = 15,
+    run_seq: int = 71,
+) -> MiBaseSnapshot:
+    files = [
+        _file(
+            file_no=index,
+            relation_code="SCNRCASE",
+            destination_no=case_id,
+            name=f"(Base) {role.title()} Model_Input.xlsm",
+            path=f"https://storage.example/{bucket}/SCNRCASE/{role}.xlsm",
+            size=len(objects[(bucket, f"SCNRCASE/{role}.xlsm")]),
+        )
+        for index, role in enumerate(("demand", "supply", "trade"), start=1)
+    ]
+    return MiBaseSnapshot(
+        case_id=case_id,
+        last_run_id=f"run-{run_seq}",
+        run_seq=run_seq,
+        files=files,
+    )
+
+
+def _storage_config(
+    tmp_path: Path,
+    *,
+    bucket: str = "mi-bucket",
+    enabled: bool = True,
+) -> ModelParameterResourceStorageConfig:
+    return ModelParameterResourceStorageConfig(
+        enabled=enabled,
+        endpoint_url="https://storage.example",
+        bucket=bucket,
+        access_key_id="test-access",
+        secret_access_key="test-secret",
+        local_root=str(tmp_path),
+        max_attempts=1,
+    )
+
+
 def test_only_scnrcase_workbooks_are_downloaded_for_calculation(
     tmp_path: Path,
 ) -> None:
@@ -257,7 +388,7 @@ def test_only_scnrcase_workbooks_are_downloaded_for_calculation(
         patch.object(
             mi_base_resources,
             "get_settings",
-            return_value=SimpleNamespace(model_parameter_resource_storage=storage),
+            return_value=_settings(storage),
         ),
         patch.object(mi_base_resources, "extract_workbook_references"),
     ):
@@ -286,13 +417,15 @@ def test_only_scnrcase_workbooks_are_downloaded_for_calculation(
     assert (selection.basecase_dir / "Demand Model_Input.xlsm").is_file()
 
 
-def test_incomplete_scnrcase_workbooks_use_configured_fallback(
+def test_incomplete_scnrcase_workbooks_fail_without_cross_case_fallback(
     tmp_path: Path,
 ) -> None:
     contract = load_workbook_contract()
+    configured_release_root = tmp_path / "configured-release"
+    configured_release_root.mkdir()
     configured_paths = ModelParameterResourcePaths(
         source="packaged",
-        root=PACKAGE_RESOURCE_DIR,
+        root=configured_release_root,
         basecase_dir=PACKAGE_RESOURCE_DIR / "basecase",
         lut_root=PACKAGE_RESOURCE_DIR / "lut",
         resource_config_path=PACKAGE_RESOURCE_DIR / "model-parameter-resources.yaml",
@@ -339,20 +472,371 @@ def test_incomplete_scnrcase_workbooks_use_configured_fallback(
         patch.object(
             mi_base_resources,
             "get_settings",
-            return_value=SimpleNamespace(model_parameter_resource_storage=storage),
+            return_value=_settings(storage),
         ),
+        pytest.raises(MIBaseError) as error,
     ):
-        selection = asyncio.run(
+        asyncio.run(
             resolve_mi_base_resources(
                 snapshot,
                 client_factory=client_factory,
             ),
         )
 
-    assert selection.source == "configured_fallback"
-    assert selection.case_id == 15
-    assert selection.basecase_dir == configured_paths.basecase_dir
+    assert error.value.error_code is ErrorCode.DATA_RETRIEVAL_FAILED
     client_factory.assert_not_called()
+
+
+def test_no_active_mi_base_fails_closed_by_default(tmp_path: Path) -> None:
+    configured_paths = _configured_resource_paths()
+    storage = _storage_config(tmp_path)
+
+    with (
+        patch.object(
+            mi_base_resources,
+            "get_model_parameter_resource_paths",
+            return_value=configured_paths,
+        ),
+        patch.object(
+            mi_base_resources,
+            "get_settings",
+            return_value=_settings(storage),
+        ),
+        pytest.raises(MIBaseError) as error,
+    ):
+        asyncio.run(resolve_mi_base_resources(None))
+
+    assert error.value.error_code is ErrorCode.DATA_RETRIEVAL_FAILED
+
+
+def test_no_active_mi_base_uses_configured_fallback_only_when_enabled(
+    tmp_path: Path,
+) -> None:
+    configured_paths = _configured_resource_paths()
+    storage = _storage_config(tmp_path)
+
+    with (
+        patch.object(
+            mi_base_resources,
+            "get_model_parameter_resource_paths",
+            return_value=configured_paths,
+        ),
+        patch.object(
+            mi_base_resources,
+            "get_settings",
+            return_value=_settings(storage, no_active_case_mode="configured_fallback"),
+        ),
+    ):
+        selection = asyncio.run(resolve_mi_base_resources(None))
+
+    assert selection.source == "configured_fallback"
+    assert selection.case_id is None
+    assert selection.basecase_dir == configured_paths.basecase_dir
+    assert selection.workbook_resource_root == PACKAGE_RESOURCE_DIR
+
+
+def test_object_storage_outage_uses_only_verified_same_file_cache(
+    tmp_path: Path,
+) -> None:
+    bucket = "mi-bucket"
+    objects = {
+        (bucket, "SCNRCASE/demand.xlsm"): b"demand-current-base",
+        (bucket, "SCNRCASE/supply.xlsm"): b"supply-current-base",
+        (bucket, "SCNRCASE/trade.xlsm"): b"trade-current-base",
+    }
+    snapshot = _complete_snapshot(bucket=bucket, objects=objects)
+    configured_paths = _configured_resource_paths()
+    storage = _storage_config(tmp_path, bucket=bucket)
+    settings = _settings(storage)
+    initial_client = _FakeStorageClient(objects)
+
+    with (
+        patch.object(
+            mi_base_resources,
+            "get_model_parameter_resource_paths",
+            return_value=configured_paths,
+        ),
+        patch.object(mi_base_resources, "get_settings", return_value=settings),
+        patch.object(mi_base_resources, "extract_workbook_references"),
+    ):
+        initial = asyncio.run(
+            resolve_mi_base_resources(
+                snapshot,
+                client_factory=lambda _storage: initial_client,
+            ),
+        )
+        unavailable_client = _UnavailableStorageClient()
+        cached = asyncio.run(
+            resolve_mi_base_resources(
+                snapshot,
+                client_factory=lambda _storage: unavailable_client,
+            ),
+        )
+
+    assert initial.source == "mi_base"
+    assert cached.source == "verified_cache"
+    assert cached.case_id == snapshot.case_id
+    assert cached.run_seq == snapshot.run_seq
+    assert cached.workbook_resource_root == initial.workbook_resource_root
+    assert cached.fallback_reason is not None
+    assert unavailable_client.download_calls == []
+    assert unavailable_client.closed is True
+
+
+def test_object_storage_outage_uses_configured_fallback_only_when_explicitly_enabled(
+    tmp_path: Path,
+) -> None:
+    bucket = "mi-bucket"
+    snapshot = _complete_snapshot(
+        bucket=bucket,
+        objects={
+            (bucket, "SCNRCASE/demand.xlsm"): b"demand-current-base",
+            (bucket, "SCNRCASE/supply.xlsm"): b"supply-current-base",
+            (bucket, "SCNRCASE/trade.xlsm"): b"trade-current-base",
+        },
+    )
+    configured_paths = _configured_resource_paths()
+    storage = _storage_config(tmp_path, bucket=bucket)
+    unavailable_client = _UnavailableStorageClient()
+
+    with (
+        patch.object(
+            mi_base_resources,
+            "get_model_parameter_resource_paths",
+            return_value=configured_paths,
+        ),
+        patch.object(
+            mi_base_resources,
+            "get_settings",
+            return_value=_settings(
+                storage,
+                active_case_unavailable_mode="configured_fallback",
+            ),
+        ),
+    ):
+        selection = asyncio.run(
+            resolve_mi_base_resources(
+                snapshot,
+                client_factory=lambda _storage: unavailable_client,
+            ),
+        )
+
+    assert selection.source == "configured_fallback"
+    assert selection.case_id == snapshot.case_id
+    assert selection.run_seq == snapshot.run_seq
+    assert selection.basecase_dir == configured_paths.basecase_dir
+    assert selection.workbook_resource_root == PACKAGE_RESOURCE_DIR
+    assert selection.fallback_reason is not None
+    assert unavailable_client.download_calls == []
+    assert unavailable_client.closed is True
+
+
+def test_verified_cache_rejects_corrupted_workbook(tmp_path: Path) -> None:
+    bucket = "mi-bucket"
+    objects = {
+        (bucket, "SCNRCASE/demand.xlsm"): b"demand-current-base",
+        (bucket, "SCNRCASE/supply.xlsm"): b"supply-current-base",
+        (bucket, "SCNRCASE/trade.xlsm"): b"trade-current-base",
+    }
+    snapshot = _complete_snapshot(bucket=bucket, objects=objects)
+    configured_paths = _configured_resource_paths()
+    storage = _storage_config(tmp_path, bucket=bucket)
+
+    with (
+        patch.object(
+            mi_base_resources,
+            "get_model_parameter_resource_paths",
+            return_value=configured_paths,
+        ),
+        patch.object(mi_base_resources, "get_settings", return_value=_settings(storage)),
+        patch.object(mi_base_resources, "extract_workbook_references"),
+    ):
+        initial = asyncio.run(
+            resolve_mi_base_resources(
+                snapshot,
+                client_factory=lambda _storage: _FakeStorageClient(objects),
+            ),
+        )
+        (initial.basecase_dir / "Demand Model_Input.xlsm").write_bytes(b"corrupted")
+        with pytest.raises(MIBaseError) as error:
+            asyncio.run(
+                resolve_mi_base_resources(
+                    snapshot,
+                    client_factory=lambda _storage: _UnavailableStorageClient(),
+                ),
+            )
+
+    assert error.value.error_code is ErrorCode.DATA_RETRIEVAL_FAILED
+
+
+def test_verified_cache_is_not_used_after_current_remote_identity_is_observed(
+    tmp_path: Path,
+) -> None:
+    bucket = "mi-bucket"
+    cached_objects = {
+        (bucket, "SCNRCASE/demand.xlsm"): b"demand-current-base",
+        (bucket, "SCNRCASE/supply.xlsm"): b"supply-current-base",
+        (bucket, "SCNRCASE/trade.xlsm"): b"trade-current-base",
+    }
+    current_objects = {key: value.replace(b"current", b"currenT") for key, value in cached_objects.items()}
+    snapshot = _complete_snapshot(bucket=bucket, objects=cached_objects)
+    configured_paths = _configured_resource_paths()
+    storage = _storage_config(tmp_path, bucket=bucket)
+
+    with (
+        patch.object(
+            mi_base_resources,
+            "get_model_parameter_resource_paths",
+            return_value=configured_paths,
+        ),
+        patch.object(mi_base_resources, "get_settings", return_value=_settings(storage)),
+        patch.object(mi_base_resources, "extract_workbook_references"),
+    ):
+        asyncio.run(
+            resolve_mi_base_resources(
+                snapshot,
+                client_factory=lambda _storage: _FakeStorageClient(cached_objects),
+            ),
+        )
+        current_client = _DownloadUnavailableStorageClient(current_objects)
+        with pytest.raises(MIBaseError) as error:
+            asyncio.run(
+                resolve_mi_base_resources(
+                    snapshot,
+                    client_factory=lambda _storage: current_client,
+                ),
+            )
+
+    assert error.value.error_code is ErrorCode.DATA_RETRIEVAL_FAILED
+    assert current_client.download_calls == [(bucket, "SCNRCASE/demand.xlsm")]
+
+
+def test_configured_fallback_is_not_used_after_current_remote_identity_is_observed(
+    tmp_path: Path,
+) -> None:
+    bucket = "mi-bucket"
+    objects = {
+        (bucket, "SCNRCASE/demand.xlsm"): b"demand-current-base",
+        (bucket, "SCNRCASE/supply.xlsm"): b"supply-current-base",
+        (bucket, "SCNRCASE/trade.xlsm"): b"trade-current-base",
+    }
+    snapshot = _complete_snapshot(bucket=bucket, objects=objects)
+    configured_paths = _configured_resource_paths()
+    storage = _storage_config(tmp_path, bucket=bucket)
+    client = _DownloadUnavailableStorageClient(objects)
+
+    with (
+        patch.object(
+            mi_base_resources,
+            "get_model_parameter_resource_paths",
+            return_value=configured_paths,
+        ),
+        patch.object(
+            mi_base_resources,
+            "get_settings",
+            return_value=_settings(
+                storage,
+                active_case_unavailable_mode="configured_fallback",
+            ),
+        ),
+        pytest.raises(MIBaseError) as error,
+    ):
+        asyncio.run(
+            resolve_mi_base_resources(
+                snapshot,
+                client_factory=lambda _storage: client,
+            ),
+        )
+
+    assert error.value.error_code is ErrorCode.DATA_RETRIEVAL_FAILED
+    assert client.download_calls == [(bucket, "SCNRCASE/demand.xlsm")]
+
+
+def test_verified_cache_rejects_different_run_identity(tmp_path: Path) -> None:
+    bucket = "mi-bucket"
+    objects = {
+        (bucket, "SCNRCASE/demand.xlsm"): b"demand-current-base",
+        (bucket, "SCNRCASE/supply.xlsm"): b"supply-current-base",
+        (bucket, "SCNRCASE/trade.xlsm"): b"trade-current-base",
+    }
+    cached_snapshot = _complete_snapshot(bucket=bucket, objects=objects, run_seq=71)
+    current_snapshot = _complete_snapshot(bucket=bucket, objects=objects, run_seq=72)
+    configured_paths = _configured_resource_paths()
+    storage = _storage_config(tmp_path, bucket=bucket)
+    settings = _settings(storage)
+
+    with (
+        patch.object(
+            mi_base_resources,
+            "get_model_parameter_resource_paths",
+            return_value=configured_paths,
+        ),
+        patch.object(mi_base_resources, "get_settings", return_value=settings),
+        patch.object(mi_base_resources, "extract_workbook_references"),
+    ):
+        asyncio.run(
+            resolve_mi_base_resources(
+                cached_snapshot,
+                client_factory=lambda _storage: _FakeStorageClient(objects),
+            ),
+        )
+        with pytest.raises(MIBaseError) as error:
+            asyncio.run(
+                resolve_mi_base_resources(
+                    current_snapshot,
+                    client_factory=lambda _storage: _UnavailableStorageClient(),
+                ),
+            )
+
+    assert error.value.error_code is ErrorCode.DATA_RETRIEVAL_FAILED
+
+
+def test_verified_cache_can_be_disabled_by_policy(tmp_path: Path) -> None:
+    bucket = "mi-bucket"
+    objects = {
+        (bucket, "SCNRCASE/demand.xlsm"): b"demand-current-base",
+        (bucket, "SCNRCASE/supply.xlsm"): b"supply-current-base",
+        (bucket, "SCNRCASE/trade.xlsm"): b"trade-current-base",
+    }
+    snapshot = _complete_snapshot(bucket=bucket, objects=objects)
+    configured_paths = _configured_resource_paths()
+    storage = _storage_config(tmp_path, bucket=bucket)
+
+    with (
+        patch.object(
+            mi_base_resources,
+            "get_model_parameter_resource_paths",
+            return_value=configured_paths,
+        ),
+        patch.object(mi_base_resources, "extract_workbook_references"),
+    ):
+        with patch.object(
+            mi_base_resources,
+            "get_settings",
+            return_value=_settings(storage),
+        ):
+            asyncio.run(
+                resolve_mi_base_resources(
+                    snapshot,
+                    client_factory=lambda _storage: _FakeStorageClient(objects),
+                ),
+            )
+        with (
+            patch.object(
+                mi_base_resources,
+                "get_settings",
+                return_value=_settings(storage, active_case_unavailable_mode="fail"),
+            ),
+            pytest.raises(MIBaseError) as error,
+        ):
+            asyncio.run(
+                resolve_mi_base_resources(
+                    snapshot,
+                    client_factory=lambda _storage: _UnavailableStorageClient(),
+                ),
+            )
+
+    assert error.value.error_code is ErrorCode.DATA_RETRIEVAL_FAILED
 
 
 def test_async_admission_pins_active_mi_base_case_id() -> None:

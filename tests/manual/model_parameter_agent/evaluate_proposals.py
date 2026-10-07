@@ -39,11 +39,19 @@ from apps.agents.model_parameter_agent.flows.propose_parameters.nodes import (
     _build_basecase_slot_options,
     _coordinate_issues,
 )
+from apps.agents.model_parameter_agent.flows.propose_parameters.validation import (
+    ModelParameterSemanticEmptyError,
+)
 from apps.agents.model_parameter_agent.persistence.model_parameter_service import (
     ModelParameterService,
 )
 from apps.agents.model_parameter_agent.utils.basecase import build_basecase_records
 from apps.agents.model_parameter_agent.utils.lut import ReferenceLoadPolicy
+from apps.agents.model_parameter_agent.utils.mi_base_resources import (
+    MiBaseResourceSelection,
+    mi_base_resource_identity,
+    resolve_mi_base_resources,
+)
 from apps.agents.model_parameter_agent.utils.parameter_mapping import (
     get_parameter_knowledge_base_from_resources,
     match_parameter_candidates,
@@ -296,6 +304,72 @@ def _normalize(value: Any) -> Any:
     if isinstance(value, list):
         return [_normalize(item) for item in value]
     return value
+
+
+def _matches_frozen_graph_context(
+    actual_context: Mapping[str, Any],
+    expected_context: Mapping[str, Any],
+) -> bool:
+    """Compare persisted Scenario context while ignoring request-local pins.
+
+    Proposal Flow v4.1.2 adds the selected MI Base case to graph state after
+    loading the persisted Scenario context.  That request-local field is not a
+    Scenario mutation and must not trip the pre-persistence drift guard.
+    """
+
+    actual = _normalize(actual_context)
+    expected = _normalize(expected_context)
+    if not isinstance(actual, dict) or not isinstance(expected, dict):
+        return actual == expected
+    actual_without_request_pins = dict(actual)
+    expected_without_request_pins = dict(expected)
+    actual_without_request_pins.pop("mi_base_case_id", None)
+    expected_without_request_pins.pop("mi_base_case_id", None)
+    return actual_without_request_pins == expected_without_request_pins
+
+
+def _same_mi_base_content_identity(
+    graph_identity: Mapping[str, Any],
+    trace_identity: Mapping[str, Any],
+) -> bool:
+    """Allow source transport changes only when the selected workbook identity is exact."""
+    fields = ("case_id", "run_seq", "workbook_sha256")
+    return all(
+        _normalize(graph_identity.get(field)) == _normalize(trace_identity.get(field))
+        for field in fields
+    )
+
+
+async def _resolve_trace_mi_base_resources(
+    raw_state: Mapping[str, Any],
+) -> MiBaseResourceSelection:
+    graph_context = raw_state.get("scenario_context") or {}
+    raw_case_id = graph_context.get("mi_base_case_id")
+    case_id = int(raw_case_id) if raw_case_id is not None else None
+    snapshot = (
+        await asyncio.to_thread(
+            ModelParameterService().load_mi_base_snapshot,
+            case_id,
+        )
+        if case_id is not None
+        else None
+    )
+    selection = await resolve_mi_base_resources(snapshot)
+    graph_identity = (
+        (raw_state.get("resolved_config") or {}).get("mi_base_resource")
+        or {}
+    )
+    trace_identity = mi_base_resource_identity(selection)
+    if not graph_identity or not _same_mi_base_content_identity(
+        graph_identity,
+        trace_identity,
+    ):
+        message = (
+            "MI Base resource identity changed before post-graph trace enrichment: "
+            f"graph={graph_identity}, trace={trace_identity}"
+        )
+        raise RuntimeError(message)
+    return selection
 
 
 def _candidate_signature(candidate: dict[str, Any]) -> tuple[str, str, str]:
@@ -900,6 +974,54 @@ def _attach_failure_trace(exc: BaseException, trace: dict[str, Any]) -> None:
         return
 
 
+def _merge_semantic_failure_trace(
+    failure_trace: dict[str, Any],
+    exc: ModelParameterSemanticEmptyError,
+) -> None:
+    """Merge request-local semantic evidence without exposing prompts/context."""
+    evidence = exc.trace_evidence if isinstance(exc.trace_evidence, dict) else {}
+    for key in (
+        "llm_calls",
+        "step_summary",
+        "trace_mi_base_resource",
+        "semantic_stage_evidence",
+        "observability_complete",
+        "partial_state_captured",
+    ):
+        if key in evidence:
+            failure_trace[key] = evidence[key]
+    failure_trace["semantic_empty"] = {
+        "reason_code": exc.reason_code,
+        "stage": exc.stage,
+        "message": exc.error_message,
+    }
+    failure_trace["observability_complete"] = bool(
+        evidence.get("observability_complete"),
+    )
+    failure_trace["partial_state_captured"] = bool(
+        evidence.get("partial_state_captured"),
+    )
+
+
+def _merge_node_failure_trace(
+    failure_trace: dict[str, Any],
+    exc: BaseException,
+) -> None:
+    evidence = getattr(exc, "_model_parameter_node_trace", None)
+    if not isinstance(evidence, dict):
+        return
+    for key in (
+        "llm_calls",
+        "trace_mi_base_resource",
+        "node_failure_stage",
+        "node_stage_evidence",
+        "observability_complete",
+        "partial_state_captured",
+    ):
+        if key in evidence:
+            failure_trace[key] = evidence[key]
+
+
 def _serialize_output_with_persistence_trace(
     raw_state: dict[str, Any],
     failure_trace: dict[str, Any],
@@ -974,7 +1096,8 @@ async def _evaluate_scenario(
         payload: dict[str, Any] = {"scenario_id": scenario_id}
         raw_output = await RAW_GRAPH.ainvoke(to_state(payload))
         raw_state = _normalize(raw_output)
-        if expected_scenario_context is not None and _normalize(raw_state.get("scenario_context") or {}) != _normalize(
+        if expected_scenario_context is not None and not _matches_frozen_graph_context(
+            raw_state.get("scenario_context") or {},
             expected_scenario_context,
         ):
             message = "Scenario context changed during proposal graph execution"
@@ -1010,10 +1133,15 @@ async def _evaluate_scenario(
         )
 
         failed_stage = "post-graph trace enrichment"
+        graph_context = raw_state.get("scenario_context") or context
+        selected_resources = await _resolve_trace_mi_base_resources(raw_state)
         slot_basecase_records, basecase_warnings = build_basecase_records(
             kb,
             persistence_candidates,
-            context,
+            graph_context,
+            registry=resource_paths.lut_registry,
+            workbook_contract=selected_resources.workbook_contract,
+            workbook_resource_root=selected_resources.workbook_resource_root,
         )
         slot_options = _build_basecase_slot_options(slot_basecase_records)
         value_reference_records = _value_reference_records(raw_state)
@@ -1041,7 +1169,7 @@ async def _evaluate_scenario(
         )
         record = {
             "scenario_id": scenario_id,
-            "context": context,
+            "context": graph_context,
             "rule_candidates": candidates,
             "expected_candidates": persistence_candidates,
             "non_input_items": non_inputs,
@@ -1056,6 +1184,9 @@ async def _evaluate_scenario(
             "final_response": {},
             "llm_calls": llm_calls,
             "resolved_config": raw_state.get("resolved_config") or {},
+            "trace_mi_base_resource": mi_base_resource_identity(
+                selected_resources,
+            ),
             "lut_version": raw_state.get("lut_version"),
             "mapping_ok": candidate_coverage_ok,
             "mapping_messages": candidate_coverage_messages,
@@ -1122,6 +1253,11 @@ async def _evaluate_scenario(
         )
         return record
     except Exception as exc:
+        if isinstance(exc, ModelParameterSemanticEmptyError):
+            _merge_semantic_failure_trace(failure_trace, exc)
+            failed_stage = f"semantic abstention: {exc.stage}"
+        else:
+            _merge_node_failure_trace(failure_trace, exc)
         failure_trace["failed_stage"] = failed_stage
         failure_trace["error"] = repr(exc)
         _attach_failure_trace(exc, failure_trace)

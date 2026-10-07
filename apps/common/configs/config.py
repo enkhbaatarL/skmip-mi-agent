@@ -1,3 +1,5 @@
+# Copyright (c) 2026 SK Innovation E&S.
+
 from __future__ import annotations
 
 # YAML 기반 앱 설정 로더.
@@ -117,6 +119,17 @@ class ModelParameterResourceStorageConfig(BaseModel):
     download_chunk_size_bytes: int = Field(default=1024 * 1024, ge=64 * 1024)
 
 
+class ModelParameterMiBaseFallbackConfig(BaseModel):
+    """요청별 MI Base 입력을 준비하지 못했을 때 허용할 fallback 경계."""
+
+    no_active_case_mode: Literal["fail", "configured_fallback"] = "fail"
+    active_case_unavailable_mode: Literal[
+        "fail",
+        "verified_cache",
+        "configured_fallback",
+    ] = "verified_cache"
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="",
@@ -219,6 +232,9 @@ class Settings(BaseSettings):
     model_parameter_max_routing_candidates_per_dimension: int = Field(default=2, ge=1)
     model_parameter_resource_storage: ModelParameterResourceStorageConfig = Field(
         default_factory=ModelParameterResourceStorageConfig,
+    )
+    model_parameter_mi_base_fallback: ModelParameterMiBaseFallbackConfig = Field(
+        default_factory=ModelParameterMiBaseFallbackConfig,
     )
     # Agent 전용 parser가 업무 스키마를 검증한다. common 설정 계층은 YAML 구조만 보존한다.
     model_parameter_resources: dict[str, Any] = Field(default_factory=dict)

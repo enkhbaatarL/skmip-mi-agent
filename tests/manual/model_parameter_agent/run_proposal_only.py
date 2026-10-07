@@ -41,6 +41,9 @@ if DEFAULT_DOTENV.exists():
 if "APP_CONFIG" not in os.environ and DEFAULT_APP_CONFIG.exists():
     os.environ["APP_CONFIG"] = str(DEFAULT_APP_CONFIG)
 
+from apps.agents.model_parameter_agent.flows.propose_parameters.validation import (
+    ModelParameterSemanticEmptyError,
+)
 from apps.agents.model_parameter_agent.persistence.model_parameter_service import (
     ModelParameterService,
 )
@@ -84,7 +87,7 @@ from tests.manual.model_parameter_agent.runner_common import (
 
 V4_API_VERSION = "v4"
 V4_STRATEGY = "multi_event_model_lever_dimensions"
-EVIDENCE_SCHEMA_VERSION = 4
+EVIDENCE_SCHEMA_VERSION = 5
 UNCOVERED_POLICY_VERSION = "uncovered-only-v1"
 BASELINE_CAPABILITY_RELEASE = "extend16-v8"
 PROPOSAL_FLOW_RELEASE = "v4.1.2"
@@ -209,6 +212,7 @@ class ProposalOnlyOptions:
     scenario_group_id: int | None
     capability_release: str
     evidence_path: Path
+    required_mi_base_fallback_mode: str | None = None
 
 
 @dataclass(frozen=True)
@@ -258,6 +262,14 @@ def build_parser() -> argparse.ArgumentParser:
         choices=tuple(sorted(CAPABILITY_RELEASES)),
         help="Approved capability release contract; unknown labels are rejected.",
     )
+    parser.add_argument(
+        "--require-mi-base-fallback-mode",
+        choices=("fail", "verified_cache", "configured_fallback"),
+        help=(
+            "Fail before Scenario execution unless the loaded active-case MI Base fallback mode "
+            "matches this value."
+        ),
+    )
     parser.add_argument("--evidence-path", type=Path)
     return parser
 
@@ -275,6 +287,7 @@ def _options_from_args(args: argparse.Namespace, started_at: datetime) -> Propos
         scenario_group_id=args.scenario_group_id,
         capability_release=str(args.capability_release or "").strip(),
         evidence_path=raw_path.expanduser().resolve(),
+        required_mi_base_fallback_mode=args.require_mi_base_fallback_mode,
     )
 
 
@@ -286,6 +299,16 @@ def _validate_options(options: ProposalOnlyOptions) -> None:
         raise ValueError(message)
     if options.capability_release not in CAPABILITY_RELEASES:
         message = f"unsupported --capability-release: {options.capability_release!r}"
+        raise ValueError(message)
+    allowed_fallback_modes = {"fail", "verified_cache", "configured_fallback"}
+    if (
+        options.required_mi_base_fallback_mode is not None
+        and options.required_mi_base_fallback_mode not in allowed_fallback_modes
+    ):
+        message = (
+            "unsupported --require-mi-base-fallback-mode: "
+            f"{options.required_mi_base_fallback_mode!r}"
+        )
         raise ValueError(message)
     invalid_ids = [scenario_id for scenario_id in options.scenario_ids if scenario_id <= 0]
     if invalid_ids:
@@ -1051,6 +1074,7 @@ def _record_summary(record: Mapping[str, Any]) -> dict[str, Any]:
         "routing_messages": record.get("routing_messages") or [],
         "step_summary": record.get("step_summary") or {},
         "lut_version": record.get("lut_version"),
+        "trace_mi_base_resource": record.get("trace_mi_base_resource") or {},
         "value_signature": record.get("value_signature"),
         "llm_calls": _llm_call_evidence(record.get("llm_calls")),
         "final_response": _public_final_response(record),
@@ -1068,11 +1092,41 @@ def _failure_summary(trace: Mapping[str, Any]) -> dict[str, Any]:
             "mapping_trace_captured",
             "partial_state_captured",
             "step_summary",
+            "trace_mi_base_resource",
+            "semantic_empty",
+            "semantic_stage_evidence",
+            "observability_complete",
+            "node_failure_stage",
+            "node_stage_evidence",
         )
         if key in trace
     }
     summary["llm_calls"] = _llm_call_evidence(trace.get("llm_calls"))
     return summary
+
+
+def _semantic_empty_evidence(
+    exc: BaseException,
+    trace: Mapping[str, Any],
+) -> dict[str, Any] | None:
+    if isinstance(exc, ModelParameterSemanticEmptyError):
+        return {
+            "reason_code": exc.reason_code,
+            "stage": exc.stage,
+            "message": exc.error_message,
+            "structured": True,
+            "observability_complete": trace.get("observability_complete") is True,
+        }
+    raw = trace.get("semantic_empty")
+    if isinstance(raw, Mapping):
+        return {
+            "reason_code": raw.get("reason_code"),
+            "stage": raw.get("stage"),
+            "message": raw.get("message"),
+            "structured": True,
+            "observability_complete": trace.get("observability_complete") is True,
+        }
+    return None
 
 
 def _llm_retry_evidence_from_exception(exc: BaseException) -> dict[str, Any]:
@@ -1450,6 +1504,9 @@ async def _execute_once(
         attempt["failed_stage"] = trace.get("failed_stage") or "proposal evaluation"
         attempt["error"] = _redact_text(repr(evaluation_error))
         attempt["failure_trace"] = _failure_summary(trace)
+        semantic_empty = _semantic_empty_evidence(evaluation_error, trace)
+        if semantic_empty is not None:
+            attempt["semantic_empty"] = semantic_empty
         retry_evidence = _llm_retry_evidence_from_exception(evaluation_error)
         if retry_evidence:
             attempt["llm_retry"] = retry_evidence
@@ -1515,11 +1572,21 @@ async def _execute_once(
             ),
         )
     else:
-        integrity_errors.append("proposal evaluation raised; automatic retry is forbidden")
+        semantic_empty = attempt.get("semantic_empty")
+        if isinstance(semantic_empty, Mapping):
+            attempt["execution_policy_notes"] = [
+                "semantic abstention is retained as a quality outcome; automatic retry is forbidden",
+            ]
+            if trace.get("proposal_persisted") or model_param_proposal_id is not None or new_ids:
+                integrity_errors.append("semantic abstention must not persist a proposal")
+        else:
+            integrity_errors.append("proposal evaluation raised; automatic retry is forbidden")
     if snapshot_after_error:
         integrity_errors.append(f"proposal ID post-snapshot failed: {snapshot_after_error}")
     if integrity_errors:
         attempt["integrity_errors"] = integrity_errors
+    elif attempt.get("semantic_empty") is not None:
+        attempt["status"] = "ABSTAINED"
     else:
         attempt["status"] = "PASS"
     attempt["proposal_persisted"] = bool(
@@ -1539,6 +1606,7 @@ async def run_campaign(
     dependencies = dependencies or _runtime_dependencies()
     started_at = datetime.now(UTC)
     resource_manifest = _resource_manifest()
+    mi_base_fallback_policy = get_settings().model_parameter_mi_base_fallback.model_dump(mode="json")
     evidence: dict[str, Any] = {
         "schema_version": EVIDENCE_SCHEMA_VERSION,
         "runner": "model_parameter_proposal_only",
@@ -1574,6 +1642,8 @@ async def run_campaign(
             "runtime_allowlist": sorted(RUNTIME_PROPOSAL_CAPABILITY_NAMES),
             "uncovered_policy_version": UNCOVERED_POLICY_VERSION,
             "resource": resource_manifest,
+            "mi_base_fallback_policy": mi_base_fallback_policy,
+            "required_mi_base_fallback_mode": options.required_mi_base_fallback_mode,
         },
         "safety": {
             "uncovered_only": True,
@@ -1581,7 +1651,9 @@ async def run_campaign(
             "single_worker_best_effort": True,
             "max_attempts_per_scenario": 1,
             "automatic_retry": False,
-            "scenario_failure_policy": "isolate FAIL and continue; BLOCKED hard-stops the campaign",
+            "scenario_failure_policy": (
+                "isolate ABSTAINED/FAIL and continue; BLOCKED hard-stops the campaign"
+            ),
             "confirmation_invoked": False,
             "callback_invoked": False,
             "required_api_version": V4_API_VERSION,
@@ -1595,7 +1667,16 @@ async def run_campaign(
     _reserve_evidence_path(options.evidence_path, evidence)
 
     resource_errors: list[str] = []
-    if options.execute and dependencies.prepare_resources is not None:
+    actual_fallback_mode = str(mi_base_fallback_policy.get("active_case_unavailable_mode") or "")
+    if (
+        options.required_mi_base_fallback_mode is not None
+        and actual_fallback_mode != options.required_mi_base_fallback_mode
+    ):
+        resource_errors.append(
+            "MI Base fallback mode mismatch: "
+            f"required={options.required_mi_base_fallback_mode!r}, actual={actual_fallback_mode!r}",
+        )
+    if not resource_errors and options.execute and dependencies.prepare_resources is not None:
         try:
             await dependencies.prepare_resources()
         except Exception as exc:
@@ -1624,6 +1705,7 @@ async def run_campaign(
                 "hard_stop": 0,
                 "attempted": 0,
                 "succeeded": 0,
+                "abstained": 0,
                 "failed": 0,
             },
         }
@@ -1675,6 +1757,7 @@ async def run_campaign(
                     "hard_stop": 0,
                     "attempted": 0,
                     "succeeded": 0,
+                    "abstained": 0,
                     "failed": 0,
                 },
             }
@@ -1747,6 +1830,7 @@ async def run_campaign(
                     "hard_stop": 0,
                     "attempted": 0,
                     "succeeded": 0,
+                    "abstained": 0,
                     "failed": 0,
                 },
             },
@@ -1789,6 +1873,7 @@ async def run_campaign(
                 "hard_stop": len(hard_stop_ids),
                 "attempted": 0,
                 "succeeded": 0,
+                "abstained": 0,
                 "failed": 0,
             },
         },
@@ -1825,18 +1910,23 @@ async def run_campaign(
 
     if any(attempt.get("status") == "BLOCKED" for attempt in evidence["attempts"]):
         evidence["status"] = "BLOCKED"
-    elif len(evidence["attempts"]) == len(eligible_ids) and all(
-        attempt.get("status") == "PASS" for attempt in evidence["attempts"]
+    elif len(evidence["attempts"]) != len(eligible_ids) or any(
+        attempt.get("status") == "FAIL" for attempt in evidence["attempts"]
     ):
-        evidence["status"] = "PASS"
-    else:
         evidence["status"] = "FAIL"
+    elif any(attempt.get("status") == "ABSTAINED" for attempt in evidence["attempts"]):
+        evidence["status"] = "REVIEW"
+    else:
+        evidence["status"] = "PASS"
     evidence["selection"]["counts"]["attempted"] = len(evidence["attempts"])
     evidence["selection"]["counts"]["succeeded"] = sum(
         attempt.get("status") == "PASS" for attempt in evidence["attempts"]
     )
+    evidence["selection"]["counts"]["abstained"] = sum(
+        attempt.get("status") == "ABSTAINED" for attempt in evidence["attempts"]
+    )
     evidence["selection"]["counts"]["failed"] = sum(
-        attempt.get("status") not in {"PASS", "BLOCKED"} for attempt in evidence["attempts"]
+        attempt.get("status") == "FAIL" for attempt in evidence["attempts"]
     )
     evidence["finished_at"] = datetime.now(UTC).isoformat()
     _write_evidence(options.evidence_path, evidence)
@@ -1862,7 +1952,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         len(evidence.get("selection", {}).get("discovered_scenario_ids", [])),
         len(evidence["attempts"]),
     )
-    return 0 if evidence["status"] == "PASS" else 1
+    return 0 if evidence["status"] in {"PASS", "REVIEW"} else 1
 
 
 if __name__ == "__main__":

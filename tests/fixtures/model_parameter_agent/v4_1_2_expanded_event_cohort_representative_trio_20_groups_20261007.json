@@ -1,0 +1,2921 @@
+{
+  "schema_version": 1,
+  "dataset_id": "model-parameter-v4.1.2-expanded-event-cohort-20-groups-20261007",
+  "created_at": "2026-10-07T04:19:19.830516+00:00",
+  "purpose": "Reusable expanded Event cohort for Scenario Lever and Proposal Flow regression evaluation",
+  "contract": {
+    "api_version": "v4",
+    "generation_strategy": "multi_event_model_lever_dimensions",
+    "scenario_lever_release": "v4.1",
+    "scenario_lever_catalog_checksum": "7f4ef0b7aa60efb550b9175654fd82350f0c293debf880a9180e7e935db54d69",
+    "proposal_flow_release": "v4.1.2",
+    "selection_policy": "expanded_event_cohort/add-only",
+    "group_count": 20,
+    "representative_scenarios_per_group": 3,
+    "scenario_count": 60
+  },
+  "cohort_identity": {
+    "selection_policy": "expanded_event_cohort/add-only",
+    "baseline_event_ids": [
+      1335,
+      1464,
+      1257,
+      1508,
+      1512,
+      1336,
+      1432,
+      1342,
+      1505,
+      1306,
+      1522,
+      1523,
+      1157,
+      1683,
+      1463,
+      1510,
+      1225,
+      1518,
+      1379,
+      1386
+    ],
+    "expanded_event_ids": [
+      1350,
+      1521,
+      1462,
+      1116,
+      1513,
+      1475,
+      1500,
+      1334,
+      1141,
+      1134,
+      1131,
+      1129,
+      1497,
+      1261,
+      1381,
+      1359,
+      1222,
+      1136,
+      1223,
+      1338
+    ],
+    "event_sets_disjoint": true
+  },
+  "selection_method": "Require proposal-eligible v4.1 Scenarios; preserve baseline/floor/ceiling representation when available; then maximize identical runtime Parameter sets, pairwise Jaccard overlap, and pressure/cell diversity.",
+  "groups": [
+    {
+      "cohort_order": 1,
+      "scenario_group_id": 419,
+      "event_type_id": 1,
+      "event_type_code": "upstream_utilization_change",
+      "event_id": 1350,
+      "event_title": "이란·이스라엘 공격 중단에 유가 반락",
+      "selection_diagnostics": {
+        "eligible_scenario_count": 4,
+        "eligible_scenario_ids": [
+          1889,
+          1890,
+          1891,
+          1892
+        ],
+        "selection_mode": "proposal-eligible",
+        "coverage_limit": false,
+        "required_role_filter_applied": true,
+        "available_baseline_ids": [
+          1892
+        ],
+        "available_floor_ids": [
+          1892
+        ],
+        "available_ceiling_ids": [
+          1889
+        ],
+        "parameter_sets_identical_in_preflight": false,
+        "parameter_set_pairwise_jaccard_mean": 0.6,
+        "common_runtime_parameter_names": [
+          "GDP",
+          "PMI"
+        ]
+      },
+      "scenarios": [
+        {
+          "scenario_id": 1889,
+          "display_order": 1,
+          "title": "국지 지연과 프리미엄 재확대 우세",
+          "baseline": false,
+          "scenario_role": "ceiling",
+          "pressure_band": "bullish",
+          "cells": {
+            "d1": "d1_v3",
+            "d2": "d2_v2",
+            "d3": "d3_v1"
+          },
+          "preflight_status": "PASS",
+          "proposal_eligible": true,
+          "preflight_skip_reasons": [],
+          "runtime_parameter_names": [
+            "CanalToll",
+            "GDP",
+            "PMI",
+            "ShippingCost",
+            "ShippingFuelCost"
+          ]
+        },
+        {
+          "scenario_id": 1890,
+          "display_order": 2,
+          "title": "국지 보험 제약과 완화 신호 상쇄",
+          "baseline": false,
+          "scenario_role": null,
+          "pressure_band": "balanced",
+          "cells": {
+            "d1": "d1_v2",
+            "d2": "d2_v2",
+            "d3": "d3_v2"
+          },
+          "preflight_status": "PASS",
+          "proposal_eligible": true,
+          "preflight_skip_reasons": [],
+          "runtime_parameter_names": [
+            "CanalToll",
+            "GDP",
+            "PMI",
+            "ShippingCost",
+            "ShippingFuelCost"
+          ]
+        },
+        {
+          "scenario_id": 1892,
+          "display_order": 4,
+          "title": "경로 안정과 프리미엄 축소 결합",
+          "baseline": true,
+          "scenario_role": "floor",
+          "pressure_band": "strong_bearish",
+          "cells": {
+            "d1": "d1_v1",
+            "d2": "d2_v1",
+            "d3": "d3_v3"
+          },
+          "preflight_status": "PASS",
+          "proposal_eligible": true,
+          "preflight_skip_reasons": [],
+          "runtime_parameter_names": [
+            "GDP",
+            "PMI"
+          ]
+        }
+      ]
+    },
+    {
+      "cohort_order": 2,
+      "scenario_group_id": 420,
+      "event_type_id": 1,
+      "event_type_code": "upstream_utilization_change",
+      "event_id": 1521,
+      "event_title": "PetroChina Southwest 상반기 가스 생산 기록",
+      "selection_diagnostics": {
+        "eligible_scenario_count": 3,
+        "eligible_scenario_ids": [
+          1893,
+          1894,
+          1895
+        ],
+        "selection_mode": "proposal-eligible",
+        "coverage_limit": false,
+        "required_role_filter_applied": true,
+        "available_baseline_ids": [
+          1894
+        ],
+        "available_floor_ids": [
+          1895
+        ],
+        "available_ceiling_ids": [
+          1893
+        ],
+        "parameter_sets_identical_in_preflight": true,
+        "parameter_set_pairwise_jaccard_mean": 1.0,
+        "common_runtime_parameter_names": [
+          "RegionalProductionAdjustment"
+        ]
+      },
+      "scenarios": [
+        {
+          "scenario_id": 1893,
+          "display_order": 1,
+          "title": "시운전 지연과 수입 대체 제한",
+          "baseline": false,
+          "scenario_role": "ceiling",
+          "pressure_band": "balanced",
+          "cells": {
+            "d1": "d1_v1",
+            "d2": "d2_v1",
+            "d3": "d3_v1"
+          },
+          "preflight_status": "PASS",
+          "proposal_eligible": true,
+          "preflight_skip_reasons": [],
+          "runtime_parameter_names": [
+            "RegionalProductionAdjustment"
+          ]
+        },
+        {
+          "scenario_id": 1894,
+          "display_order": 2,
+          "title": "점진 생산과 현물 조달 일부 축소",
+          "baseline": true,
+          "scenario_role": null,
+          "pressure_band": "bearish",
+          "cells": {
+            "d1": "d1_v2",
+            "d2": "d2_v2",
+            "d3": "d3_v2"
+          },
+          "preflight_status": "PASS",
+          "proposal_eligible": true,
+          "preflight_skip_reasons": [],
+          "runtime_parameter_names": [
+            "RegionalProductionAdjustment"
+          ]
+        },
+        {
+          "scenario_id": 1895,
+          "display_order": 3,
+          "title": "다수 가동과 대체 효과 중기화",
+          "baseline": false,
+          "scenario_role": "floor",
+          "pressure_band": "strong_bearish",
+          "cells": {
+            "d1": "d1_v3",
+            "d2": "d2_v3",
+            "d3": "d3_v3"
+          },
+          "preflight_status": "PASS",
+          "proposal_eligible": true,
+          "preflight_skip_reasons": [],
+          "runtime_parameter_names": [
+            "RegionalProductionAdjustment"
+          ]
+        }
+      ]
+    },
+    {
+      "cohort_order": 3,
+      "scenario_group_id": 421,
+      "event_type_id": 2,
+      "event_type_code": "terminal_utilization_change",
+      "event_id": 1462,
+      "event_title": "Elba Island 피드가스 변동 추가 확인 부재",
+      "selection_diagnostics": {
+        "eligible_scenario_count": 4,
+        "eligible_scenario_ids": [
+          1896,
+          1897,
+          1898,
+          1899
+        ],
+        "selection_mode": "proposal-eligible",
+        "coverage_limit": false,
+        "required_role_filter_applied": true,
+        "available_baseline_ids": [
+          1898
+        ],
+        "available_floor_ids": [
+          1899
+        ],
+        "available_ceiling_ids": [
+          1896
+        ],
+        "parameter_sets_identical_in_preflight": true,
+        "parameter_set_pairwise_jaccard_mean": 1.0,
+        "common_runtime_parameter_names": [
+          "LiqUtilAdjustment"
+        ]
+      },
+      "scenarios": [
+        {
+          "scenario_id": 1896,
+          "display_order": 1,
+          "title": "지속 저하와 뚜렷한 선적 차질",
+          "baseline": false,
+          "scenario_role": "ceiling",
+          "pressure_band": "strong_bullish",
+          "cells": {
+            "d1": "d1_v3",
+            "d2": "d2_v2",
+            "d3": "d3_v3"
+          },
+          "preflight_status": "PASS",
+          "proposal_eligible": true,
+          "preflight_skip_reasons": [],
+          "runtime_parameter_names": [
+            "LiqUtilAdjustment"
+          ]
+        },
+        {
+          "scenario_id": 1898,
+          "display_order": 3,
+          "title": "부분 회복과 확인 부재의 중립화",
+          "baseline": true,
+          "scenario_role": null,
+          "pressure_band": "balanced",
+          "cells": {
+            "d1": "d1_v2",
+            "d2": "d2_v3",
+            "d3": "d3_v1"
+          },
+          "preflight_status": "PASS",
+          "proposal_eligible": true,
+          "preflight_skip_reasons": [],
+          "runtime_parameter_names": [
+            "LiqUtilAdjustment"
+          ]
+        },
+        {
+          "scenario_id": 1899,
+          "display_order": 4,
+          "title": "일시 저하 해소와 선적 영향 부재",
+          "baseline": false,
+          "scenario_role": "floor",
+          "pressure_band": "bearish",
+          "cells": {
+            "d1": "d1_v2",
+            "d2": "d2_v1",
+            "d3": "d3_v1"
+          },
+          "preflight_status": "PASS",
+          "proposal_eligible": true,
+          "preflight_skip_reasons": [],
+          "runtime_parameter_names": [
+            "LiqUtilAdjustment"
+          ]
+        }
+      ]
+    },
+    {
+      "cohort_order": 4,
+      "scenario_group_id": 422,
+      "event_type_id": 3,
+      "event_type_code": "new_terminal_cod_rampup_change",
+      "event_id": 1116,
+      "event_title": "EemsEnergyTerminal 확장 cFID 발표",
+      "selection_diagnostics": {
+        "eligible_scenario_count": 4,
+        "eligible_scenario_ids": [
+          1900,
+          1901,
+          1902,
+          1903
+        ],
+        "selection_mode": "proposal-eligible",
+        "coverage_limit": false,
+        "required_role_filter_applied": true,
+        "available_baseline_ids": [
+          1901
+        ],
+        "available_floor_ids": [
+          1903
+        ],
+        "available_ceiling_ids": [
+          1900
+        ],
+        "parameter_sets_identical_in_preflight": true,
+        "parameter_set_pairwise_jaccard_mean": 1.0,
+        "common_runtime_parameter_names": [
+          "RegasAdjustment"
+        ]
+      },
+      "scenarios": [
+        {
+          "scenario_id": 1900,
+          "display_order": 1,
+          "title": "장기 이연과 병목 지속 우세",
+          "baseline": false,
+          "scenario_role": "ceiling",
+          "pressure_band": "bullish",
+          "cells": {
+            "d1": "d1_v2",
+            "d2": "d2_v3",
+            "d3": "d3_v3"
+          },
+          "preflight_status": "PASS",
+          "proposal_eligible": true,
+          "preflight_skip_reasons": [],
+          "runtime_parameter_names": [
+            "RegasAdjustment"
+          ]
+        },
+        {
+          "scenario_id": 1901,
+          "display_order": 2,
+          "title": "인허가 지연과 국지 보완에 그침",
+          "baseline": true,
+          "scenario_role": null,
+          "pressure_band": "balanced",
+          "cells": {
+            "d1": "d1_v2",
+            "d2": "d2_v2",
+            "d3": "d3_v2"
+          },
+          "preflight_status": "PASS",
+          "proposal_eligible": true,
+          "preflight_skip_reasons": [],
+          "runtime_parameter_names": [
+            "RegasAdjustment"
+          ]
+        },
+        {
+          "scenario_id": 1903,
+          "display_order": 4,
+          "title": "일정 유지와 병목 완화 결합",
+          "baseline": false,
+          "scenario_role": "floor",
+          "pressure_band": "strong_bearish",
+          "cells": {
+            "d1": "d1_v1",
+            "d2": "d2_v1",
+            "d3": "d3_v1"
+          },
+          "preflight_status": "PASS",
+          "proposal_eligible": true,
+          "preflight_skip_reasons": [],
+          "runtime_parameter_names": [
+            "RegasAdjustment"
+          ]
+        }
+      ]
+    },
+    {
+      "cohort_order": 5,
+      "scenario_group_id": 423,
+      "event_type_id": 4,
+      "event_type_code": "pipeline_utilization_change",
+      "event_id": 1513,
+      "event_title": "아제르바이잔 유럽향 파이프가스 흐름 감소 지속",
+      "selection_diagnostics": {
+        "eligible_scenario_count": 4,
+        "eligible_scenario_ids": [
+          1904,
+          1905,
+          1906,
+          1907
+        ],
+        "selection_mode": "proposal-eligible",
+        "coverage_limit": false,
+        "required_role_filter_applied": true,
+        "available_baseline_ids": [
+          1905
+        ],
+        "available_floor_ids": [
+          1907
+        ],
+        "available_ceiling_ids": [
+          1904
+        ],
+        "parameter_sets_identical_in_preflight": true,
+        "parameter_set_pairwise_jaccard_mean": 1.0,
+        "common_runtime_parameter_names": [
+          "PipelineAdjustment"
+        ]
+      },
+      "scenarios": [
+        {
+          "scenario_id": 1904,
+          "display_order": 1,
+          "title": "복수 월 감소와 배분 지속 결합",
+          "baseline": false,
+          "scenario_role": "ceiling",
+          "pressure_band": "strong_bullish",
+          "cells": {
+            "d1": "d1_v3",
+            "d2": "d2_v3",
+            "d3": "d3_v3"
+          },
+          "preflight_status": "PASS",
+          "proposal_eligible": true,
+          "preflight_skip_reasons": [],
+          "runtime_parameter_names": [
+            "PipelineAdjustment"
+          ]
+        },
+        {
+          "scenario_id": 1905,
+          "display_order": 2,
+          "title": "간헐 제한과 부분 보강 병존",
+          "baseline": true,
+          "scenario_role": null,
+          "pressure_band": "bullish",
+          "cells": {
+            "d1": "d1_v2",
+            "d2": "d2_v2",
+            "d3": "d3_v2"
+          },
+          "preflight_status": "PASS",
+          "proposal_eligible": true,
+          "preflight_skip_reasons": [],
+          "runtime_parameter_names": [
+            "PipelineAdjustment"
+          ]
+        },
+        {
+          "scenario_id": 1907,
+          "display_order": 4,
+          "title": "일부 감소 후 조기 회복 우세",
+          "baseline": false,
+          "scenario_role": "floor",
+          "pressure_band": "bearish",
+          "cells": {
+            "d1": "d1_v2",
+            "d2": "d2_v1",
+            "d3": "d3_v1"
+          },
+          "preflight_status": "PASS",
+          "proposal_eligible": true,
+          "preflight_skip_reasons": [],
+          "runtime_parameter_names": [
+            "PipelineAdjustment"
+          ]
+        }
+      ]
+    },
+    {
+      "cohort_order": 6,
+      "scenario_group_id": 424,
+      "event_type_id": 7,
+      "event_type_code": "summer_heat_wave",
+      "event_id": 1475,
+      "event_title": "미국 폭염·생산 감소 속 가스선물 1주 최고 종가",
+      "selection_diagnostics": {
+        "eligible_scenario_count": 5,
+        "eligible_scenario_ids": [
+          1908,
+          1909,
+          1910,
+          1911,
+          1912
+        ],
+        "selection_mode": "proposal-eligible",
+        "coverage_limit": false,
+        "required_role_filter_applied": true,
+        "available_baseline_ids": [
+          1911
+        ],
+        "available_floor_ids": [
+          1912
+        ],
+        "available_ceiling_ids": [
+          1908
+        ],
+        "parameter_sets_identical_in_preflight": true,
+        "parameter_set_pairwise_jaccard_mean": 1.0,
+        "common_runtime_parameter_names": [
+          "SupplyDisruption",
+          "Temperature"
+        ]
+      },
+      "scenarios": [
+        {
+          "scenario_id": 1908,
+          "display_order": 1,
+          "title": "생산 추가 약화와 냉방 고부하 결합",
+          "baseline": false,
+          "scenario_role": "ceiling",
+          "pressure_band": "strong_bullish",
+          "cells": {
+            "d1": "d1_v3",
+            "d2": "d2_v3",
+            "d3": "d3_v3"
+          },
+          "preflight_status": "PASS",
+          "proposal_eligible": true,
+          "preflight_skip_reasons": [],
+          "runtime_parameter_names": [
+            "SupplyDisruption",
+            "Temperature"
+          ]
+        },
+        {
+          "scenario_id": 1911,
+          "display_order": 4,
+          "title": "생산 회복 속 간헐 냉방만 잔존",
+          "baseline": true,
+          "scenario_role": null,
+          "pressure_band": "bearish",
+          "cells": {
+            "d1": "d1_v1",
+            "d2": "d2_v1",
+            "d3": "d3_v2"
+          },
+          "preflight_status": "PASS",
+          "proposal_eligible": true,
+          "preflight_skip_reasons": [],
+          "runtime_parameter_names": [
+            "SupplyDisruption",
+            "Temperature"
+          ]
+        },
+        {
+          "scenario_id": 1912,
+          "display_order": 5,
+          "title": "생산 회복과 냉방 정상화 동시 진행",
+          "baseline": false,
+          "scenario_role": "floor",
+          "pressure_band": "strong_bearish",
+          "cells": {
+            "d1": "d1_v1",
+            "d2": "d2_v1",
+            "d3": "d3_v1"
+          },
+          "preflight_status": "PASS",
+          "proposal_eligible": true,
+          "preflight_skip_reasons": [],
+          "runtime_parameter_names": [
+            "SupplyDisruption",
+            "Temperature"
+          ]
+        }
+      ]
+    },
+    {
+      "cohort_order": 7,
+      "scenario_group_id": 425,
+      "event_type_id": 7,
+      "event_type_code": "summer_heat_wave",
+      "event_id": 1500,
+      "event_title": "중국 폭염 속 전력부하 최고치",
+      "selection_diagnostics": {
+        "eligible_scenario_count": 3,
+        "eligible_scenario_ids": [
+          1913,
+          1914,
+          1916
+        ],
+        "selection_mode": "proposal-eligible",
+        "coverage_limit": false,
+        "required_role_filter_applied": true,
+        "available_baseline_ids": [],
+        "available_floor_ids": [
+          1916
+        ],
+        "available_ceiling_ids": [
+          1913
+        ],
+        "parameter_sets_identical_in_preflight": true,
+        "parameter_set_pairwise_jaccard_mean": 1.0,
+        "common_runtime_parameter_names": [
+          "Temperature"
+        ]
+      },
+      "scenarios": [
+        {
+          "scenario_id": 1913,
+          "display_order": 1,
+          "title": "가스발전·현물경쟁 동시 증폭",
+          "baseline": false,
+          "scenario_role": "ceiling",
+          "pressure_band": "strong_bullish",
+          "cells": {
+            "d1": "d1_v1",
+            "d2": "d2_v3",
+            "d3": "d3_v1"
+          },
+          "preflight_status": "PASS",
+          "proposal_eligible": true,
+          "preflight_skip_reasons": [],
+          "runtime_parameter_names": [
+            "Temperature"
+          ]
+        },
+        {
+          "scenario_id": 1914,
+          "display_order": 2,
+          "title": "반복 피크와 현물구매 발동",
+          "baseline": false,
+          "scenario_role": null,
+          "pressure_band": "bullish",
+          "cells": {
+            "d1": "d1_v3",
+            "d2": "d2_v1",
+            "d3": "d3_v3"
+          },
+          "preflight_status": "PASS",
+          "proposal_eligible": true,
+          "preflight_skip_reasons": [],
+          "runtime_parameter_names": [
+            "Temperature"
+          ]
+        },
+        {
+          "scenario_id": 1916,
+          "display_order": 4,
+          "title": "조기 완화가 잔여 피크를 압도",
+          "baseline": false,
+          "scenario_role": "floor",
+          "pressure_band": "bearish",
+          "cells": {
+            "d1": "d1_v3",
+            "d2": "d2_v2",
+            "d3": "d3_v2"
+          },
+          "preflight_status": "PASS",
+          "proposal_eligible": true,
+          "preflight_skip_reasons": [],
+          "runtime_parameter_names": [
+            "Temperature"
+          ]
+        }
+      ]
+    },
+    {
+      "cohort_order": 8,
+      "scenario_group_id": 426,
+      "event_type_id": 9,
+      "event_type_code": "renewable_energy",
+      "event_id": 1334,
+      "event_title": "남미 수력 회복에 LNG 조달 둔화",
+      "selection_diagnostics": {
+        "eligible_scenario_count": 4,
+        "eligible_scenario_ids": [
+          1917,
+          1918,
+          1919,
+          1920
+        ],
+        "selection_mode": "proposal-eligible",
+        "coverage_limit": false,
+        "required_role_filter_applied": true,
+        "available_baseline_ids": [
+          1918
+        ],
+        "available_floor_ids": [
+          1920
+        ],
+        "available_ceiling_ids": [
+          1917
+        ],
+        "parameter_sets_identical_in_preflight": true,
+        "parameter_set_pairwise_jaccard_mean": 1.0,
+        "common_runtime_parameter_names": [
+          "PowerMix"
+        ]
+      },
+      "scenarios": [
+        {
+          "scenario_id": 1917,
+          "display_order": 1,
+          "title": "건기 복귀와 재배치 차단",
+          "baseline": false,
+          "scenario_role": "ceiling",
+          "pressure_band": "bullish",
+          "cells": {
+            "d1": "d1_v2",
+            "d2": "d2_v3",
+            "d3": "d3_v3"
+          },
+          "preflight_status": "PASS",
+          "proposal_eligible": true,
+          "preflight_skip_reasons": [],
+          "runtime_parameter_names": [
+            "PowerMix"
+          ]
+        },
+        {
+          "scenario_id": 1918,
+          "display_order": 2,
+          "title": "제한적 정상화와 역내 흡수",
+          "baseline": true,
+          "scenario_role": null,
+          "pressure_band": "balanced",
+          "cells": {
+            "d1": "d1_v2",
+            "d2": "d2_v2",
+            "d3": "d3_v2"
+          },
+          "preflight_status": "PASS",
+          "proposal_eligible": true,
+          "preflight_skip_reasons": [],
+          "runtime_parameter_names": [
+            "PowerMix"
+          ]
+        },
+        {
+          "scenario_id": 1920,
+          "display_order": 4,
+          "title": "수력 우위와 아시아 유입 결합",
+          "baseline": false,
+          "scenario_role": "floor",
+          "pressure_band": "strong_bearish",
+          "cells": {
+            "d1": "d1_v1",
+            "d2": "d2_v1",
+            "d3": "d3_v1"
+          },
+          "preflight_status": "PASS",
+          "proposal_eligible": true,
+          "preflight_skip_reasons": [],
+          "runtime_parameter_names": [
+            "PowerMix"
+          ]
+        }
+      ]
+    },
+    {
+      "cohort_order": 9,
+      "scenario_group_id": 427,
+      "event_type_id": 12,
+      "event_type_code": "inventory_level",
+      "event_id": 1141,
+      "event_title": "미국 가스 재고 5년 평균 상회 지속",
+      "selection_diagnostics": {
+        "eligible_scenario_count": 5,
+        "eligible_scenario_ids": [
+          1921,
+          1922,
+          1923,
+          1924,
+          1925
+        ],
+        "selection_mode": "proposal-eligible",
+        "coverage_limit": false,
+        "required_role_filter_applied": true,
+        "available_baseline_ids": [
+          1923
+        ],
+        "available_floor_ids": [
+          1925
+        ],
+        "available_ceiling_ids": [
+          1921
+        ],
+        "parameter_sets_identical_in_preflight": true,
+        "parameter_set_pairwise_jaccard_mean": 1.0,
+        "common_runtime_parameter_names": [
+          "GDP",
+          "LiqProdAdjustment",
+          "LiqUtilAdjustment",
+          "PMI",
+          "PNG Contract Volume",
+          "PipelineAdjustment",
+          "PowerMix",
+          "RegasAdjustment",
+          "RegionalProductionAdjustment",
+          "SupplyDisruption",
+          "Temperature"
+        ]
+      },
+      "scenarios": [
+        {
+          "scenario_id": 1921,
+          "display_order": 1,
+          "title": "재고 해소와 액화 둔화 결합",
+          "baseline": false,
+          "scenario_role": "ceiling",
+          "pressure_band": "strong_bullish",
+          "cells": {
+            "d1": "d1_v3",
+            "d2": "d2_v3",
+            "d3": "d3_v3"
+          },
+          "preflight_status": "PASS",
+          "proposal_eligible": true,
+          "preflight_skip_reasons": [],
+          "runtime_parameter_names": [
+            "GDP",
+            "LiqProdAdjustment",
+            "LiqUtilAdjustment",
+            "PMI",
+            "PNG Contract Volume",
+            "PipelineAdjustment",
+            "PowerMix",
+            "RegasAdjustment",
+            "RegionalProductionAdjustment",
+            "SupplyDisruption",
+            "Temperature"
+          ]
+        },
+        {
+          "scenario_id": 1923,
+          "display_order": 3,
+          "title": "재고 축소와 카고 제한의 균형",
+          "baseline": true,
+          "scenario_role": null,
+          "pressure_band": "balanced",
+          "cells": {
+            "d1": "d1_v2",
+            "d2": "d2_v2",
+            "d3": "d3_v2"
+          },
+          "preflight_status": "PASS",
+          "proposal_eligible": true,
+          "preflight_skip_reasons": [],
+          "runtime_parameter_names": [
+            "GDP",
+            "LiqProdAdjustment",
+            "LiqUtilAdjustment",
+            "PMI",
+            "PNG Contract Volume",
+            "PipelineAdjustment",
+            "PowerMix",
+            "RegasAdjustment",
+            "RegionalProductionAdjustment",
+            "SupplyDisruption",
+            "Temperature"
+          ]
+        },
+        {
+          "scenario_id": 1925,
+          "display_order": 5,
+          "title": "초과 재고와 카고 확대 결합",
+          "baseline": false,
+          "scenario_role": "floor",
+          "pressure_band": "strong_bearish",
+          "cells": {
+            "d1": "d1_v1",
+            "d2": "d2_v1",
+            "d3": "d3_v1"
+          },
+          "preflight_status": "PASS",
+          "proposal_eligible": true,
+          "preflight_skip_reasons": [],
+          "runtime_parameter_names": [
+            "GDP",
+            "LiqProdAdjustment",
+            "LiqUtilAdjustment",
+            "PMI",
+            "PNG Contract Volume",
+            "PipelineAdjustment",
+            "PowerMix",
+            "RegasAdjustment",
+            "RegionalProductionAdjustment",
+            "SupplyDisruption",
+            "Temperature"
+          ]
+        }
+      ]
+    },
+    {
+      "cohort_order": 10,
+      "scenario_group_id": 428,
+      "event_type_id": 12,
+      "event_type_code": "inventory_level",
+      "event_id": 1134,
+      "event_title": "유럽 저장률 전년 하회, 재충전 수요 지속",
+      "selection_diagnostics": {
+        "eligible_scenario_count": 3,
+        "eligible_scenario_ids": [
+          1926,
+          1927,
+          1929
+        ],
+        "selection_mode": "proposal-eligible",
+        "coverage_limit": false,
+        "required_role_filter_applied": true,
+        "available_baseline_ids": [],
+        "available_floor_ids": [
+          1929
+        ],
+        "available_ceiling_ids": [
+          1926
+        ],
+        "parameter_sets_identical_in_preflight": true,
+        "parameter_set_pairwise_jaccard_mean": 1.0,
+        "common_runtime_parameter_names": [
+          "GDP",
+          "LiqProdAdjustment",
+          "LiqUtilAdjustment",
+          "PMI",
+          "PNG Contract Volume",
+          "PipelineAdjustment",
+          "PowerMix",
+          "RegasAdjustment",
+          "RegionalProductionAdjustment",
+          "SupplyDisruption",
+          "Temperature"
+        ]
+      },
+      "scenarios": [
+        {
+          "scenario_id": 1926,
+          "display_order": 1,
+          "title": "주입 정체와 카고 흡수 동시 증폭",
+          "baseline": false,
+          "scenario_role": "ceiling",
+          "pressure_band": "strong_bullish",
+          "cells": {
+            "d1": "d1_v3",
+            "d2": "d2_v3",
+            "d3": "d3_v3"
+          },
+          "preflight_status": "PASS",
+          "proposal_eligible": true,
+          "preflight_skip_reasons": [],
+          "runtime_parameter_names": [
+            "GDP",
+            "LiqProdAdjustment",
+            "LiqUtilAdjustment",
+            "PMI",
+            "PNG Contract Volume",
+            "PipelineAdjustment",
+            "PowerMix",
+            "RegasAdjustment",
+            "RegionalProductionAdjustment",
+            "SupplyDisruption",
+            "Temperature"
+          ]
+        },
+        {
+          "scenario_id": 1927,
+          "display_order": 2,
+          "title": "부족 잔존 속 유럽 흡수 확대",
+          "baseline": false,
+          "scenario_role": null,
+          "pressure_band": "bullish",
+          "cells": {
+            "d1": "d1_v2",
+            "d2": "d2_v3",
+            "d3": "d3_v3"
+          },
+          "preflight_status": "PASS",
+          "proposal_eligible": true,
+          "preflight_skip_reasons": [],
+          "runtime_parameter_names": [
+            "GDP",
+            "LiqProdAdjustment",
+            "LiqUtilAdjustment",
+            "PMI",
+            "PNG Contract Volume",
+            "PipelineAdjustment",
+            "PowerMix",
+            "RegasAdjustment",
+            "RegionalProductionAdjustment",
+            "SupplyDisruption",
+            "Temperature"
+          ]
+        },
+        {
+          "scenario_id": 1929,
+          "display_order": 4,
+          "title": "주입 회복과 흡수 제한 우세",
+          "baseline": false,
+          "scenario_role": "floor",
+          "pressure_band": "bearish",
+          "cells": {
+            "d1": "d1_v1",
+            "d2": "d2_v1",
+            "d3": "d3_v2"
+          },
+          "preflight_status": "PASS",
+          "proposal_eligible": true,
+          "preflight_skip_reasons": [],
+          "runtime_parameter_names": [
+            "GDP",
+            "LiqProdAdjustment",
+            "LiqUtilAdjustment",
+            "PMI",
+            "PNG Contract Volume",
+            "PipelineAdjustment",
+            "PowerMix",
+            "RegasAdjustment",
+            "RegionalProductionAdjustment",
+            "SupplyDisruption",
+            "Temperature"
+          ]
+        }
+      ]
+    },
+    {
+      "cohort_order": 11,
+      "scenario_group_id": 429,
+      "event_type_id": 13,
+      "event_type_code": "ocean_freight",
+      "event_id": 1131,
+      "event_title": "호르무즈 통항 회복에도 운임 변화 제한",
+      "selection_diagnostics": {
+        "eligible_scenario_count": 4,
+        "eligible_scenario_ids": [
+          1930,
+          1931,
+          1932,
+          1933
+        ],
+        "selection_mode": "proposal-eligible",
+        "coverage_limit": false,
+        "required_role_filter_applied": true,
+        "available_baseline_ids": [
+          1932
+        ],
+        "available_floor_ids": [
+          1933
+        ],
+        "available_ceiling_ids": [
+          1930
+        ],
+        "parameter_sets_identical_in_preflight": true,
+        "parameter_set_pairwise_jaccard_mean": 1.0,
+        "common_runtime_parameter_names": [
+          "CanalToll",
+          "ShippingCost",
+          "ShippingFuelCost"
+        ]
+      },
+      "scenarios": [
+        {
+          "scenario_id": 1930,
+          "display_order": 1,
+          "title": "정상화 지연과 광범위 우회 결합",
+          "baseline": false,
+          "scenario_role": "ceiling",
+          "pressure_band": "strong_bullish",
+          "cells": {
+            "d1": "d1_v3",
+            "d2": "d2_v3",
+            "d3": "d3_v3"
+          },
+          "preflight_status": "PASS",
+          "proposal_eligible": true,
+          "preflight_skip_reasons": [],
+          "runtime_parameter_names": [
+            "CanalToll",
+            "ShippingCost",
+            "ShippingFuelCost"
+          ]
+        },
+        {
+          "scenario_id": 1932,
+          "display_order": 3,
+          "title": "부분 회복과 운임 경직의 혼조",
+          "baseline": true,
+          "scenario_role": null,
+          "pressure_band": "balanced",
+          "cells": {
+            "d1": "d1_v2",
+            "d2": "d2_v2",
+            "d3": "d3_v2"
+          },
+          "preflight_status": "PASS",
+          "proposal_eligible": true,
+          "preflight_skip_reasons": [],
+          "runtime_parameter_names": [
+            "CanalToll",
+            "ShippingCost",
+            "ShippingFuelCost"
+          ]
+        },
+        {
+          "scenario_id": 1933,
+          "display_order": 4,
+          "title": "정상 통항과 프리미엄 완화 우세",
+          "baseline": false,
+          "scenario_role": "floor",
+          "pressure_band": "bearish",
+          "cells": {
+            "d1": "d1_v1",
+            "d2": "d2_v1",
+            "d3": "d3_v2"
+          },
+          "preflight_status": "PASS",
+          "proposal_eligible": true,
+          "preflight_skip_reasons": [],
+          "runtime_parameter_names": [
+            "CanalToll",
+            "ShippingCost",
+            "ShippingFuelCost"
+          ]
+        }
+      ]
+    },
+    {
+      "cohort_order": 12,
+      "scenario_group_id": 430,
+      "event_type_id": 14,
+      "event_type_code": "supply_chain_cargo_flow",
+      "event_id": 1129,
+      "event_title": "호르무즈 봉쇄 주장 속 통항 지속",
+      "selection_diagnostics": {
+        "eligible_scenario_count": 4,
+        "eligible_scenario_ids": [
+          1934,
+          1935,
+          1936,
+          1937
+        ],
+        "selection_mode": "proposal-eligible",
+        "coverage_limit": false,
+        "required_role_filter_applied": true,
+        "available_baseline_ids": [
+          1936
+        ],
+        "available_floor_ids": [
+          1937
+        ],
+        "available_ceiling_ids": [
+          1934
+        ],
+        "parameter_sets_identical_in_preflight": true,
+        "parameter_set_pairwise_jaccard_mean": 1.0,
+        "common_runtime_parameter_names": [
+          "CanalToll",
+          "ShippingCost",
+          "ShippingFuelCost"
+        ]
+      },
+      "scenarios": [
+        {
+          "scenario_id": 1934,
+          "display_order": 1,
+          "title": "우회·제한과 장기 프리미엄 결합",
+          "baseline": false,
+          "scenario_role": "ceiling",
+          "pressure_band": "strong_bullish",
+          "cells": {
+            "d1": "d1_v3",
+            "d2": "d2_v3",
+            "d3": "d3_v3"
+          },
+          "preflight_status": "PASS",
+          "proposal_eligible": true,
+          "preflight_skip_reasons": [],
+          "runtime_parameter_names": [
+            "CanalToll",
+            "ShippingCost",
+            "ShippingFuelCost"
+          ]
+        },
+        {
+          "scenario_id": 1936,
+          "display_order": 3,
+          "title": "통항 정상이나 프리미엄 잔존",
+          "baseline": true,
+          "scenario_role": null,
+          "pressure_band": "balanced",
+          "cells": {
+            "d1": "d1_v1",
+            "d2": "d2_v2",
+            "d3": "d3_v2"
+          },
+          "preflight_status": "PASS",
+          "proposal_eligible": true,
+          "preflight_skip_reasons": [],
+          "runtime_parameter_names": [
+            "CanalToll",
+            "ShippingCost",
+            "ShippingFuelCost"
+          ]
+        },
+        {
+          "scenario_id": 1937,
+          "display_order": 4,
+          "title": "통항 확인 우세와 제한적 회수",
+          "baseline": false,
+          "scenario_role": "floor",
+          "pressure_band": "bearish",
+          "cells": {
+            "d1": "d1_v1",
+            "d2": "d2_v1",
+            "d3": "d3_v2"
+          },
+          "preflight_status": "PASS",
+          "proposal_eligible": true,
+          "preflight_skip_reasons": [],
+          "runtime_parameter_names": [
+            "CanalToll",
+            "ShippingCost",
+            "ShippingFuelCost"
+          ]
+        }
+      ]
+    },
+    {
+      "cohort_order": 13,
+      "scenario_group_id": 431,
+      "event_type_id": 14,
+      "event_type_code": "supply_chain_cargo_flow",
+      "event_id": 1497,
+      "event_title": "호르무즈 해협 통항 불확실성 재점화",
+      "selection_diagnostics": {
+        "eligible_scenario_count": 4,
+        "eligible_scenario_ids": [
+          1938,
+          1939,
+          1940,
+          1941
+        ],
+        "selection_mode": "proposal-eligible",
+        "coverage_limit": false,
+        "required_role_filter_applied": true,
+        "available_baseline_ids": [
+          1940
+        ],
+        "available_floor_ids": [
+          1941
+        ],
+        "available_ceiling_ids": [
+          1938
+        ],
+        "parameter_sets_identical_in_preflight": true,
+        "parameter_set_pairwise_jaccard_mean": 1.0,
+        "common_runtime_parameter_names": [
+          "CanalToll",
+          "ShippingCost",
+          "ShippingFuelCost"
+        ]
+      },
+      "scenarios": [
+        {
+          "scenario_id": 1938,
+          "display_order": 1,
+          "title": "우회 확대와 대체 부족의 증폭",
+          "baseline": false,
+          "scenario_role": "ceiling",
+          "pressure_band": "strong_bullish",
+          "cells": {
+            "d1": "d1_v3",
+            "d2": "d2_v2",
+            "d3": "d3_v3"
+          },
+          "preflight_status": "PASS",
+          "proposal_eligible": true,
+          "preflight_skip_reasons": [],
+          "runtime_parameter_names": [
+            "CanalToll",
+            "ShippingCost",
+            "ShippingFuelCost"
+          ]
+        },
+        {
+          "scenario_id": 1940,
+          "display_order": 3,
+          "title": "통항 유지 속 경계 프리미엄 잔존",
+          "baseline": true,
+          "scenario_role": null,
+          "pressure_band": "balanced",
+          "cells": {
+            "d1": "d1_v1",
+            "d2": "d2_v3",
+            "d3": "d3_v2"
+          },
+          "preflight_status": "PASS",
+          "proposal_eligible": true,
+          "preflight_skip_reasons": [],
+          "runtime_parameter_names": [
+            "CanalToll",
+            "ShippingCost",
+            "ShippingFuelCost"
+          ]
+        },
+        {
+          "scenario_id": 1941,
+          "display_order": 4,
+          "title": "대기 발생 후 회복·흡수 우세",
+          "baseline": false,
+          "scenario_role": "floor",
+          "pressure_band": "bearish",
+          "cells": {
+            "d1": "d1_v2",
+            "d2": "d2_v1",
+            "d3": "d3_v1"
+          },
+          "preflight_status": "PASS",
+          "proposal_eligible": true,
+          "preflight_skip_reasons": [],
+          "runtime_parameter_names": [
+            "CanalToll",
+            "ShippingCost",
+            "ShippingFuelCost"
+          ]
+        }
+      ]
+    },
+    {
+      "cohort_order": 14,
+      "scenario_group_id": 432,
+      "event_type_id": 16,
+      "event_type_code": "index_spread",
+      "event_id": 1261,
+      "event_title": "JKM-NWE 스프레드 축소, 9월 이후 재정거래 약화",
+      "selection_diagnostics": {
+        "eligible_scenario_count": 4,
+        "eligible_scenario_ids": [
+          1942,
+          1943,
+          1945,
+          1946
+        ],
+        "selection_mode": "proposal-eligible",
+        "coverage_limit": false,
+        "required_role_filter_applied": true,
+        "available_baseline_ids": [],
+        "available_floor_ids": [
+          1946
+        ],
+        "available_ceiling_ids": [
+          1942
+        ],
+        "parameter_sets_identical_in_preflight": true,
+        "parameter_set_pairwise_jaccard_mean": 1.0,
+        "common_runtime_parameter_names": [
+          "CanalToll",
+          "GDP",
+          "LiqProdAdjustment",
+          "LiqUtilAdjustment",
+          "PMI",
+          "PNG Contract Volume",
+          "PipelineAdjustment",
+          "PowerMix",
+          "RegasAdjustment",
+          "RegionalProductionAdjustment",
+          "ShippingCost",
+          "ShippingFuelCost",
+          "SupplyDisruption",
+          "Temperature"
+        ]
+      },
+      "scenarios": [
+        {
+          "scenario_id": 1942,
+          "display_order": 1,
+          "title": "프리미엄 확대와 조기 재개 증폭",
+          "baseline": false,
+          "scenario_role": "ceiling",
+          "pressure_band": "strong_bullish",
+          "cells": {
+            "d1": "d1_v3",
+            "d2": "d2_v1",
+            "d3": "d3_v1"
+          },
+          "preflight_status": "PASS",
+          "proposal_eligible": true,
+          "preflight_skip_reasons": [],
+          "runtime_parameter_names": [
+            "CanalToll",
+            "GDP",
+            "LiqProdAdjustment",
+            "LiqUtilAdjustment",
+            "PMI",
+            "PNG Contract Volume",
+            "PipelineAdjustment",
+            "PowerMix",
+            "RegasAdjustment",
+            "RegionalProductionAdjustment",
+            "ShippingCost",
+            "ShippingFuelCost",
+            "SupplyDisruption",
+            "Temperature"
+          ]
+        },
+        {
+          "scenario_id": 1943,
+          "display_order": 2,
+          "title": "재개 회복이 전환 균형을 앞섬",
+          "baseline": false,
+          "scenario_role": null,
+          "pressure_band": "bullish",
+          "cells": {
+            "d1": "d1_v3",
+            "d2": "d2_v2",
+            "d3": "d3_v1"
+          },
+          "preflight_status": "PASS",
+          "proposal_eligible": true,
+          "preflight_skip_reasons": [],
+          "runtime_parameter_names": [
+            "CanalToll",
+            "GDP",
+            "LiqProdAdjustment",
+            "LiqUtilAdjustment",
+            "PMI",
+            "PNG Contract Volume",
+            "PipelineAdjustment",
+            "PowerMix",
+            "RegasAdjustment",
+            "RegionalProductionAdjustment",
+            "ShippingCost",
+            "ShippingFuelCost",
+            "SupplyDisruption",
+            "Temperature"
+          ]
+        },
+        {
+          "scenario_id": 1946,
+          "display_order": 5,
+          "title": "폐쇄 장기화와 전환 둔화 결합",
+          "baseline": false,
+          "scenario_role": "floor",
+          "pressure_band": "strong_bearish",
+          "cells": {
+            "d1": "d1_v1",
+            "d2": "d2_v3",
+            "d3": "d3_v3"
+          },
+          "preflight_status": "PASS",
+          "proposal_eligible": true,
+          "preflight_skip_reasons": [],
+          "runtime_parameter_names": [
+            "CanalToll",
+            "GDP",
+            "LiqProdAdjustment",
+            "LiqUtilAdjustment",
+            "PMI",
+            "PNG Contract Volume",
+            "PipelineAdjustment",
+            "PowerMix",
+            "RegasAdjustment",
+            "RegionalProductionAdjustment",
+            "ShippingCost",
+            "ShippingFuelCost",
+            "SupplyDisruption",
+            "Temperature"
+          ]
+        }
+      ]
+    },
+    {
+      "cohort_order": 15,
+      "scenario_group_id": 433,
+      "event_type_id": 17,
+      "event_type_code": "geopolitical_tension_war",
+      "event_id": 1381,
+      "event_title": "대이란 공습 취소로 중동 긴장 완화",
+      "selection_diagnostics": {
+        "eligible_scenario_count": 5,
+        "eligible_scenario_ids": [
+          1947,
+          1948,
+          1949,
+          1950,
+          1951
+        ],
+        "selection_mode": "proposal-eligible",
+        "coverage_limit": false,
+        "required_role_filter_applied": true,
+        "available_baseline_ids": [
+          1949
+        ],
+        "available_floor_ids": [
+          1951
+        ],
+        "available_ceiling_ids": [
+          1947
+        ],
+        "parameter_sets_identical_in_preflight": true,
+        "parameter_set_pairwise_jaccard_mean": 1.0,
+        "common_runtime_parameter_names": [
+          "CanalToll",
+          "ShippingCost",
+          "ShippingFuelCost"
+        ]
+      },
+      "scenarios": [
+        {
+          "scenario_id": 1947,
+          "display_order": 1,
+          "title": "항행 실패와 설비 차질 동시 확대",
+          "baseline": false,
+          "scenario_role": "ceiling",
+          "pressure_band": "strong_bullish",
+          "cells": {
+            "d1": "d1_v3",
+            "d2": "d2_v1",
+            "d3": "d3_v3"
+          },
+          "preflight_status": "PASS",
+          "proposal_eligible": true,
+          "preflight_skip_reasons": [],
+          "runtime_parameter_names": [
+            "CanalToll",
+            "ShippingCost",
+            "ShippingFuelCost"
+          ]
+        },
+        {
+          "scenario_id": 1949,
+          "display_order": 3,
+          "title": "문안 기대와 일부 화물 차질 상쇄",
+          "baseline": true,
+          "scenario_role": null,
+          "pressure_band": "balanced",
+          "cells": {
+            "d1": "d1_v2",
+            "d2": "d2_v2",
+            "d3": "d3_v2"
+          },
+          "preflight_status": "PASS",
+          "proposal_eligible": true,
+          "preflight_skip_reasons": [],
+          "runtime_parameter_names": [
+            "CanalToll",
+            "ShippingCost",
+            "ShippingFuelCost"
+          ]
+        },
+        {
+          "scenario_id": 1951,
+          "display_order": 5,
+          "title": "항행 정상화와 물리 차질 부재 결합",
+          "baseline": false,
+          "scenario_role": "floor",
+          "pressure_band": "strong_bearish",
+          "cells": {
+            "d1": "d1_v1",
+            "d2": "d2_v3",
+            "d3": "d3_v1"
+          },
+          "preflight_status": "PASS",
+          "proposal_eligible": true,
+          "preflight_skip_reasons": [],
+          "runtime_parameter_names": [
+            "CanalToll",
+            "ShippingCost",
+            "ShippingFuelCost"
+          ]
+        }
+      ]
+    },
+    {
+      "cohort_order": 16,
+      "scenario_group_id": 434,
+      "event_type_id": 17,
+      "event_type_code": "geopolitical_tension_war",
+      "event_id": 1359,
+      "event_title": "이란의 미군 아파치 격추 주장",
+      "selection_diagnostics": {
+        "eligible_scenario_count": 5,
+        "eligible_scenario_ids": [
+          1952,
+          1953,
+          1954,
+          1955,
+          1956
+        ],
+        "selection_mode": "proposal-eligible",
+        "coverage_limit": false,
+        "required_role_filter_applied": true,
+        "available_baseline_ids": [
+          1954
+        ],
+        "available_floor_ids": [
+          1956
+        ],
+        "available_ceiling_ids": [
+          1952
+        ],
+        "parameter_sets_identical_in_preflight": true,
+        "parameter_set_pairwise_jaccard_mean": 1.0,
+        "common_runtime_parameter_names": [
+          "CanalToll",
+          "ShippingCost",
+          "ShippingFuelCost"
+        ]
+      },
+      "scenarios": [
+        {
+          "scenario_id": 1952,
+          "display_order": 1,
+          "title": "우회·보류 확산과 제한 장기화",
+          "baseline": false,
+          "scenario_role": "ceiling",
+          "pressure_band": "strong_bullish",
+          "cells": {
+            "d1": "d1_v3",
+            "d2": "d2_v3",
+            "d3": "d3_v3"
+          },
+          "preflight_status": "PASS",
+          "proposal_eligible": true,
+          "preflight_skip_reasons": [],
+          "runtime_parameter_names": [
+            "CanalToll",
+            "ShippingCost",
+            "ShippingFuelCost"
+          ]
+        },
+        {
+          "scenario_id": 1954,
+          "display_order": 3,
+          "title": "정상 통항 속 위험료 잔존",
+          "baseline": true,
+          "scenario_role": "mixed",
+          "pressure_band": "balanced",
+          "cells": {
+            "d1": "d1_v1",
+            "d2": "d2_v2",
+            "d3": "d3_v2"
+          },
+          "preflight_status": "PASS",
+          "proposal_eligible": true,
+          "preflight_skip_reasons": [],
+          "runtime_parameter_names": [
+            "CanalToll",
+            "ShippingCost",
+            "ShippingFuelCost"
+          ]
+        },
+        {
+          "scenario_id": 1956,
+          "display_order": 5,
+          "title": "통항 안정과 일정 방어 결합",
+          "baseline": false,
+          "scenario_role": "floor",
+          "pressure_band": "strong_bearish",
+          "cells": {
+            "d1": "d1_v1",
+            "d2": "d2_v1",
+            "d3": "d3_v1"
+          },
+          "preflight_status": "PASS",
+          "proposal_eligible": true,
+          "preflight_skip_reasons": [],
+          "runtime_parameter_names": [
+            "CanalToll",
+            "ShippingCost",
+            "ShippingFuelCost"
+          ]
+        }
+      ]
+    },
+    {
+      "cohort_order": 17,
+      "scenario_group_id": 435,
+      "event_type_id": 18,
+      "event_type_code": "economic_sanctions_trade_restrictions",
+      "event_id": 1222,
+      "event_title": "호르무즈 부분 폐쇄 지속과 카타르 LNG 물류 리스크",
+      "selection_diagnostics": {
+        "eligible_scenario_count": 4,
+        "eligible_scenario_ids": [
+          1957,
+          1958,
+          1959,
+          1960
+        ],
+        "selection_mode": "proposal-eligible",
+        "coverage_limit": false,
+        "required_role_filter_applied": true,
+        "available_baseline_ids": [
+          1958
+        ],
+        "available_floor_ids": [
+          1960
+        ],
+        "available_ceiling_ids": [
+          1957
+        ],
+        "parameter_sets_identical_in_preflight": true,
+        "parameter_set_pairwise_jaccard_mean": 1.0,
+        "common_runtime_parameter_names": [
+          "CanalToll",
+          "ShippingCost",
+          "ShippingFuelCost"
+        ]
+      },
+      "scenarios": [
+        {
+          "scenario_id": 1957,
+          "display_order": 1,
+          "title": "병목 확대와 통항 축소 증폭",
+          "baseline": false,
+          "scenario_role": "ceiling",
+          "pressure_band": "strong_bullish",
+          "cells": {
+            "d1": "d1_v3",
+            "d2": "d2_v3",
+            "d3": "d3_v3"
+          },
+          "preflight_status": "PASS",
+          "proposal_eligible": true,
+          "preflight_skip_reasons": [],
+          "runtime_parameter_names": [
+            "CanalToll",
+            "ShippingCost",
+            "ShippingFuelCost"
+          ]
+        },
+        {
+          "scenario_id": 1958,
+          "display_order": 2,
+          "title": "제한 통항과 장기 프리미엄 고착",
+          "baseline": true,
+          "scenario_role": null,
+          "pressure_band": "bullish",
+          "cells": {
+            "d1": "d1_v2",
+            "d2": "d2_v3",
+            "d3": "d3_v2"
+          },
+          "preflight_status": "PASS",
+          "proposal_eligible": true,
+          "preflight_skip_reasons": [],
+          "runtime_parameter_names": [
+            "CanalToll",
+            "ShippingCost",
+            "ShippingFuelCost"
+          ]
+        },
+        {
+          "scenario_id": 1960,
+          "display_order": 4,
+          "title": "통항 회복 우세와 잔여 프리미엄",
+          "baseline": false,
+          "scenario_role": "floor",
+          "pressure_band": "bearish",
+          "cells": {
+            "d1": "d1_v1",
+            "d2": "d2_v2",
+            "d3": "d3_v1"
+          },
+          "preflight_status": "PASS",
+          "proposal_eligible": true,
+          "preflight_skip_reasons": [],
+          "runtime_parameter_names": [
+            "CanalToll",
+            "ShippingCost",
+            "ShippingFuelCost"
+          ]
+        }
+      ]
+    },
+    {
+      "cohort_order": 18,
+      "scenario_group_id": 436,
+      "event_type_id": 19,
+      "event_type_code": "policy_regulatory_change",
+      "event_id": 1136,
+      "event_title": "미·이란 협상 차질과 호르무즈 재폐쇄",
+      "selection_diagnostics": {
+        "eligible_scenario_count": 3,
+        "eligible_scenario_ids": [
+          1961,
+          1962,
+          1963
+        ],
+        "selection_mode": "proposal-eligible",
+        "coverage_limit": false,
+        "required_role_filter_applied": true,
+        "available_baseline_ids": [
+          1962
+        ],
+        "available_floor_ids": [
+          1963
+        ],
+        "available_ceiling_ids": [
+          1961
+        ],
+        "parameter_sets_identical_in_preflight": true,
+        "parameter_set_pairwise_jaccard_mean": 1.0,
+        "common_runtime_parameter_names": [
+          "CanalToll",
+          "ShippingCost",
+          "ShippingFuelCost"
+        ]
+      },
+      "scenarios": [
+        {
+          "scenario_id": 1961,
+          "display_order": 1,
+          "title": "지연·우회와 중기 프리미엄 결합",
+          "baseline": false,
+          "scenario_role": "ceiling",
+          "pressure_band": "strong_bullish",
+          "cells": {
+            "d1": "d1_v3",
+            "d2": "d2_v3",
+            "d3": "d3_v3"
+          },
+          "preflight_status": "PASS",
+          "proposal_eligible": true,
+          "preflight_skip_reasons": [],
+          "runtime_parameter_names": [
+            "CanalToll",
+            "ShippingCost",
+            "ShippingFuelCost"
+          ]
+        },
+        {
+          "scenario_id": 1962,
+          "display_order": 2,
+          "title": "보험·대기 확대와 일부 완충",
+          "baseline": true,
+          "scenario_role": null,
+          "pressure_band": "bullish",
+          "cells": {
+            "d1": "d1_v2",
+            "d2": "d2_v2",
+            "d3": "d3_v2"
+          },
+          "preflight_status": "PASS",
+          "proposal_eligible": true,
+          "preflight_skip_reasons": [],
+          "runtime_parameter_names": [
+            "CanalToll",
+            "ShippingCost",
+            "ShippingFuelCost"
+          ]
+        },
+        {
+          "scenario_id": 1963,
+          "display_order": 3,
+          "title": "해소 일정과 배송 조정의 상쇄",
+          "baseline": false,
+          "scenario_role": "floor",
+          "pressure_band": "balanced",
+          "cells": {
+            "d1": "d1_v1",
+            "d2": "d2_v1",
+            "d3": "d3_v1"
+          },
+          "preflight_status": "PASS",
+          "proposal_eligible": true,
+          "preflight_skip_reasons": [],
+          "runtime_parameter_names": [
+            "CanalToll",
+            "ShippingCost",
+            "ShippingFuelCost"
+          ]
+        }
+      ]
+    },
+    {
+      "cohort_order": 19,
+      "scenario_group_id": 437,
+      "event_type_id": 20,
+      "event_type_code": "interest_rate_fx",
+      "event_id": 1223,
+      "event_title": "미·이란 합의에 미 국채금리 하락",
+      "selection_diagnostics": {
+        "eligible_scenario_count": 4,
+        "eligible_scenario_ids": [
+          1964,
+          1965,
+          1966,
+          1967
+        ],
+        "selection_mode": "proposal-eligible",
+        "coverage_limit": false,
+        "required_role_filter_applied": true,
+        "available_baseline_ids": [
+          1967
+        ],
+        "available_floor_ids": [
+          1967
+        ],
+        "available_ceiling_ids": [
+          1964
+        ],
+        "parameter_sets_identical_in_preflight": false,
+        "parameter_set_pairwise_jaccard_mean": 0.7333,
+        "common_runtime_parameter_names": [
+          "CanalToll",
+          "ShippingCost",
+          "ShippingFuelCost"
+        ]
+      },
+      "scenarios": [
+        {
+          "scenario_id": 1964,
+          "display_order": 1,
+          "title": "통항 차질과 비용 재상승",
+          "baseline": false,
+          "scenario_role": "ceiling",
+          "pressure_band": "bullish",
+          "cells": {
+            "d1": "d1_v3",
+            "d2": "d2_v3",
+            "d3": "d3_v2"
+          },
+          "preflight_status": "PASS",
+          "proposal_eligible": true,
+          "preflight_skip_reasons": [],
+          "runtime_parameter_names": [
+            "CanalToll",
+            "ShippingCost",
+            "ShippingFuelCost"
+          ]
+        },
+        {
+          "scenario_id": 1965,
+          "display_order": 2,
+          "title": "부분 회복과 단기 금융 반응 소멸",
+          "baseline": false,
+          "scenario_role": null,
+          "pressure_band": "balanced",
+          "cells": {
+            "d1": "d1_v2",
+            "d2": "d2_v2",
+            "d3": "d3_v2"
+          },
+          "preflight_status": "PASS",
+          "proposal_eligible": true,
+          "preflight_skip_reasons": [],
+          "runtime_parameter_names": [
+            "CanalToll",
+            "ShippingCost",
+            "ShippingFuelCost"
+          ]
+        },
+        {
+          "scenario_id": 1967,
+          "display_order": 4,
+          "title": "정상 통항과 비용 완화 결합",
+          "baseline": true,
+          "scenario_role": "floor",
+          "pressure_band": "strong_bearish",
+          "cells": {
+            "d1": "d1_v1",
+            "d2": "d2_v1",
+            "d3": "d3_v1"
+          },
+          "preflight_status": "PASS",
+          "proposal_eligible": true,
+          "preflight_skip_reasons": [],
+          "runtime_parameter_names": [
+            "CanalToll",
+            "GDP",
+            "PMI",
+            "ShippingCost",
+            "ShippingFuelCost"
+          ]
+        }
+      ]
+    },
+    {
+      "cohort_order": 20,
+      "scenario_group_id": 438,
+      "event_type_id": 21,
+      "event_type_code": "country_economic_condition",
+      "event_id": 1338,
+      "event_title": "2026년 아시아 LNG 수요 약세 전망",
+      "selection_diagnostics": {
+        "eligible_scenario_count": 0,
+        "eligible_scenario_ids": [],
+        "selection_mode": "representative-coverage-limit",
+        "coverage_limit": true,
+        "required_role_filter_applied": true,
+        "available_baseline_ids": [
+          1970
+        ],
+        "available_floor_ids": [
+          1971
+        ],
+        "available_ceiling_ids": [
+          1968
+        ],
+        "parameter_sets_identical_in_preflight": false,
+        "parameter_set_pairwise_jaccard_mean": 1.0,
+        "common_runtime_parameter_names": []
+      },
+      "scenarios": [
+        {
+          "scenario_id": 1968,
+          "display_order": 1,
+          "title": "구매 재개와 유럽 경쟁 우세",
+          "baseline": false,
+          "scenario_role": "ceiling",
+          "pressure_band": "bullish",
+          "cells": {
+            "d1": "d1_v2",
+            "d2": "d2_v3",
+            "d3": "d3_v1"
+          },
+          "preflight_status": "SKIP",
+          "proposal_eligible": false,
+          "preflight_skip_reasons": [
+            "no runtime-allowed parameter candidate"
+          ],
+          "runtime_parameter_names": []
+        },
+        {
+          "scenario_id": 1970,
+          "display_order": 3,
+          "title": "전망 수준 약세와 유럽 일부 상쇄",
+          "baseline": true,
+          "scenario_role": null,
+          "pressure_band": "bearish",
+          "cells": {
+            "d1": "d1_v2",
+            "d2": "d2_v1",
+            "d3": "d3_v2"
+          },
+          "preflight_status": "SKIP",
+          "proposal_eligible": false,
+          "preflight_skip_reasons": [
+            "no runtime-allowed parameter candidate"
+          ],
+          "runtime_parameter_names": []
+        },
+        {
+          "scenario_id": 1971,
+          "display_order": 4,
+          "title": "아시아 이탈과 유럽 후퇴 결합",
+          "baseline": false,
+          "scenario_role": "floor",
+          "pressure_band": "strong_bearish",
+          "cells": {
+            "d1": "d1_v1",
+            "d2": "d2_v1",
+            "d3": "d3_v3"
+          },
+          "preflight_status": "SKIP",
+          "proposal_eligible": false,
+          "preflight_skip_reasons": [
+            "no runtime-allowed parameter candidate"
+          ],
+          "runtime_parameter_names": []
+        }
+      ]
+    }
+  ],
+  "scenario_group_creation": {
+    "selection_policy": "expanded_event_cohort/add-only",
+    "creation_policy": "add-only-preserve-existing",
+    "baseline_group_count": 20,
+    "added_group_count": 20,
+    "net_added_group_count": 20,
+    "existing_deleted_group_count": 0,
+    "new_scenario_count": 83,
+    "baseline_group_ids": [
+      346,
+      347,
+      348,
+      349,
+      350,
+      351,
+      352,
+      353,
+      354,
+      355,
+      356,
+      357,
+      358,
+      359,
+      360,
+      361,
+      362,
+      363,
+      364,
+      365
+    ],
+    "new_group_ids": [
+      419,
+      420,
+      421,
+      422,
+      423,
+      424,
+      425,
+      426,
+      427,
+      428,
+      429,
+      430,
+      431,
+      432,
+      433,
+      434,
+      435,
+      436,
+      437,
+      438
+    ],
+    "baseline_event_ids": [
+      1335,
+      1464,
+      1257,
+      1508,
+      1512,
+      1336,
+      1432,
+      1342,
+      1505,
+      1306,
+      1522,
+      1523,
+      1157,
+      1683,
+      1463,
+      1510,
+      1225,
+      1518,
+      1379,
+      1386
+    ],
+    "expanded_event_ids": [
+      1350,
+      1521,
+      1462,
+      1116,
+      1513,
+      1475,
+      1500,
+      1334,
+      1141,
+      1134,
+      1131,
+      1129,
+      1497,
+      1261,
+      1381,
+      1359,
+      1222,
+      1136,
+      1223,
+      1338
+    ],
+    "net_added_event_count": 20,
+    "expanded_event_type_count": 15
+  },
+  "observed_baseline": {
+    "baseline_is_observational": true,
+    "note": "Outcome fields are comparison baselines, not immutable assertions; the cohort and release contract above are the fixed test-set boundary.",
+    "generated_at": "2026-10-07T04:42:53.732919+00:00",
+    "kpis": {
+      "requested_group_count": 20,
+      "selected_scenario_count": 60,
+      "proposal_eligible_selected_scenario_count": 57,
+      "preflight_coverage_limit_scenario_count": 3,
+      "preflight_identical_parameter_type_group_count": 17,
+      "preflight_parameter_type_consistency_rate_percent": 85.0,
+      "attempted_scenario_count": 57,
+      "successful_proposal_count": 16,
+      "failed_or_unattempted_scenario_count": 44,
+      "proposal_coverage_percent": 26.7,
+      "preflight_to_proposal_conversion_percent": 28.1,
+      "semantic_empty_failure_count": 41,
+      "semantic_empty_rate_percent": 71.9,
+      "other_failure_count": 0,
+      "eligible_not_attempted_count": 0,
+      "triple_success_group_count": 4,
+      "triple_success_group_rate_percent": 20.0,
+      "identical_parameter_type_group_count": 4,
+      "parameter_type_consistency_rate_percent": 100.0,
+      "same_types_with_any_different_values_group_count": 4,
+      "same_types_with_any_different_values_rate_percent": 100.0,
+      "groups_with_exact_common_slots": 4,
+      "groups_with_different_values_on_exact_common_slots": 4,
+      "value_cell_count": 249,
+      "identity_error_count": 0,
+      "integrity_error_count": 0,
+      "persisted_failed_attempt_count": 0,
+      "llm_retry_count": 0,
+      "total_tokens": 429158,
+      "latency_seconds_p50": 37.54,
+      "latency_seconds_p95": 75.543
+    },
+    "groups": [
+      {
+        "scenario_group_id": 419,
+        "successful_count": 0,
+        "actual_parameter_sets_identical": false,
+        "any_parameter_value_variation": false,
+        "exact_common_slot_count": 0,
+        "exact_common_slots_with_different_values": 0,
+        "scenarios": [
+          {
+            "scenario_id": 1889,
+            "status": "FAIL",
+            "actual_parameter_names": [],
+            "value_cell_count": 0,
+            "failed_stage": "graph execution"
+          },
+          {
+            "scenario_id": 1890,
+            "status": "FAIL",
+            "actual_parameter_names": [],
+            "value_cell_count": 0,
+            "failed_stage": "graph execution"
+          },
+          {
+            "scenario_id": 1892,
+            "status": "FAIL",
+            "actual_parameter_names": [],
+            "value_cell_count": 0,
+            "failed_stage": "graph execution"
+          }
+        ]
+      },
+      {
+        "scenario_group_id": 420,
+        "successful_count": 3,
+        "actual_parameter_sets_identical": true,
+        "any_parameter_value_variation": true,
+        "exact_common_slot_count": 1,
+        "exact_common_slots_with_different_values": 1,
+        "scenarios": [
+          {
+            "scenario_id": 1893,
+            "status": "PASS",
+            "actual_parameter_names": [
+              "RegionalProductionAdjustment"
+            ],
+            "value_cell_count": 1,
+            "failed_stage": null
+          },
+          {
+            "scenario_id": 1894,
+            "status": "PASS",
+            "actual_parameter_names": [
+              "RegionalProductionAdjustment"
+            ],
+            "value_cell_count": 1,
+            "failed_stage": null
+          },
+          {
+            "scenario_id": 1895,
+            "status": "PASS",
+            "actual_parameter_names": [
+              "RegionalProductionAdjustment"
+            ],
+            "value_cell_count": 2,
+            "failed_stage": null
+          }
+        ]
+      },
+      {
+        "scenario_group_id": 421,
+        "successful_count": 0,
+        "actual_parameter_sets_identical": false,
+        "any_parameter_value_variation": false,
+        "exact_common_slot_count": 0,
+        "exact_common_slots_with_different_values": 0,
+        "scenarios": [
+          {
+            "scenario_id": 1896,
+            "status": "FAIL",
+            "actual_parameter_names": [],
+            "value_cell_count": 0,
+            "failed_stage": "graph execution"
+          },
+          {
+            "scenario_id": 1898,
+            "status": "FAIL",
+            "actual_parameter_names": [],
+            "value_cell_count": 0,
+            "failed_stage": "graph execution"
+          },
+          {
+            "scenario_id": 1899,
+            "status": "FAIL",
+            "actual_parameter_names": [],
+            "value_cell_count": 0,
+            "failed_stage": "graph execution"
+          }
+        ]
+      },
+      {
+        "scenario_group_id": 422,
+        "successful_count": 2,
+        "actual_parameter_sets_identical": false,
+        "any_parameter_value_variation": false,
+        "exact_common_slot_count": 0,
+        "exact_common_slots_with_different_values": 0,
+        "scenarios": [
+          {
+            "scenario_id": 1900,
+            "status": "FAIL",
+            "actual_parameter_names": [],
+            "value_cell_count": 0,
+            "failed_stage": "graph execution"
+          },
+          {
+            "scenario_id": 1901,
+            "status": "PASS",
+            "actual_parameter_names": [
+              "RegasAdjustment"
+            ],
+            "value_cell_count": 36,
+            "failed_stage": null
+          },
+          {
+            "scenario_id": 1903,
+            "status": "PASS",
+            "actual_parameter_names": [
+              "RegasAdjustment"
+            ],
+            "value_cell_count": 36,
+            "failed_stage": null
+          }
+        ]
+      },
+      {
+        "scenario_group_id": 423,
+        "successful_count": 2,
+        "actual_parameter_sets_identical": false,
+        "any_parameter_value_variation": false,
+        "exact_common_slot_count": 0,
+        "exact_common_slots_with_different_values": 0,
+        "scenarios": [
+          {
+            "scenario_id": 1904,
+            "status": "FAIL",
+            "actual_parameter_names": [],
+            "value_cell_count": 0,
+            "failed_stage": "graph execution"
+          },
+          {
+            "scenario_id": 1905,
+            "status": "PASS",
+            "actual_parameter_names": [
+              "PipelineAdjustment"
+            ],
+            "value_cell_count": 2,
+            "failed_stage": null
+          },
+          {
+            "scenario_id": 1907,
+            "status": "PASS",
+            "actual_parameter_names": [
+              "PipelineAdjustment"
+            ],
+            "value_cell_count": 2,
+            "failed_stage": null
+          }
+        ]
+      },
+      {
+        "scenario_group_id": 424,
+        "successful_count": 3,
+        "actual_parameter_sets_identical": true,
+        "any_parameter_value_variation": true,
+        "exact_common_slot_count": 1,
+        "exact_common_slots_with_different_values": 1,
+        "scenarios": [
+          {
+            "scenario_id": 1908,
+            "status": "PASS",
+            "actual_parameter_names": [
+              "SupplyDisruption",
+              "Temperature"
+            ],
+            "value_cell_count": 2,
+            "failed_stage": null
+          },
+          {
+            "scenario_id": 1911,
+            "status": "PASS",
+            "actual_parameter_names": [
+              "SupplyDisruption",
+              "Temperature"
+            ],
+            "value_cell_count": 2,
+            "failed_stage": null
+          },
+          {
+            "scenario_id": 1912,
+            "status": "PASS",
+            "actual_parameter_names": [
+              "SupplyDisruption",
+              "Temperature"
+            ],
+            "value_cell_count": 2,
+            "failed_stage": null
+          }
+        ]
+      },
+      {
+        "scenario_group_id": 425,
+        "successful_count": 3,
+        "actual_parameter_sets_identical": true,
+        "any_parameter_value_variation": true,
+        "exact_common_slot_count": 1,
+        "exact_common_slots_with_different_values": 1,
+        "scenarios": [
+          {
+            "scenario_id": 1913,
+            "status": "PASS",
+            "actual_parameter_names": [
+              "Temperature"
+            ],
+            "value_cell_count": 1,
+            "failed_stage": null
+          },
+          {
+            "scenario_id": 1914,
+            "status": "PASS",
+            "actual_parameter_names": [
+              "Temperature"
+            ],
+            "value_cell_count": 1,
+            "failed_stage": null
+          },
+          {
+            "scenario_id": 1916,
+            "status": "PASS",
+            "actual_parameter_names": [
+              "Temperature"
+            ],
+            "value_cell_count": 1,
+            "failed_stage": null
+          }
+        ]
+      },
+      {
+        "scenario_group_id": 426,
+        "successful_count": 3,
+        "actual_parameter_sets_identical": true,
+        "any_parameter_value_variation": true,
+        "exact_common_slot_count": 40,
+        "exact_common_slots_with_different_values": 8,
+        "scenarios": [
+          {
+            "scenario_id": 1917,
+            "status": "PASS",
+            "actual_parameter_names": [
+              "PowerMix"
+            ],
+            "value_cell_count": 80,
+            "failed_stage": null
+          },
+          {
+            "scenario_id": 1918,
+            "status": "PASS",
+            "actual_parameter_names": [
+              "PowerMix"
+            ],
+            "value_cell_count": 40,
+            "failed_stage": null
+          },
+          {
+            "scenario_id": 1920,
+            "status": "PASS",
+            "actual_parameter_names": [
+              "PowerMix"
+            ],
+            "value_cell_count": 40,
+            "failed_stage": null
+          }
+        ]
+      },
+      {
+        "scenario_group_id": 427,
+        "successful_count": 0,
+        "actual_parameter_sets_identical": false,
+        "any_parameter_value_variation": false,
+        "exact_common_slot_count": 0,
+        "exact_common_slots_with_different_values": 0,
+        "scenarios": [
+          {
+            "scenario_id": 1921,
+            "status": "FAIL",
+            "actual_parameter_names": [],
+            "value_cell_count": 0,
+            "failed_stage": "graph execution"
+          },
+          {
+            "scenario_id": 1923,
+            "status": "FAIL",
+            "actual_parameter_names": [],
+            "value_cell_count": 0,
+            "failed_stage": "graph execution"
+          },
+          {
+            "scenario_id": 1925,
+            "status": "FAIL",
+            "actual_parameter_names": [],
+            "value_cell_count": 0,
+            "failed_stage": "graph execution"
+          }
+        ]
+      },
+      {
+        "scenario_group_id": 428,
+        "successful_count": 0,
+        "actual_parameter_sets_identical": false,
+        "any_parameter_value_variation": false,
+        "exact_common_slot_count": 0,
+        "exact_common_slots_with_different_values": 0,
+        "scenarios": [
+          {
+            "scenario_id": 1926,
+            "status": "FAIL",
+            "actual_parameter_names": [],
+            "value_cell_count": 0,
+            "failed_stage": "graph execution"
+          },
+          {
+            "scenario_id": 1927,
+            "status": "FAIL",
+            "actual_parameter_names": [],
+            "value_cell_count": 0,
+            "failed_stage": "graph execution"
+          },
+          {
+            "scenario_id": 1929,
+            "status": "FAIL",
+            "actual_parameter_names": [],
+            "value_cell_count": 0,
+            "failed_stage": "graph execution"
+          }
+        ]
+      },
+      {
+        "scenario_group_id": 429,
+        "successful_count": 0,
+        "actual_parameter_sets_identical": false,
+        "any_parameter_value_variation": false,
+        "exact_common_slot_count": 0,
+        "exact_common_slots_with_different_values": 0,
+        "scenarios": [
+          {
+            "scenario_id": 1930,
+            "status": "FAIL",
+            "actual_parameter_names": [],
+            "value_cell_count": 0,
+            "failed_stage": "graph execution"
+          },
+          {
+            "scenario_id": 1932,
+            "status": "FAIL",
+            "actual_parameter_names": [],
+            "value_cell_count": 0,
+            "failed_stage": "graph execution"
+          },
+          {
+            "scenario_id": 1933,
+            "status": "FAIL",
+            "actual_parameter_names": [],
+            "value_cell_count": 0,
+            "failed_stage": "graph execution"
+          }
+        ]
+      },
+      {
+        "scenario_group_id": 430,
+        "successful_count": 0,
+        "actual_parameter_sets_identical": false,
+        "any_parameter_value_variation": false,
+        "exact_common_slot_count": 0,
+        "exact_common_slots_with_different_values": 0,
+        "scenarios": [
+          {
+            "scenario_id": 1934,
+            "status": "FAIL",
+            "actual_parameter_names": [],
+            "value_cell_count": 0,
+            "failed_stage": "graph execution"
+          },
+          {
+            "scenario_id": 1936,
+            "status": "FAIL",
+            "actual_parameter_names": [],
+            "value_cell_count": 0,
+            "failed_stage": "graph execution"
+          },
+          {
+            "scenario_id": 1937,
+            "status": "FAIL",
+            "actual_parameter_names": [],
+            "value_cell_count": 0,
+            "failed_stage": "graph execution"
+          }
+        ]
+      },
+      {
+        "scenario_group_id": 431,
+        "successful_count": 0,
+        "actual_parameter_sets_identical": false,
+        "any_parameter_value_variation": false,
+        "exact_common_slot_count": 0,
+        "exact_common_slots_with_different_values": 0,
+        "scenarios": [
+          {
+            "scenario_id": 1938,
+            "status": "FAIL",
+            "actual_parameter_names": [],
+            "value_cell_count": 0,
+            "failed_stage": "graph execution"
+          },
+          {
+            "scenario_id": 1940,
+            "status": "FAIL",
+            "actual_parameter_names": [],
+            "value_cell_count": 0,
+            "failed_stage": "graph execution"
+          },
+          {
+            "scenario_id": 1941,
+            "status": "FAIL",
+            "actual_parameter_names": [],
+            "value_cell_count": 0,
+            "failed_stage": "graph execution"
+          }
+        ]
+      },
+      {
+        "scenario_group_id": 432,
+        "successful_count": 0,
+        "actual_parameter_sets_identical": false,
+        "any_parameter_value_variation": false,
+        "exact_common_slot_count": 0,
+        "exact_common_slots_with_different_values": 0,
+        "scenarios": [
+          {
+            "scenario_id": 1942,
+            "status": "FAIL",
+            "actual_parameter_names": [],
+            "value_cell_count": 0,
+            "failed_stage": "graph execution"
+          },
+          {
+            "scenario_id": 1943,
+            "status": "FAIL",
+            "actual_parameter_names": [],
+            "value_cell_count": 0,
+            "failed_stage": "graph execution"
+          },
+          {
+            "scenario_id": 1946,
+            "status": "FAIL",
+            "actual_parameter_names": [],
+            "value_cell_count": 0,
+            "failed_stage": "graph execution"
+          }
+        ]
+      },
+      {
+        "scenario_group_id": 433,
+        "successful_count": 0,
+        "actual_parameter_sets_identical": false,
+        "any_parameter_value_variation": false,
+        "exact_common_slot_count": 0,
+        "exact_common_slots_with_different_values": 0,
+        "scenarios": [
+          {
+            "scenario_id": 1947,
+            "status": "FAIL",
+            "actual_parameter_names": [],
+            "value_cell_count": 0,
+            "failed_stage": "graph execution"
+          },
+          {
+            "scenario_id": 1949,
+            "status": "FAIL",
+            "actual_parameter_names": [],
+            "value_cell_count": 0,
+            "failed_stage": "graph execution"
+          },
+          {
+            "scenario_id": 1951,
+            "status": "FAIL",
+            "actual_parameter_names": [],
+            "value_cell_count": 0,
+            "failed_stage": "graph execution"
+          }
+        ]
+      },
+      {
+        "scenario_group_id": 434,
+        "successful_count": 0,
+        "actual_parameter_sets_identical": false,
+        "any_parameter_value_variation": false,
+        "exact_common_slot_count": 0,
+        "exact_common_slots_with_different_values": 0,
+        "scenarios": [
+          {
+            "scenario_id": 1952,
+            "status": "FAIL",
+            "actual_parameter_names": [],
+            "value_cell_count": 0,
+            "failed_stage": "graph execution"
+          },
+          {
+            "scenario_id": 1954,
+            "status": "FAIL",
+            "actual_parameter_names": [],
+            "value_cell_count": 0,
+            "failed_stage": "graph execution"
+          },
+          {
+            "scenario_id": 1956,
+            "status": "FAIL",
+            "actual_parameter_names": [],
+            "value_cell_count": 0,
+            "failed_stage": "graph execution"
+          }
+        ]
+      },
+      {
+        "scenario_group_id": 435,
+        "successful_count": 0,
+        "actual_parameter_sets_identical": false,
+        "any_parameter_value_variation": false,
+        "exact_common_slot_count": 0,
+        "exact_common_slots_with_different_values": 0,
+        "scenarios": [
+          {
+            "scenario_id": 1957,
+            "status": "FAIL",
+            "actual_parameter_names": [],
+            "value_cell_count": 0,
+            "failed_stage": "graph execution"
+          },
+          {
+            "scenario_id": 1958,
+            "status": "FAIL",
+            "actual_parameter_names": [],
+            "value_cell_count": 0,
+            "failed_stage": "graph execution"
+          },
+          {
+            "scenario_id": 1960,
+            "status": "FAIL",
+            "actual_parameter_names": [],
+            "value_cell_count": 0,
+            "failed_stage": "graph execution"
+          }
+        ]
+      },
+      {
+        "scenario_group_id": 436,
+        "successful_count": 0,
+        "actual_parameter_sets_identical": false,
+        "any_parameter_value_variation": false,
+        "exact_common_slot_count": 0,
+        "exact_common_slots_with_different_values": 0,
+        "scenarios": [
+          {
+            "scenario_id": 1961,
+            "status": "FAIL",
+            "actual_parameter_names": [],
+            "value_cell_count": 0,
+            "failed_stage": "graph execution"
+          },
+          {
+            "scenario_id": 1962,
+            "status": "FAIL",
+            "actual_parameter_names": [],
+            "value_cell_count": 0,
+            "failed_stage": "graph execution"
+          },
+          {
+            "scenario_id": 1963,
+            "status": "FAIL",
+            "actual_parameter_names": [],
+            "value_cell_count": 0,
+            "failed_stage": "graph execution"
+          }
+        ]
+      },
+      {
+        "scenario_group_id": 437,
+        "successful_count": 0,
+        "actual_parameter_sets_identical": false,
+        "any_parameter_value_variation": false,
+        "exact_common_slot_count": 0,
+        "exact_common_slots_with_different_values": 0,
+        "scenarios": [
+          {
+            "scenario_id": 1964,
+            "status": "FAIL",
+            "actual_parameter_names": [],
+            "value_cell_count": 0,
+            "failed_stage": "graph execution"
+          },
+          {
+            "scenario_id": 1965,
+            "status": "FAIL",
+            "actual_parameter_names": [],
+            "value_cell_count": 0,
+            "failed_stage": "graph execution"
+          },
+          {
+            "scenario_id": 1967,
+            "status": "FAIL",
+            "actual_parameter_names": [],
+            "value_cell_count": 0,
+            "failed_stage": "graph execution"
+          }
+        ]
+      },
+      {
+        "scenario_group_id": 438,
+        "successful_count": 0,
+        "actual_parameter_sets_identical": false,
+        "any_parameter_value_variation": false,
+        "exact_common_slot_count": 0,
+        "exact_common_slots_with_different_values": 0,
+        "scenarios": [
+          {
+            "scenario_id": 1968,
+            "status": "PREFLIGHT_SKIP",
+            "actual_parameter_names": [],
+            "value_cell_count": 0,
+            "failed_stage": null
+          },
+          {
+            "scenario_id": 1970,
+            "status": "PREFLIGHT_SKIP",
+            "actual_parameter_names": [],
+            "value_cell_count": 0,
+            "failed_stage": null
+          },
+          {
+            "scenario_id": 1971,
+            "status": "PREFLIGHT_SKIP",
+            "actual_parameter_names": [],
+            "value_cell_count": 0,
+            "failed_stage": null
+          }
+        ]
+      }
+    ]
+  }
+}

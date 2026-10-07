@@ -289,6 +289,55 @@ python tests/manual/test_multi_event_scenario_versions.py report \
 v4-only의 생성 Group은 자동 삭제하지 않는다. 버전별 생성 직후 soft delete는
 v2/v3/v4 비교 manifest에만 적용한다.
 
+### 고정 Event 코호트 add-only 생성
+
+사용자가 기존 Group을 보존하면서 같은 Event 입력으로 Group을 순증하라고 명시하면 v4-only의
+`--no-delete-existing` 의미를 add-only 정책으로 적용한다. 기존 Group/Scenario를 수정·삭제하지 않고 새 Group ID가
+기존 ID와 disjoint인지 기록한다. 현재 create conflict gate는 같은 exact Event set의 **active operation**만 막으므로
+완료된 Group이 연결된 Event set은 새 Group으로 다시 생성할 수 있다. active operation 충돌, timeout 또는 결과 불명은
+자동 retry하거나 기존 Group 삭제로 우회하지 않는다.
+
+동기 create가 명시적 LLM validation failure를 반환하고, 연결된 신규 Group이 `creating/ready`, Scenario 0건,
+active operation 없음으로 read-back되면 최초 실패 증적을 보존한 채 **별도 명시적 1회** retry를 할 수 있다. 이는
+자동 retry가 아니며 두 번째 retry는 금지한다. 같은 Group을 복구했는지 새 Group을 만들었는지 판정하고, 새 Group이면
+미완료/완료 ID를 둘 다 최종 report에 남긴다.
+
+비교 가능한 campaign에서는 Event ID/type/order, Scenario Lever catalog version/full checksum을 기존 cohort와 같게
+고정하고 `same_logical_inputs/add-only`로 표기한다. 이는 동일 Group/Scenario ID를 쓰는 Before/After 비교가 아니다.
+Validation과 Confirmation까지 수행하되 Signpost가 후속 평가의 필수 입력이 아니면 생략 여부와 이유를 manifest에
+남긴다.
+후속 대표 Scenario 평가 cohort를 테스트셋으로 재사용하라는 요청이 있으면 생성 campaign report 자체를 fixture로
+복사하지 않는다. Model Parameter evaluator가 선택한 Group/Scenario/role/cell/release contract를
+`tests/fixtures/model_parameter_agent/`에 export하고 관측 결과 baseline과 고정 selection을 분리한다.
+
+기존 Scenario-only fixture의 Event 40개를 원본 풀로 지정하고 Scenario부터 깔끔하게 다시 만들라는 요청은
+`existing_event_pool/add-only-regenerated-scenarios`로 더 구체적으로 표기한다. fixture SHA-256과 ordered Event ID를
+고정하고 Event별 v4 Group 하나를 add-only 생성한다. 완료 후 원본 Event 40개 exact 재사용, 신규 Group 40개 고유·
+원본 Group ID와 비중복, 원본 Group 40개 보존, 기존 삭제 0, Scenario Lever `v4.1` catalog version/full checksum,
+후속 Proposal Flow `v4.1.2`를 hard gate로 검증한다. 이 정책은 Event 확장이 아니므로 원본/신규 Event 비중복 gate를
+적용하지 않는다.
+
+### Event 코호트 확장 add-only 생성
+
+사용자가 Group 순증을 요청하면서 **Event cohort 확장부터** 시작한다고 명시하면 기존 Event를 다시 생성하는 위
+고정 코호트 절차를 사용하지 않는다. baseline campaign의 Event ID를 exclusion set으로 고정하고, 서로 다른 신규
+Event ID를 요청 수만큼 먼저 선택해 immutable manifest를 만든다. 이 campaign은
+`expanded_event_cohort/add-only`로 표기한다.
+
+- manifest에는 baseline/expanded Event ID, 선택 순서, Event Type, 선택 기준, 두 집합의 disjoint 판정,
+  Scenario Lever version/full checksum과 후속 Proposal Flow release를 기록한다.
+- 추천 Event를 우선하고, 그다음 완료 Group 이력이 있어 payload 품질이 검증된 Event를 사용한다. active 또는
+  incomplete Group만 연결된 Event는 exact-set create conflict를 피하기 위해 제외한다.
+- Event Type 다양성을 최대화하되 기존 Type 분포를 억지로 복제하려고 품질 기준 미달 Event를 넣지 않는다.
+  baseline과 Type 구성이 다르면 distinct Type 수와 차이를 보고한다.
+- 기존 Group/Scenario는 수정·삭제하지 않고 신규 Event마다 v4 Group 하나를 만든다. timeout·unknown·active
+  operation conflict는 자동 재시도나 기존 Group 삭제로 우회하지 않는다.
+- Validation과 direct Confirmation까지 수행하고, Signpost가 후속 평가에 필요하지 않으면 생략 사유를 남긴다.
+- 완료 후 `expanded Event 20개 고유성`, `baseline Event와 비중복`, `신규 Group 20개 순증`, `기존 Group 삭제 0`,
+  catalog pin과 완료 stage를 hard gate로 검증한다.
+- 잘못된 동일-Event 재생성 증적이 앞서 생겼다면 삭제하지 않고 오범위 audit evidence로 보존하되, 최종 평가·fixture
+  입력에서는 제외한다.
+
 `--quality-check true`는 v4 결정적 품질검사를 실행하지만 비교 대상이 없으므로 Agent Judge
 순위, 우수 version, 품질·실용 추천은 만들지 않는다. `false`이면 API 결과와 실제 Scenario
 보고서만 생성한다.

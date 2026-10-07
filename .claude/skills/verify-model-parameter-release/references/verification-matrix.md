@@ -40,12 +40,12 @@ Record the runtime collected count; do not hard-code a historical total.
 | `agent-contract-detail` | API, graph, prompt, persistence, confirmation, callback | `test_model_parameter_agent_contract.py` without marker filtering; `test_model_parameter_runner_common.py` |
 | `canonical-workbook` | v4 canonical JSON/SQL, workbook/docs, or active set | workbook `--check-only` and `test_model_parameter_canonical_consistency.py` |
 | `lut-runtime` | LUT adapter, catalog, exact reference, prompt guard | `test_model_parameter_lut_domain.py`, `test_model_parameter_lut_pipeline.py` |
-| `resource-config-storage` | resource manifest, YAML/ConfigMap, Object Storage/cache | `test_model_parameter_resource_sync.py` |
+| `resource-config-storage` | resource manifest, YAML/ConfigMap, Object Storage, same-identity verified cache, explicit no-active/active configured fallback policy와 remote-identity 관측 뒤 fail-closed | `test_model_parameter_resource_sync.py`, `test_model_parameter_mi_base.py` |
 | `impact-lever` | v4 Impact Lever canonical/service behavior | `test_model_impact_lever_canonical.py`, `test_model_impact_lever_service.py` |
 | `v4-proposal` | v4 candidate, proposal, or Lever-to-parameter behavior | `test_model_parameter_v4_proposal.py` |
 | `v4-basecase` | v4 Basecase interpretation | `test_model_parameter_v4_basecase.py` |
 | `v4-multi-event` | v4 multi-event selection, ordered Event cardinality, lineage, boundary, or persistence | `test_v4_multi_event_model_lever_scenarios.py`, `test_model_parameter_multi_event_quality.py` |
-| `report-runner` | v4 quality runner, shared write workflow, or integrated report contract | `test_model_parameter_multi_event_quality.py`, `test_model_parameter_runner_common.py`, `test_model_parameter_report_scope.py` |
+| `report-runner` | v4 quality runner, shared write workflow, integrated report contract, expanded Event cohort 비중복 gate, 대표 trio evidence 병합/재사용 fixture | `test_model_parameter_multi_event_quality.py`, `test_model_parameter_runner_common.py`, `test_model_parameter_report_scope.py`, `test_representative_trio_quality.py` |
 
 Use the safe environment prefix for every pytest command. Example:
 

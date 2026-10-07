@@ -165,6 +165,9 @@ def test_k8s_single_config_file_uses_same_resource_mapping() -> None:
     embedded_config = yaml.safe_load(configmap["data"]["config.yaml"])
 
     assert embedded_config["model_parameter_resources"] == get_settings().model_parameter_resources
+    assert embedded_config["model_parameter_mi_base_fallback"] == (
+        get_settings().model_parameter_mi_base_fallback.model_dump(mode="json")
+    )
     for setting_name in (
         "scenario_group_v4_impact_catalog_version",
         "model_parameter_proposal_flow_release",

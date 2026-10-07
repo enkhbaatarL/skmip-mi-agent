@@ -85,8 +85,10 @@ LUT보다 우선하는 기준값이 된다. 정확히 v4 `multi_event_model_leve
 `new-bc-v7` workbook contract의 authoritative source를 사용하고, v1/v3는 기존 Basecase workbook 파서를 유지한다.
 제안 요청은 접수 시점의 활성 MI Base `case_id`를 고정하고 `SCNRCASE`에 연결된
 Demand·Supply·Trade 입력 workbook 3개를 우선 사용한다. 현재 Base의 파일을 안전하게 준비하지
-못하면 기존 설정 resource로 fallback하며, 그 선택과 무관하게 접수 시의 `case_id`는 제안 이력에
-남긴다.
+못하면 동일 `case_id`·`run_seq`·연결 파일 식별자와 workbook hash/contract를 검증한 로컬 cache만
+fallback으로 허용한다. 일치하는 cache도 없으면 다른 Basecase로 바꾸지 않고 제안을 실패시킨다.
+활성 Base 자체가 없을 때 기존 설정 resource를 사용할지는 별도 운영 설정으로만 허용하며 기본값은
+fail closed다. 접수 시 선택한 `case_id`는 실제 파일 준비 결과와 무관하게 제안 이력에 남긴다.
 
 ### LUT
 

@@ -91,6 +91,9 @@ from apps.agents.model_parameter_agent.utils.lut import (
     get_lut_catalog,
     get_parameter_spec_registry,
 )
+from apps.agents.model_parameter_agent.utils.mi_base_resources import (
+    MiBaseResourceSelection,
+)
 from apps.agents.model_parameter_agent.utils.parameter_mapping import (
     DEFAULT_BASECASE_DIR,
     DEFAULT_INPUT_DIR,
@@ -4181,6 +4184,22 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
                 "events": [{"mi_event_id": 101}],
             },
             candidate_mappings=[candidate],
+            mi_base_resources=MiBaseResourceSelection(
+                source="configured_fallback",
+                basecase_dir=Path("/not-exported/basecase"),
+                workbook_resource_root=Path("/not-exported/workbooks"),
+                workbook_contract=SimpleNamespace(
+                    workbooks={
+                        "demand": SimpleNamespace(sha256="demand-sha256"),
+                        "supply": SimpleNamespace(sha256="supply-sha256"),
+                        "trade": SimpleNamespace(sha256="trade-sha256"),
+                    },
+                ),
+                case_id=15,
+                run_seq=71,
+                linked_file_counts={"SCNRCASE": 3},
+                fallback_reason="not exported",
+            ),
         )
         with (
             patch.object(proposal_nodes, "_invoke_structured", side_effect=fake_invoke),
@@ -4509,6 +4528,94 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
         assert routing_tasks[0]["selection_mode"] == "conditional"
         assert selected == []
         assert not any("기본값" in warning for warning in warnings)
+
+    async def test_v4_step1_5_semantic_empty_keeps_safe_routing_trace(self) -> None:
+        candidate = {
+            "candidate_key": "v4|demandpath|weak|economicactivity",
+            "mapping_strategy": "v4",
+            "mapping_method": "routing",
+            "binding_selection_mode": "conditional",
+            "binding_role": "primary",
+            "scenario_dimension_key": "demand_path",
+            "source_dimension_id": "demand_path",
+            "source_dimension_value_id": "weak",
+            "source_dimension_value": "약세",
+            "lever_code": "economic_activity",
+            "parameter_name": "GDP",
+            "canonical_parameter_name": "GDP",
+        }
+        response = LLMCandidateValidationResponse(
+            routing_decisions=[
+                RoutingDecision(
+                    dimension_key="v4|demandpath|weak|economicactivity",
+                    selected_candidate_keys=[],
+                ),
+            ],
+        )
+
+        async def fake_invoke(*args, **kwargs):  # noqa: ANN002, ANN003
+            return SimpleNamespace(result=response, usage=None)
+
+        state = ModelParameterProposalState(
+            scenario_id=501,
+            scenario_context={
+                "scenario": {"scenario_id": 501, "dimension_values": {"demand_path": "약세"}},
+                "scenario_group": {
+                    "api_version": "v4",
+                    "generation_strategy": V4_GENERATION_STRATEGY,
+                },
+            },
+            candidate_mappings=[candidate],
+            mi_base_resources=MiBaseResourceSelection(
+                source="configured_fallback",
+                basecase_dir=Path("/not-exported/basecase"),
+                workbook_resource_root=Path("/not-exported/workbooks"),
+                workbook_contract=SimpleNamespace(
+                    workbooks={
+                        "demand": SimpleNamespace(sha256="demand-sha256"),
+                        "supply": SimpleNamespace(sha256="supply-sha256"),
+                        "trade": SimpleNamespace(sha256="trade-sha256"),
+                    },
+                ),
+                case_id=15,
+                run_seq=71,
+                linked_file_counts={"SCNRCASE": 3},
+                fallback_reason="not exported",
+            ),
+        )
+        with (
+            patch.object(
+                proposal_nodes,
+                "get_settings",
+                return_value=SimpleNamespace(
+                    model_parameter_max_routing_candidates_per_dimension=2,
+                ),
+            ),
+            patch.object(proposal_nodes, "_invoke_structured", side_effect=fake_invoke),
+            pytest.raises(MIBaseError) as caught,
+        ):
+            await validate_parameter_candidates(state)
+
+        trace = caught.value.trace_evidence  # type: ignore[attr-defined]
+        assert trace["observability_complete"] is True
+        assert trace["semantic_stage_evidence"]["stage"] == "step1_5"
+        assert trace["semantic_stage_evidence"]["routing_tasks"][0]["selection_mode"] == "conditional"
+        assert trace["semantic_stage_evidence"]["routing_decisions"][0]["selected_candidate_keys"] == []
+        assert [call["step"] for call in trace["llm_calls"]] == ["Step1.5 routing selection"]
+        assert trace["trace_mi_base_resource"] == {
+            "source": "configured_fallback",
+            "case_id": 15,
+            "run_seq": 71,
+            "workbook_sha256": {
+                "demand": "demand-sha256",
+                "supply": "supply-sha256",
+                "trade": "trade-sha256",
+            },
+        }
+        serialized_trace = json.dumps(trace, ensure_ascii=False)
+        assert "scenario_context" not in serialized_trace
+        assert "messages" not in serialized_trace
+        assert "/not-exported" not in serialized_trace
 
     async def test_routing_decision_is_not_overridden_by_server_comment_logic(self) -> None:
         supply_candidate = {
@@ -5153,6 +5260,17 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
         assert "적용 대상과 기간도 찾았지만" in error.exception.error_message
         assert "적용 연도·월" in error.exception.error_message
         assert "사용 가능한 범위와 맞는지 확인해 주세요" in error.exception.error_message
+        trace = error.exception.trace_evidence  # type: ignore[attr-defined]
+        assert trace["observability_complete"] is True
+        assert trace["semantic_stage_evidence"]["stage"] == "step2"
+        assert trace["semantic_stage_evidence"]["slot_selection_diagnostics"] == {
+            "catalog_candidate_count": 1,
+            "raw_slot_count": 0,
+            "sanitized_slot_count": 0,
+            "exact_slot_count": 0,
+        }
+        assert trace["llm_calls"] == []
+        assert "scenario_context" not in json.dumps(trace, ensure_ascii=False)
 
     def test_v4_step2_empty_slots_explain_missing_catalog_positions(self) -> None:
         candidate = {
@@ -5504,6 +5622,16 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
         )
         assert "액화설비 가동률 항목과 적용 위치" in error.exception.error_message
         assert "기준값" in error.exception.error_message
+        trace = error.exception.trace_evidence  # type: ignore[attr-defined]
+        assert trace["observability_complete"] is True
+        assert trace["semantic_stage_evidence"]["stage"] == "step3"
+        assert trace["semantic_stage_evidence"]["value_selection_diagnostics"][
+            "generated_value_count"
+        ] == 0
+        assert [call["step"] for call in trace["llm_calls"]] == ["Step3 value proposal"]
+        serialized_trace = json.dumps(trace, ensure_ascii=False)
+        assert "아래 JSON만 근거로" not in serialized_trace
+        assert "messages" not in serialized_trace
 
     def test_v4_step3_abstention_reason_distinguishes_value_outcome(self) -> None:
         cases = [

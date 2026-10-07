@@ -97,6 +97,9 @@ DB/canonical만 맞거나 LUT 테스트만 통과하거나 전체 파라미터 �
   `resources/basecase_v4/new-bc-v1/`의 digest를 재사용한다. v1/v3는
   기존 `resources/basecase/`를 계속 사용해야 한다. startup은 contract schema/path와 Workbook path/digest만 검증하며
   최초 exact v4 materialization이 sheet/header/range/count를 검증하고 process cache해야 한다.
+- proposal-only frozen-context guard는 persisted Scenario/Event/Group context 변경을 계속 차단하되, graph가
+  request-local state에 추가하는 `mi_base_case_id`는 Scenario mutation으로 판정하지 않는다. 이 예외는 최상위
+  request pin 하나에만 적용하고 Scenario/Event/Group field drift는 persistence 전에 실패해야 한다.
 - v4 authoritative 2026~2030 record 수는 GDP 815, PMI 5,040, PowerMix 4,200, Temperature 5,040,
   LiqUtilAdjustment 23,820, PipelineAdjustment 420, SupplyDisruption 4,908이어야 한다. legacy adjustment target 관찰치는
   authoritative count나 slot whitelist로 평가하지 않는다.
@@ -136,10 +139,140 @@ DB/canonical만 맞거나 LUT 테스트만 통과하거나 전체 파라미터 �
 ### 관측성과 판정
 
 - provider가 실제 반환한 Step1.5/2/3 token, 단계별 시간, prompt bytes와 retry를 기록한다.
+- Step1.5/2/3에서 정상적인 미제안이 발생해도 structured reason code/stage, 종료 단계까지의 candidate/slot/value
+  sanitizer 요약과 누적 LLM call을 예외에 안전하게 전달한다. 전체 prompt/messages/Scenario context는 저장하지 않는다.
+- proposal-only runner는 이 결과를 일반 `FAIL`이 아닌 Scenario `ABSTAINED`, campaign `REVIEW`로 분류한다.
+  구조화 증적이나 필수 step/token 관측이 빠지면 별도 `REVIEW`로 남긴다.
 - retry 후 성공해도 앞선 실패 attempt를 지우지 않고 `REVIEW`로 남긴다.
+- 활성 MI Base 실행은 graph와 post-graph trace의 `case_id`·`run_seq`·role별 workbook SHA-256이 같아야 한다.
+  기본 정책에서 remote와 `verified_cache`의 source 전환은 같은 content identity에서만 허용한다. 승인된
+  `active_case_unavailable_mode=configured_fallback` campaign은 remote identity가 관측되기 전의 가용성 실패에만
+  등록 Basecase를 사용하고 graph/trace 모두 같은 configured hash를 증적한다. remote metadata 관측 뒤의
+  download·hash·contract 실패에는 이 예외를 적용하지 않는다.
+- Step1.5/2/3 semantic abstention도 MI Base 준비 뒤 발생하므로 안전 예외 trace에 같은 path-free identity를
+  포함한다. 누락 시 특정 fallback을 요구한 campaign은 관측 불완전 `FAIL`이다. semantic abstention과 node failure의
+  source·test가 이후 실행에서 identity를 직접 전달하는지 확인하고, 추론 증적을 직접 관측으로 표기하지 않는다.
 - CLI는 필수 계약 `FAIL`이나 execution error가 있으면 non-zero로 종료해야 한다.
 - 적합한 실제 v4 Scenario가 없거나 read-only라 write 증적이 없는 경우는 `COVERAGE LIMIT`이며 process
   failure가 아니다.
+
+### Group별 대표 Scenario 3개 평가
+
+Group마다 대표 Scenario 3개만 Proposal하는 add-only campaign은 전체 Scenario를 먼저 read-only preflight한다.
+같은 Event 입력을 다시 쓰면 `same_logical_inputs/add-only`, baseline과 다른 Event 20개를 먼저 선정하면
+`expanded_event_cohort/add-only`로 구분한다. 후자는 baseline/expanded Event ID 완전 비중복, expanded Event 20개
+고유성, 신규 Group 20개 순증과 기존 Group 삭제 0을 선택 plan의 hard gate로 둔다. 동일 Event 재생성 증적은
+expanded cohort의 최종 KPI와 fixture에서 제외한다.
+
+기존 Scenario-only reference fixture의 Event 40개를 원본 풀로 삼아 **Scenario부터 다시 생성**하는 campaign은
+`existing_event_pool/add-only-regenerated-scenarios`로 구분한다. ordered Event ID 40개를 추가·교체 없이 그대로
+재사용하고 원본 Group/Scenario는 삭제·수정하지 않는다. Event별 신규 v4 Group 생성, validation, confirmation 뒤
+원본 Group 40개 보존·신규 Group 40개 순증·원본/신규 Group ID 비중복·Scenario Lever `v4.1` exact pin을 hard
+gate로 둔다. 이 정책은 Event cohort 확장이 아니므로 baseline과 Event ID가 겹치는 것이 정상이다. Signpost는 Model
+Parameter Proposal 필수 입력이 아니면 생략할 수 있다.
+명시적 LLM validation failure가 Scenario 0건의 미완료 Group을 남기고 active operation이 없음을 read-back으로
+증명한 경우에만 별도 1회 bounded retry를 허용한다. 동일 Group 복구인지 새 Group 생성인지 기록하고, 새 Group이면
+최초 미완료 Group을 삭제하지 않고 audit으로 남기며 완료 Group 40개와 대표 Scenario/Proposal KPI 분모에서는 제외한다.
+
+baseline·floor·ceiling 대표성을 우선하고, 동일 대표성 후보 사이에서 runtime canonical Parameter type set overlap이
+가장 큰 조합을 선택한다. 선정 ID는 Proposal 전에 고정하며 Confirmation과 callback은 호출하지 않는다.
+
+결과는 다음 지표를 분리한다.
+
+- 전체 고정 대표 Scenario 기준 Proposal 성공률과 Group별 triple-success 비율
+- Proposal-eligible 기준 preflight→Proposal 전환율, semantic-empty율, 실패 시 무저장 원자성
+- triple-success Group 기준 세 Proposal의 canonical Parameter type set 동일률
+- type-consistent Group 기준 대표 3개의 전체 proposed value signature가 서로 모두 다른 비율. Parameter별 proposed
+  value는 순서 독립 multiset으로 정규화해 cell 배열 순서만 바뀐 경우를 변별로 세지 않는다.
+- Parameter와 모든 model slot 좌표가 같은 cell에 한정한 exact-slot 값 변별률
+- `scenario_group_id`/`scenario_id`/`mi_event_id=NULL`, persistence integrity, retry/token/p50/p95
+- 고정 eligible Scenario ID와 실제 attempt ID exact match, 최종 covered/uncovered/skip Scenario ID 및 Group identity
+
+type/value 지표에 Proposal 실패나 semantic abstain을 억지로 포함하지 않는다. 대신 전체 Proposal 성공률에 그대로
+남기고, triple-success가 아닌 Group의 종류/값/exact-slot은 `N/A`로 표시한다. exact slot 교집합이 없는 Group은
+`not comparable`로 집계한다. 선정과 평가는
+`tests/manual/model_parameter_agent/evaluate_representative_trios.py`를 사용하며 현재 release identity는
+Scenario Lever `v4.1`, Proposal Flow `v4.1.2`를 각각 기록한다.
+중단·재개 등으로 실행 증적이 비중복 파일 여러 개라면 `--execution-evidence`를 반복한다. 도구는 release identity가
+같은지 검사하고 동일 Scenario attempt가 중복되면 덮어쓰지 않고 실패한다. 코드 수정 뒤 동일 Scenario를 재실행한
+증적은 `--post-fix-execution-evidence`와 필수 `--post-fix-reason`으로만 명시 교체하고 원 source/status/stage를
+audit에 보존한다. post-fix가 있으면 baseline과 최종 attempt의 Scenario ID 집합이 같은지 hard gate로 확인하고,
+성공·semantic abstention·기타 실패·구조화/완전 trace의 개선 전후 수치와 증감을 표로 남긴다. 재사용 요청이 있으면
+Proposal 실행 전에 `evaluate_representative_trios.py freeze --plan <plan> --output
+tests/fixtures/model_parameter_agent/<dataset>.json`으로 해당 campaign의 고정 cohort를 최초 1회 저장하며 기존 파일을
+덮어쓰지 않는다. 기존 expanded Event campaign은 20 Group·60 Scenario 계약을 유지하고, 기존 Event 풀 재생성
+campaign은 40 Group·120 대표 Scenario 계약을 사용한다.
+이후에는 `--testset-input`으로 fixture SHA-256과 ordered Group/Event/Scenario ID를
+plan과 exact 대조하며 fixture를 다시 생성하지 않는다. 고정 assertion은 release contract·Group/Scenario selection이며
+LLM 결과 baseline은 회귀 비교용 관측값이다. expanded campaign fixture에는
+`selection_policy=expanded_event_cohort/add-only`와 baseline/expanded Event identity도 함께 보존한다. 최종 Markdown은
+그룹별 결과, Read-only KPI, Proposal 결과 KPI, 개선 전후 비교 표의 컬럼 정의를 고정 섹션으로 항상 포함한다.
+Read-only KPI 표는 대상, release pin, runtime-capable/coverage limit, current write eligible/covered, trio 가용성,
+후보 종류 동일, FAIL/hard stop의 핵심 7개로 압축한다. `runtime-capable`은 runtime 후보 존재, `current write
+eligible`은 지금 새 Proposal을 쓸 수 있는 상태, `covered`는 기존 Proposal로 인한 중복 쓰기 차단, `coverage limit`은
+runtime 후보가 없어 실행하지 않는 상태라고 설명한다. KPI 개선안은 신규 KPI 추가가 아니라 기존 Proposal 성공률,
+triple-success, 종류 동일성, Scenario별 값 변별을 높이는 방안으로 작성한다.
+Object Storage 장애 시 특정 fallback으로 실행해야 하는 campaign은 proposal-only runner에
+`--require-mi-base-fallback-mode configured_fallback`을 주고 evaluator에도
+`--expected-mi-base-fallback-mode configured_fallback`을 준다. 로드된 정책이 다르면 Scenario 실행 전에 `BLOCKED`,
+평가에서는 운영 정합성 `FAIL`로 닫아 파일명이나 운영자 가정만으로 fallback을 판정하지 않는다.
+로컬 Object Storage 미연동 때문에 `configured_fallback`을 사용한 결과는 고정 workbook Basecase 기반 평가이며,
+active MI Base/Object Storage 연동 검증 결과로 해석하지 않는다.
+
+### 기존 Scenario-only 최신 pool 확장
+
+신규 Group/Scenario 생성 없이 기존 결과로 testset을 확장할 때는
+`tests/manual/model_parameter_agent/collect_existing_representative_trios.py`를 사용한다.
+
+```bash
+python tests/manual/model_parameter_agent/collect_existing_representative_trios.py \
+  --max-groups 50 \
+  --inventory-output <run-dir>/inventory.json \
+  --preflight-output <run-dir>/read-only-preflight.json \
+  --plan-output <run-dir>/representative-trio-plan.json \
+  --testset-output tests/fixtures/model_parameter_agent/<dataset>.json \
+  --report-json <run-dir>/collection-report.json \
+  --report-markdown <run-dir>/collection-report.md
+```
+
+수집 기준은 다음과 같다.
+
+- Scenario Lever `v4.1`, Proposal Flow `v4.1.2`, API `v4`, strategy
+  `multi_event_model_lever_dimensions`를 exact pin한다.
+- Group status `created|realized`, stage `completed`, `parameter_mapping_ready=true`와 Dimension/baseline/role/cell
+  구조 gate를 통과해야 한다.
+- Group을 `mod_dtm DESC, scenario_group_id DESC`로 정렬하고 ordered Event ID tuple별 최신 Group 하나만 유지한다.
+- cap은 고유 Event signature에 적용한다. release 일치 Group이 더 많아도 과거 중복 Group으로 50개를 채우지 않는다.
+- 선택 Group의 전체 Scenario를 read-only preflight한 뒤 runtime-capable Scenario를 우선해 대표 3개를 고정한다.
+  기존 Proposal 때문에 covered인 Scenario도 재사용 testset 후보에서는 제외하지 않되 current write eligibility와 분리한다.
+- `runtime-capable`, `current write-eligible`, `covered`, `coverage limit`을 별도 KPI로 기록한다.
+- Parameter 종류 동일률의 분모는 3개 모두 runtime-capable인 Group이다. role coverage의 분모는 selection pool에
+  baseline/floor/ceiling이 모두 있는 Group이다.
+- Proposal 결과 KPI에는 `같은 종류 + Scenario별 다른 제안값`을 고정한다. 분모는 실제 Proposal이 모두 성공하고
+  canonical Parameter 종류 집합이 동일한 Group이며, 순서 독립으로 정규화한 전체 Proposal value signature가 대표
+  3개 Scenario 사이에서 서로 모두 다르면 변별된 것으로 판정한다. 공통 exact model slot의 값 차이는 별도 보조
+  KPI로 유지한다.
+- read-only 수집에서는 위 Proposal 결과 KPI를 기존 이력으로 추정하지 않고 `NOT_MEASURED_READ_ONLY`/`N/A`로
+  표시한다.
+
+이 모드는 Group/Scenario/Proposal/confirmation/callback을 생성하지 않는다. read-only preflight에는 Object Storage나
+MI Base bootstrap이 필요하지 않다. 이후 같은 fixture로 Proposal을 실행하려면 별도 write 승인이 필요하며, Object
+Storage 불가 시 승인된 `configured_fallback` 계약을 runner와 evaluator 양쪽에서 exact gate로 확인한다.
+
+여기서 `read-only 수집 리포트`는 기존 DB의 Group/Scenario와 Proposal history를 조회하고 release·구조 gate,
+runtime candidate, 현재 write guard 상태만 계산한 결과를 뜻한다. Proposal/LLM 실행이나 Group·Scenario·Proposal
+생성, confirmation/callback, Object Storage·MI Base bootstrap은 포함하지 않는다.
+
+최종 collection Markdown/JSON에는 `Read-only KPI`의 의미와 해석 방법을 고정한다. 이 KPI는 기존 저장 데이터와
+deterministic preflight로 계산한 cohort 구성·실행 전제·coverage 지표다. collection `PASS`는 선정·release·구조·
+preflight 계약 통과를 뜻하며 실제 Proposal 성공이나 제안값 품질 통과를 뜻하지 않는다. `Covered`는 기존 이력으로
+현재 중복 write가 막힌 상태, `coverage limit`은 runtime 후보 부재 상태로 각각 실패와 구분한다. 실제 Proposal
+성공·semantic abstention·실제 종류/값·exact-slot·token/latency는 미평가임을 명시하고, 실행 간 비교는 동일 fixture
+identity·Scenario Lever/Proposal Flow release·context fingerprint에서만 수행한다.
+
+2026-10-07 기준 reference fixture는
+`tests/fixtures/model_parameter_agent/v4_1_2_existing_latest_distinct_representative_trio_40_groups_20261007.json`이며,
+release 일치 60 Group 중 20개 과거 Event-signature 중복을 제외한 최신 40 Group·120 Scenario를 고정한다.
 
 판정은 다음 네 가지를 사용한다.
 
@@ -220,6 +353,9 @@ idempotency/rollback을 검증하고 미실행 단계와 필요한 별도 승인
 - 신규 파라미터별 DB/canonical, Lever, capability, source Excel, transformed/LUT, write target, config,
   runtime output 정합성 PASS/FAIL 행
 - 실행 명령, test collected/passed/failed/skipped, token·시간·retry
+- structured abstention stage/reason funnel, trace 완전성, 성공/전체 시도 latency
+- 동일 testset post-fix의 성공·abstention·실패·trace 개선 전후와 Scenario 시도 집합 동일성
+- 표 컬럼별 의미와 비교 불가(`N/A`) 규칙
 - `PASS | REVIEW | FAIL | COVERAGE LIMIT` 및 미실행 사유
 
 기존 보고서의 PASS나 하드코딩된 Scenario ID를 현재 worktree의 증적으로 재사용하지 않는다.

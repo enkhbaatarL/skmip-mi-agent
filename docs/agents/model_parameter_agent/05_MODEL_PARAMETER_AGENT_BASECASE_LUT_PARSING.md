@@ -121,10 +121,33 @@ background는 이 값을 다시 읽어 활성 Base 변경에 영향받지 않는
 
 입력 3종은 기존 `model_parameter_resource_storage` endpoint·bucket·credential·timeout·local cache
 설정을 그대로 사용한다. 요청별 immutable cache에 받은 뒤 기존 v1/v3 경로와 v4
-`new-bc-v7` contract에 동일하게 연결한다. 활성 Base가 없거나 파일 3종 구성, Object Storage,
-download 정합성, workbook contract 검증이 실패하면 기존 등록 resource로 fallback한다.
-이 경우에도 접수 시 선택한 `mi_base_case_id`는 재현을 위해 유지하고, 실제 resource 선택은
-request-local state와 서버 log의 `source=mi_base|configured_fallback`으로 구분한다.
+`new-bc-v7` contract에 동일하게 연결한다. 활성 Base가 있지만 현재 Object Storage metadata를
+확인할 수 없는 경우에는 같은 `case_id`·`last_run_id`·`run_seq`·SCNRCASE 파일 식별자의 cache만 찾는다.
+cache의 workbook SHA-256과 contract를 다시 검증하고, 같은 identity에 서로 다른 내용이 둘 이상이면
+사용하지 않는다. 입력 3종 구성, 현재 remote identity, download 정합성 또는 workbook contract가 잘못됐거나
+검증 cache가 없으면 기본 정책에서는 기존 등록 Basecase로 바꾸지 않고 요청을 실패시킨다.
+
+Object Storage를 사용할 수 없는 환경에서 운영자 또는 승인된 품질 campaign이
+`model_parameter_mi_base_fallback.active_case_unavailable_mode=configured_fallback`을 명시하면 예외적으로 등록
+Basecase를 사용할 수 있다. 이 모드는 client 초기화·metadata head처럼 **현재 remote identity를 하나도 확정하지
+못한 가용성 실패**에만 적용한다. SCNRCASE 3종 구성이 잘못됐거나, 현재 remote metadata를 확인한 뒤 download,
+hash 또는 workbook contract 검증이 실패한 경우에는 configured fallback으로 바꾸지 않고 fail-closed한다.
+기본값은 `verified_cache`이며 configured fallback은 실행 증적에 정책과 `source=configured_fallback`을 남긴다.
+
+활성 Base가 없을 때는 `model_parameter_mi_base_fallback.no_active_case_mode=fail`이 기본이다.
+운영자가 이를 `configured_fallback`으로 명시한 환경에서만 기존 등록 resource를 사용한다. 접수 시 선택한
+`mi_base_case_id`는 재현을 위해 유지하고, 실제 resource 선택은 request-local state와 서버 log의
+`source=mi_base|verified_cache|configured_fallback`으로 구분한다.
+`configured_fallback`에서는 등록 release의 기존 Basecase/LUT 경로를 유지하되, v4 `new-bc-v7`
+workbook은 wrapper release가 아니라 digest를 검증한 repo-side `resources/basecase_v4/new-bc-v1/`에서
+읽는다. 따라서 Object Storage fallback용 release에 `basecase_v4/`가 없더라도 v4 제안은 같은 고정
+contract artifact를 사용한다.
+
+proposal-only 품질 runner의 post-graph trace 보강도 이 경계를 우회하지 않는다. graph가 남긴
+`case_id`·`run_seq`·role별 workbook SHA-256과 다시 확인한 선택 resource identity가 같아야 하며,
+remote 실행에서는 `mi_base`와 `verified_cache`의 source 표기만 달라질 수 있다. 명시적 configured fallback
+실행은 graph와 trace가 모두 같은 configured release와 workbook hash를 사용해야 한다. trace용 Basecase
+record에는 선택된 workbook root와 dynamic contract를 명시적으로 전달한다.
 
 ## 2. 설정의 역할
 
@@ -141,12 +164,13 @@ request-local state와 서버 log의 `source=mi_base|configured_fallback`으로 
 | config.yaml > model_parameter_resources.workbook_contract | v4 `new-bc-v7` repo-side contract path |
 | config.yaml > model_parameter_resources.lut | enabled, adapter, files, required header, key_axes, metadata_axes |
 | config.yaml > model_parameter_resources.references | runtime 보조 CSV; 독립 parameter record는 만들지 않음 |
+| config.yaml > model_parameter_mi_base_fallback | 활성 Base 부재 시 fail/configured fallback, 활성 Base Object Storage 장애 시 fail/verified-cache/명시적 configured fallback 경계 |
 | 공통 설정 | 2026~2030 horizon, Basecase/LUT 기준값 숫자 정밀도(v4 PowerMix raw fraction 제외), 파라미터별/요청 전체 slot 상한, Step2·Step3 byte 상한 |
 
 envs/config.yaml과 devops/k8s/configmap.yaml의 model_parameter_resources 및 관련 limit은 동일해야 한다.
 `model_parameter_resource_storage`는 두 설정에 같은 field set을 유지하고 bucket·region·timeout·cache·retry
 계약을 맞춘다. endpoint와 credential 값은 로컬 MinIO와 Kubernetes Secret 주입 차이로 환경별로
-다를 수 있다. MI Base용으로 별도 설정 key나 credential을 추가하지 않는다.
+다를 수 있다. MI Base는 같은 Object Storage credential을 사용하고 fallback 정책만 별도 설정으로 둔다.
 resource schema v7의 semantic hash에는 workbook contract hash와 고정 digest가 포함된다. Workbook reference
 cache는 contract hash와 실제 파일 signature를 포함해 다른 release를 재사용하지 않는다. 기존 LUT adapter
 schema `model-parameter-lut-adapters-v3`과 Impact Lever hydrated catalog checksum은 각각 별도 authority다.

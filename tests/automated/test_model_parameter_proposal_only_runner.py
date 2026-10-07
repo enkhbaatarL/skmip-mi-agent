@@ -11,7 +11,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from tests.manual.model_parameter_agent import run_proposal_only as runner
+from tests.manual.model_parameter_agent import evaluate_proposals, run_proposal_only as runner
 
 
 def _context(
@@ -137,8 +137,53 @@ def test_parser_accepts_repeatable_scenario_ids_and_defaults_to_read_only(tmp_pa
 
     assert options.execute is False
     assert options.scenario_ids == (101, 102)
+    assert options.required_mi_base_fallback_mode is None
     with pytest.raises(ValueError, match="duplicate --scenario-id"):
         asyncio.run(runner.run_campaign(_options(tmp_path, 101, 101)))
+
+
+def test_required_mi_base_fallback_mode_blocks_before_resource_or_scenario_work(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    resource_manifest = runner._resource_manifest()  # noqa: SLF001
+    fallback_policy = SimpleNamespace(
+        model_dump=lambda **_kwargs: {
+            "no_active_case_mode": "fail",
+            "active_case_unavailable_mode": "verified_cache",
+        },
+    )
+    monkeypatch.setattr(runner, "_resource_manifest", lambda: resource_manifest)
+    monkeypatch.setattr(
+        runner,
+        "get_settings",
+        lambda: SimpleNamespace(model_parameter_mi_base_fallback=fallback_policy),
+    )
+    options = runner.ProposalOnlyOptions(
+        execute=True,
+        scenario_ids=(101,),
+        scenario_group_id=None,
+        capability_release=runner.BASELINE_CAPABILITY_RELEASE,
+        evidence_path=tmp_path / "fallback-mismatch.json",
+        required_mi_base_fallback_mode="configured_fallback",
+    )
+    dependencies = runner.RunnerDependencies(
+        load_context=lambda _scenario_id: (_ for _ in ()).throw(AssertionError("must not load context")),
+        snapshot_proposal_rows=lambda _group_id, _scenario_ids: (),
+        evaluate_scenario=lambda _scenario_id: (_ for _ in ()).throw(AssertionError("must not evaluate")),
+        fetch_proposal=lambda _proposal_id: {},
+        failure_trace=lambda _exc: {},
+        prepare_resources=lambda: (_ for _ in ()).throw(AssertionError("must not prepare resources")),
+    )
+
+    evidence = asyncio.run(runner.run_campaign(options, dependencies=dependencies))
+
+    assert evidence["status"] == "BLOCKED"
+    assert evidence["attempts"] == []
+    assert evidence["manifest"]["required_mi_base_fallback_mode"] == "configured_fallback"
+    assert evidence["selection"]["errors"] == [
+        "MI Base fallback mode mismatch: required='configured_fallback', actual='verified_cache'",
+    ]
 
 
 def test_evidence_path_is_reserved_exclusively(tmp_path: Path) -> None:
@@ -1057,7 +1102,7 @@ def test_successful_scenarios_execute_once_sequentially_and_update_sanitized_evi
         "processing_policy": "any active PROCESSING row hard-stops the entire campaign",
         "required_api_version": "v4",
         "required_generation_strategy": runner.V4_STRATEGY,
-        "scenario_failure_policy": "isolate FAIL and continue; BLOCKED hard-stops the campaign",
+        "scenario_failure_policy": "isolate ABSTAINED/FAIL and continue; BLOCKED hard-stops the campaign",
         "sequential": True,
         "single_worker_best_effort": True,
         "uncovered_only": True,
@@ -1116,6 +1161,87 @@ def test_scenario_failure_is_isolated_and_later_candidate_executes_once(tmp_path
     assert evidence["selection"]["counts"]["attempted"] == 2
     assert evidence["selection"]["counts"]["succeeded"] == 1
     assert evidence["selection"]["counts"]["failed"] == 1
+
+
+def test_structured_semantic_empty_is_abstained_with_complete_trace(tmp_path: Path) -> None:
+    history = {101: [_proposal_row(101, 400, status="FAILED")]}
+
+    def snapshot(_scenario_group_id: int, scenario_ids: object) -> tuple[dict[str, object], ...]:
+        scenario_id = int(next(iter(scenario_ids)))  # type: ignore[arg-type]
+        return tuple(history[scenario_id])
+
+    async def evaluate(_scenario_id: int) -> dict[str, object]:
+        raise runner.ModelParameterSemanticEmptyError(
+            reason_code="ABSTAINED_INSUFFICIENT_EVIDENCE",
+            stage="step1_5",
+            title="파라미터로 반영할 변경 항목이 없습니다.",
+            detail="시나리오 근거가 부족합니다.",
+        )
+
+    def failure_trace(_exc: BaseException) -> dict[str, object]:
+        return {
+            "failed_stage": "semantic abstention: step1_5",
+            "semantic_empty": {
+                "reason_code": "ABSTAINED_INSUFFICIENT_EVIDENCE",
+                "stage": "step1_5",
+                "message": "safe",
+            },
+            "semantic_stage_evidence": {
+                "stage": "step1_5",
+                "routing_tasks": [],
+                "prompt": "MUST_NOT_BE_WRITTEN",
+            },
+            "step_summary": {"termination_stage": "Step1.5 종료"},
+            "trace_mi_base_resource": {
+                "source": "configured_fallback",
+                "case_id": 15,
+                "run_seq": 71,
+                "workbook_sha256": {
+                    "demand": "demand-sha256",
+                    "supply": "supply-sha256",
+                    "trade": "trade-sha256",
+                },
+            },
+            "llm_calls": [
+                {
+                    "step": "Step1.5 routing selection",
+                    "success": True,
+                    "usage": {"total_tokens": 42},
+                },
+            ],
+            "observability_complete": True,
+            "partial_state_captured": True,
+            "proposal_persisted": False,
+        }
+
+    evidence = asyncio.run(
+        runner.run_campaign(
+            _options(tmp_path, 101),
+            dependencies=runner.RunnerDependencies(
+                load_context=_context,
+                snapshot_proposal_rows=snapshot,
+                evaluate_scenario=evaluate,
+                fetch_proposal=lambda _proposal_id: {},
+                failure_trace=failure_trace,
+            ),
+        ),
+    )
+
+    assert evidence["status"] == "REVIEW"
+    assert evidence["selection"]["counts"]["abstained"] == 1
+    assert evidence["selection"]["counts"]["failed"] == 0
+    attempt = evidence["attempts"][0]
+    assert attempt["status"] == "ABSTAINED"
+    assert attempt["semantic_empty"] == {
+        "reason_code": "ABSTAINED_INSUFFICIENT_EVIDENCE",
+        "stage": "step1_5",
+        "message": "파라미터로 반영할 변경 항목이 없습니다.\n시나리오 근거가 부족합니다.",
+        "structured": True,
+        "observability_complete": True,
+    }
+    assert attempt["failure_trace"]["llm_calls"][0]["usage"]["total_tokens"] == 42
+    assert attempt["failure_trace"]["trace_mi_base_resource"]["source"] == "configured_fallback"
+    assert "MUST_NOT_BE_WRITTEN" not in _options(tmp_path, 101).evidence_path.read_text(encoding="utf-8")
 
 
 def test_second_campaign_skips_proposed_row_created_by_first_campaign(tmp_path: Path) -> None:
@@ -1507,4 +1633,39 @@ def test_runtime_evaluator_checks_frozen_graph_context_before_persistence() -> N
     assert source.index('raw_state.get("scenario_context")') < source.index("_serialize_output_with_persistence_trace")
     assert source.index("proposal pre-persistence quality gate failed") < source.index(
         "_serialize_output_with_persistence_trace",
+    )
+
+
+def test_frozen_graph_context_ignores_only_request_local_mi_base_pin() -> None:
+    expected = _context(101)
+    actual = json.loads(json.dumps(expected))
+    actual["mi_base_case_id"] = 15
+
+    assert evaluate_proposals._matches_frozen_graph_context(actual, expected)  # noqa: SLF001
+
+    actual["scenario"]["title"] = "mutated title"  # type: ignore[index]
+    assert not evaluate_proposals._matches_frozen_graph_context(actual, expected)  # noqa: SLF001
+
+
+def test_post_graph_trace_allows_only_mi_base_transport_source_change() -> None:
+    graph_identity = {
+        "source": "mi_base",
+        "case_id": 15,
+        "run_seq": 71,
+        "workbook_sha256": {"demand": "a", "supply": "b", "trade": "c"},
+    }
+    cache_identity = {
+        **graph_identity,
+        "source": "verified_cache",
+    }
+
+    assert evaluate_proposals._same_mi_base_content_identity(  # noqa: SLF001
+        graph_identity,
+        cache_identity,
+    )
+
+    cache_identity["workbook_sha256"] = {"demand": "changed", "supply": "b", "trade": "c"}
+    assert not evaluate_proposals._same_mi_base_content_identity(  # noqa: SLF001
+        graph_identity,
+        cache_identity,
     )

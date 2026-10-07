@@ -211,7 +211,8 @@ v3/v4 proposal을 개별 event 하나에 귀속시키지 않는다. repository·
 ### 4.1 MI Base와 연결 파일 조회
 
 1. `tmd_mdl_scnrcasem`의 `actv_base_yn='Y' AND del_yn='N'`을 조회한다.
-2. 0건이면 기존 설정 Basecase로 fallback하고, 1건이면 그 `case_id`를 제안 행에 고정한다.
+2. 0건이면 `mi_base_case_id=NULL`을 저장한다. 기본은 실패하며, 명시적 운영 설정에서만 기존 설정
+   Basecase를 허용한다. 1건이면 그 `case_id`를 제안 행에 고정한다.
 3. 2건 이상은 활성 기준이 애매하므로 임의의 하나를 고르지 않고 요청을 실패시킨다.
 4. `last_run_id = tmd_mdl_scnrcaseh.run_id`로 최신 실행의 `run_seq`를 얻는다.
 5. `tcm_filel`에서 다음 복합 키로 연결 파일을 조회한다.
@@ -225,7 +226,10 @@ v3/v4 proposal을 개별 event 하나에 귀속시키지 않는다. repository·
 
 `SCNRCASEH/HI/HTF`가 없어도 입력 workbook 3종이 유효하면 제안 계산은 계속한다.
 반대로 `SCNRCASE` 3종을 완전하게 식별·검증하지 못하면 저장된 `mi_base_case_id`는 유지하되
-기존 설정 Basecase로 fallback한다.
+다른 Basecase로 fallback하지 않고 실패한다. Object Storage의 현재 metadata를 확인할 수 없는 경우에만
+같은 `case_id`, `last_run_id`, `run_seq`, SCNRCASE 파일 식별자에 대해 저장된 cache를 찾고, cache 내부
+workbook SHA-256과 contract를 다시 검증해 사용한다. 같은 identity에 서로 다른 workbook 내용이 둘 이상이면
+임의 선택하지 않고 실패한다.
 
 ```mermaid
 stateDiagram-v2
