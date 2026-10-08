@@ -162,7 +162,8 @@ def _structured_output_request_kwargs(
     stream: bool,
     reasoning_effort: ReasoningEffortOption | None,
 ) -> dict[str, Any]:
-    strict = get_settings().llm_structured_output_strict
+    settings = get_settings()
+    strict = settings.llm_structured_output_strict
     kwargs: dict[str, Any] = {
         "model": model,
         "messages": messages,
@@ -174,6 +175,9 @@ def _structured_output_request_kwargs(
     }
     if reasoning_effort not in (None, "default"):
         kwargs["reasoning_effort"] = reasoning_effort
+    verbosity = getattr(settings, "llm_verbosity", "default")
+    if verbosity != "default":
+        kwargs["verbosity"] = verbosity
     if stream and strict:
         kwargs["stream_options"] = {"include_usage": True}
     elif stream:

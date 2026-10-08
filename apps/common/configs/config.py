@@ -197,6 +197,17 @@ class Settings(BaseSettings):
         "high",
         "xhigh",
     ] = "default"
+    # v4 Event·Interaction analysis stages keep a lighter effort than the global default.
+    llm_v4_analysis_reasoning_effort: Literal[
+        "default",
+        "none",
+        "minimal",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+    ] = "low"
+    llm_verbosity: Literal["default", "low", "medium", "high"] = "default"
     llm_structured_output_strict: bool = Field(default=False)
 
     # Model parameter proposal
