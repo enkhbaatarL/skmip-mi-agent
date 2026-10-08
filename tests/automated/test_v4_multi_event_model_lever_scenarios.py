@@ -750,6 +750,11 @@ def test_v4_finalizer_normalizes_fractional_probabilities_to_integer_percentages
 
 def test_v4_finalizer_distributes_zero_probability_weights_deterministically() -> None:
     synthesis = _synthesis()
+    # 동률(zero) tie-break는 입력 순서의 index 0이 이긴다. "상단"(strong_bullish)이 index 0이면
+    # tie-break로 뽑힌 Base가 그룹 내 가장 bullish한 Scenario와 같아져, Base가 floor/ceiling(=
+    # Bearish/Bullish)과 겹치는 것을 막는 새 검증에 걸린다. 이 테스트는 확률 정규화의 tie-break
+    # 결정성 자체를 검증하는 목적이므로, "balanced"인 "혼합"이 tie-break로 뽑히도록 순서만 바꾼다.
+    synthesis.scenarios = [synthesis.scenarios[1], synthesis.scenarios[0], synthesis.scenarios[2]]
     for scenario in synthesis.scenarios:
         scenario.probability_score = 0
 
@@ -761,9 +766,9 @@ def test_v4_finalizer_distributes_zero_probability_weights_deterministically() -
         impact_levers=_catalog(),
     )
 
-    assert [scenario.probability_score for scenario in finalized.scenarios] == [34, 33, 33]
+    assert [scenario.probability_score for scenario in finalized.scenarios] == [33, 34, 33]
     assert sum(scenario.probability_score for scenario in finalized.scenarios) == 100
-    assert [scenario.baseline_yn for scenario in finalized.scenarios] == [True, False, False]
+    assert [scenario.baseline_yn for scenario in finalized.scenarios] == [False, True, False]
 
 
 def test_v4_scenario_rejects_missing_common_path() -> None:

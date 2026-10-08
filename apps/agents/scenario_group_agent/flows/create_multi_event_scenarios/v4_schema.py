@@ -1740,19 +1740,6 @@ def _validate_scenarios(
     for scenario in scenarios:
         scenario.scenario_role = None
         scenario.baseline_yn = False
-    ordered[0].scenario_role = "floor"
-    ordered[-1].scenario_role = "ceiling"
-    mixed_candidates = [
-        scenario for scenario in ordered[1:-1] if {-1, 1} <= set(contribution_by_scenario[id(scenario)])
-    ]
-    if mixed_candidates:
-        min(
-            mixed_candidates,
-            key=lambda scenario: (
-                abs(PRESSURE_RANK[scenario.pressure_band] - 2),
-                -scenario.probability_score,
-            ),
-        ).scenario_role = "mixed"
     max(scenarios, key=lambda scenario: scenario.probability_score).baseline_yn = True
 
     # Base는 확률 최고로 선정된 뒤에도 LLM이 매긴 절대 pressure_band를 그대로 유지했다.
@@ -1765,6 +1752,20 @@ def _validate_scenarios(
     deltas = {
         id(scenario): sum(contribution_by_scenario[id(scenario)]) - base_sum for scenario in scenarios
     }
+
+    # floor/ceiling을 Base 선정 이전의 절대 band 순위로 정하면, Base 자신이 floor나 ceiling과
+    # 같은 Scenario가 될 수 있다 — 이는 Base가 Bearish/Bullish와 동일시되는 것과 같은 문제다.
+    # 따라서 floor/ceiling/mixed role은 Base 대비 delta가 정해진 뒤, Base를 제외한 나머지
+    # Scenario 중에서만 다시 선정한다. 이를 위해 Base가 아닌 Scenario 중 bearish 방향(delta<0)과
+    # bullish 방향(delta>0)이 각각 최소 1개씩 존재해야 한다 — 하나라도 없으면 에러를 발생시켜
+    # 기존 재시도 메커니즘이 다른 조합을 다시 생성하도록 한다(기존엔 프롬프트로만 유도했을 뿐
+    # 보장하지 않았다).
+    non_base_deltas = [delta for scenario_id, delta in deltas.items() if scenario_id != id(base_scenario)]
+    if not any(delta < 0 for delta in non_base_deltas):
+        raise ValueError("Base 대비 bearish 방향(delta<0) Scenario가 최소 1개 있어야 합니다")
+    if not any(delta > 0 for delta in non_base_deltas):
+        raise ValueError("Base 대비 bullish 방향(delta>0) Scenario가 최소 1개 있어야 합니다")
+
     for scenario in scenarios:
         delta = deltas[id(scenario)]
         if delta == 0:
@@ -1795,6 +1796,29 @@ def _validate_scenarios(
             "Base 재계산 이후에도 Base가 아닌 시나리오의 pressure_band가 서로 겹칩니다: "
             f"{non_base_bands}"
         )
+
+    # floor/ceiling: Base를 제외한 Scenario 중 delta가 가장 작은/큰 것. 위에서 양방향 존재를
+    # 보장했으므로 floor는 항상 delta<0, ceiling은 항상 delta>0 Scenario가 되어 Base(delta=0)와
+    # 겹치지 않는다.
+    non_base_scenarios = [scenario for scenario in scenarios if not scenario.baseline_yn]
+    floor_scenario = min(non_base_scenarios, key=lambda scenario: deltas[id(scenario)])
+    ceiling_scenario = max(non_base_scenarios, key=lambda scenario: deltas[id(scenario)])
+    floor_scenario.scenario_role = "floor"
+    ceiling_scenario.scenario_role = "ceiling"
+    # mixed는 floor/ceiling(Bearish/Bullish 극단)만 피하면 되고 Base와 겹쳐도 무방하다 —
+    # "mixed"는 Scenario 내부에 bullish/bearish 레버가 같이 섞여 있다는 표식일 뿐, Base가
+    # 금지된 floor/ceiling(=극단 pressure band)과는 의미가 다르다.
+    mixed_candidates = [
+        scenario
+        for scenario in scenarios
+        if id(scenario) not in {id(floor_scenario), id(ceiling_scenario)}
+        and {-1, 1} <= set(contribution_by_scenario[id(scenario)])
+    ]
+    if mixed_candidates:
+        min(
+            mixed_candidates,
+            key=lambda scenario: (abs(deltas[id(scenario)]), -scenario.probability_score),
+        ).scenario_role = "mixed"
 
     scenarios.sort(key=lambda scenario: PRESSURE_RANK[scenario.pressure_band], reverse=True)
 
