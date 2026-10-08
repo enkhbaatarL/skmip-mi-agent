@@ -243,7 +243,7 @@ def test_v4_prompt_matches_fact_path_analysis_contract() -> None:
         "eventFacts",
         "eventFacts[0]은 Primary Fact",
         "impacts[0]은 Primary Impact",
-        "Event 제목과 요약의 핵심 주체·지표·상태·변화",
+        "반드시 후보 1번(Event 제목·요약의 핵심 문장)",
         "서로 다른 Lever·방향·기간",
         "decisionBasis는 Primary Fact나 Primary Impact를 대신할 수 없습니다",
         "Primary Impact의 규모·기간·회복 시점",

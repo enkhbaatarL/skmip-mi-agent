@@ -1161,6 +1161,39 @@ def test_v4_readable_event_allows_three_evidence_items_and_rejects_four() -> Non
         V4ReadableEventAnalysisDraft.model_validate(payload)
 
 
+def test_v4_readable_event_moves_candidate_one_to_primary_fact() -> None:
+    candidates = {"f1": "동북아 한파 지속 전망", "f2": "역내 LNG 재고가 평년보다 낮다."}
+    readable = _readable_event_draft(101)
+    readable.event_facts = [candidates["f2"], candidates["f1"]]
+    readable.impacts[0].evidence = readable.event_facts
+
+    draft = expand_v4_readable_event_analysis(
+        readable,
+        event_id=101,
+        observed_at="2026-08-05",
+        fact_candidates=candidates,
+    )
+
+    assert [fact.observed_basis for fact in draft.event_facts] == [candidates["f1"], candidates["f2"]]
+    assert [fact.fact_id for fact in draft.event_facts] == ["e101_f1", "e101_f2"]
+    assert draft.impact_paths[0].source_fact_ids == ["e101_f2", "e101_f1"]
+
+
+def test_v4_readable_event_requires_candidate_one_when_impacts_exist() -> None:
+    candidates = {"f1": "동북아 한파 지속 전망", "f2": "역내 LNG 재고가 평년보다 낮다."}
+    readable = _readable_event_draft(101)
+    readable.event_facts = [candidates["f2"]]
+    readable.impacts[0].evidence = readable.event_facts
+
+    with pytest.raises(ValueError, match="Fact candidate 1"):
+        expand_v4_readable_event_analysis(
+            readable,
+            event_id=101,
+            observed_at="2026-08-05",
+            fact_candidates=candidates,
+        )
+
+
 def test_v4_three_facts_hydrate_to_ordered_paths_and_preserve_lineage() -> None:
     facts = [
         "동북아 한파 지속 전망",
@@ -1197,7 +1230,7 @@ def test_v4_three_facts_hydrate_to_ordered_paths_and_preserve_lineage() -> None:
         readable,
         event_id=101,
         observed_at="2026-08-05",
-        fact_candidates={f"f{index}": fact for index, fact in enumerate(reversed(facts), start=1)},
+        fact_candidates={f"f{index}": fact for index, fact in enumerate(facts, start=1)},
     )
     result = finalize_v4_event_impact_analysis(
         draft,
@@ -1260,7 +1293,7 @@ def test_v4_fact_ids_follow_selected_array_order_and_preserve_modality() -> None
         readable,
         event_id=101,
         observed_at="2026-08-05",
-        fact_candidates={"f1": announced, "f2": forecast},
+        fact_candidates={"f1": forecast, "f2": announced},
     )
 
     assert [fact.fact_id for fact in result.event_facts] == ["e101_f1", "e101_f2"]
@@ -2161,19 +2194,18 @@ def test_v4_prompts_follow_fact_path_uncertainty_contract() -> None:
     assert "label은 핵심 대상과 변화 축을 담되 30자를 넘지 않습니다" in dimension
     assert "rationale은 최대 200자의 구체적인 한국어 한 문장" in dimension
     assert "question은 필요한 관측 정보와 판단 대상을 충분히 포함" in dimension
-    assert "2026년 6월 30일 유럽 저장률이 49.1%로 관측" in dimension
+    assert "`사실: … | 파생: … | 가정: … | 영향: …` 형식" in dimension
+    assert "Choice끼리 pressure가 겹치지 않게" in dimension
+    assert "Impact의 현재 상태가\n  지속·강화되는 Choice는 그 Impact와 같은 방향" in dimension
+    assert "같은 상태를 다르게 매기지 않습니다" in dimension
+    assert "월 단위 시점" in dimension
     assert "Choice label은 비교 가능한 하나의 시장·운영 상태를 30자 이내" in dimension
     assert "새로운 수치 경계" in dimension
     assert f"direction은 {StateDirection.prompt_values()}" in dimension
-    assert "`관측된 사실 → 미래 상태 → JKM 영향`" in dimension
-    assert "문장 끝의 `가정`" in dimension
-    assert "가정이라는 메타 표현은 문장 끝에서 한 번만" in dimension
-    assert "`상태를 가정하면`, `상황을 가정하면`, `나타나는 가정이다`" in dimension
-    assert "`Event 배경으로 제시된 사실` 같은 출처 메타 설명 없이" in dimension
-    assert "`답`, `응답`, `선택`, `선택한 값`이라는 말도" in dimension
-    assert "주입 부담이 완화되고 NWE 가격 지지" in dimension
-    assert "스프레드가 다시 벌어지고 아시아가" in dimension
-    assert "별도 Anchor 참조 ID나 새 사실을" in dimension
+    assert "`Event 배경으로 제시된 사실` 같은 메타 표현" in dimension
+    assert "`답`, `응답`, `선택`" in dimension
+    assert "| 가정: 11월 이전에 스프레드가 다시 벌어짐 |" in dimension
+    assert "별도 Anchor 참조 ID, 새 사실을" in dimension
     assert "sourceImpactPathIds" not in dimension
     assert "## Dimension 질문과 선택지" in scenario
     assert "[D1.V1]" in scenario
@@ -2332,9 +2364,8 @@ def test_v4_readable_copy_contract_matches_table_density() -> None:
     assert "관측 시점·수치·시장 신호·대상·영향 경로" in rationale_schema["description"]
     assert rationale_schema["maxLength"] == 200
     assert "minLength" not in rationale_schema
-    assert "Choice의 미래 상태와 JKM 영향을 바로 연결" in why_schema["description"]
-    assert "문장 끝의 '가정'으로만" in why_schema["description"]
-    assert "가정 의미를 반복" in why_schema["description"]
+    assert "'사실: 관측 사실 | 파생:" in why_schema["description"]
+    assert "영향: JKM 전달 경로와 방향" in why_schema["description"]
     assert "답·응답·선택으로 표현하지 않음" in why_schema["description"]
     assert all(len(choice.label) <= 30 for dimension in readable.dimensions for choice in dimension.choices)
 

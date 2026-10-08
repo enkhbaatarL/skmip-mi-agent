@@ -538,10 +538,11 @@ class V4ReadableDimensionChoice(ApiModel):
     pressure: Literal["bullish", "balanced", "bearish"]
     why: str = Field(
         min_length=10,
-        max_length=240,
+        max_length=320,
         description=(
-            "제공된 관측 사실을 기반으로 Choice의 미래 상태와 JKM 영향을 바로 연결하고 문장 끝의 '가정'으로만 "
-            "불확실성을 표시하는 간결한 한국어 문장. 가정 의미를 반복하거나 Choice를 답·응답·선택으로 표현하지 않음"
+            "'사실: 관측 사실 | 파생: 수치·날짜와 분석 기준일로 계산한 내용 | 가정: 분석 기준일 이후 Choice의 "
+            "미래 상태와 구체적 경계 | 영향: JKM 전달 경로와 방향' 형식의 한국어 근거. 해당 없는 항목은 생략하고 "
+            "Choice를 답·응답·선택으로 표현하지 않음"
         ),
     )
 
@@ -720,6 +721,15 @@ def expand_v4_readable_event_analysis(
             raise ValueError("Event analysis contains duplicate Fact sentences")
         selected_keys.add(key)
         selected.append(candidate)
+    # The first candidate is the Event's headline bullet, so it must lead as the Primary Fact.
+    primary_text = next(iter(fact_candidates.values()), None)
+    if selected and readable.impacts and primary_text is not None:
+        if primary_text not in selected_keys:
+            raise ValueError(
+                "Event analysis must select Fact candidate 1 as eventFacts[0] (Primary Fact): "
+                f"{primary_text[:120]!r}",
+            )
+        selected.sort(key=lambda item: item[1] != primary_text)
 
     fact_id_by_text = {text: f"e{event_id}_f{index}" for index, (_ref, text) in enumerate(selected, start=1)}
     facts = [
