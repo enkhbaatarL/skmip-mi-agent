@@ -25,6 +25,7 @@ from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.v4_sche
     V4DimensionDesignResult,
     V4EventImpactAnalysisDraft,
     V4EventImpactAnalysisResult,
+    V4ExcludedScenarioCandidate,
     V4GenerationResult,
     V4LeverStateDraft,
     V4ReadableAdditionalDimensionDesignDraft,
@@ -32,6 +33,7 @@ from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.v4_sche
     V4ReadableEventAnalysisDraft,
     V4ReadableInteractionAnalysisDraft,
     V4ReadableScenarioSynthesisDraft,
+    V4ScenarioCandidateDraft,
     V4ScenarioSynthesisResult,
     expand_v4_readable_dimension_design,
     expand_v4_readable_event_analysis,
@@ -769,6 +771,109 @@ def test_v4_finalizer_distributes_zero_probability_weights_deterministically() -
     assert [scenario.probability_score for scenario in finalized.scenarios] == [33, 34, 33]
     assert sum(scenario.probability_score for scenario in finalized.scenarios) == 100
     assert [scenario.baseline_yn for scenario in finalized.scenarios] == [False, True, False]
+
+
+def test_v4_finalizer_injects_fallback_scenario_when_llm_set_misses_one_direction() -> None:
+    # LLM이 제출한 Scenario 3개가 Base(가장 높은 probabilityScore) 대비 전부 bullish 방향이라,
+    # bearish 방향 Scenario가 하나도 없는 상황을 재현한다. 재시도에만 기대지 않고 서버가 직접
+    # Base 대비 bearish 방향 Scenario를 구성해 끼워 넣는지 확인한다.
+    def scenario(title: str, values: dict[str, str], band: str, score: float) -> V4ScenarioCandidateDraft:
+        return V4ScenarioCandidateDraft.model_validate(
+            {
+                "title": title,
+                "narrative": f"{title} 전개",
+                "dimensionValues": values,
+                "commonImpactPathIds": ["path_101_demand", "path_202_supply"],
+                "appliedInteractionIds": ["interaction_1"],
+                "pressureBand": band,
+                "pressureBreakdown": {
+                    "commonImpact": "x",
+                    "valueDelta": "x",
+                    "interactionEffect": "x",
+                },
+                "relatedMarkets": [],
+                "probabilityScore": score,
+                "mixedFactors": [],
+                "explanation": f"{title} 설명",
+            },
+        )
+
+    base = scenario(
+        "base",
+        {"cold_wave_intensity": "high", "liquefaction_recovery": "fast", "risk_premium": "low"},
+        "balanced",
+        80,
+    )
+    combo_a = scenario(
+        "combo-a",
+        {"cold_wave_intensity": "low", "liquefaction_recovery": "delayed", "risk_premium": "high"},
+        "bullish",
+        10,
+    )
+    combo_b = scenario(
+        "combo-b",
+        {"cold_wave_intensity": "high", "liquefaction_recovery": "fast", "risk_premium": "high"},
+        "strong_bullish",
+        10,
+    )
+    excluded = [
+        V4ExcludedScenarioCandidate.model_validate(
+            {
+                "pressureBand": "strong_bearish",
+                "reasonCode": "LOW_PROBABILITY",
+                "reason": "x",
+                "dimensionValues": {
+                    "cold_wave_intensity": "low",
+                    "liquefaction_recovery": "fast",
+                    "risk_premium": "low",
+                },
+            },
+        ),
+        V4ExcludedScenarioCandidate.model_validate(
+            {
+                "pressureBand": "bearish",
+                "reasonCode": "LOW_PROBABILITY",
+                "reason": "x",
+                "dimensionValues": {
+                    "cold_wave_intensity": "low",
+                    "liquefaction_recovery": "fast",
+                    "risk_premium": "high",
+                },
+            },
+        ),
+    ]
+    synthesis = V4ScenarioSynthesisResult.model_validate(
+        {
+            "groupTitle": "test",
+            "groupDescription": "test",
+            "scenarios": [base.model_dump(), combo_a.model_dump(), combo_b.model_dump()],
+            "excludedScenarios": [item.model_dump() for item in excluded],
+        },
+    )
+
+    finalized, _coverage = finalize_v4_generation_result(
+        synthesis,
+        group_summary=_group_summary(),
+        impact_analysis=_analysis(),
+        dimension_design=_dimensions(),
+        impact_levers=_catalog(),
+    )
+
+    assert len(finalized.scenarios) == 4
+    base_result = next(scenario for scenario in finalized.scenarios if scenario.baseline_yn)
+    assert base_result.pressure_band == "balanced"
+    assert base_result.scenario_role not in {"floor", "ceiling"}
+
+    non_base = [scenario for scenario in finalized.scenarios if not scenario.baseline_yn]
+    assert {scenario.scenario_role for scenario in non_base} >= {"floor", "ceiling"}
+    floor_scenario = next(scenario for scenario in non_base if scenario.scenario_role == "floor")
+    assert floor_scenario.pressure_band in {"bearish", "strong_bearish"}
+    assert floor_scenario.dimension_values == {
+        "cold_wave_intensity": "low",
+        "liquefaction_recovery": "fast",
+        "risk_premium": "low",
+    }
+    assert sum(scenario.probability_score for scenario in finalized.scenarios) == 100
 
 
 def test_v4_scenario_rejects_missing_common_path() -> None:

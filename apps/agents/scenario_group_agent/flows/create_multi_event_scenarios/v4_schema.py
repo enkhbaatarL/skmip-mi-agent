@@ -21,6 +21,7 @@ from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.v4_enum
     StateDirection,
 )
 from apps.agents.scenario_group_agent.schemas.base import ApiModel
+from apps.common.logging.logger_config import logger
 from apps.persistence.model_impact_lever.schema import (
     ModelImpactLeverPayload,
     ModelImpactLeverSupportIssue,
@@ -1661,6 +1662,65 @@ def finalize_v4_dimension_design(
     )
 
 
+_CONTRIBUTION_RANK: dict[str, int] = {"bullish": 1, "balanced": 0, "bearish": -1}
+
+
+def _extreme_dimension_selection(
+    dimension_definitions: list[V4DimensionDefinition],
+    *,
+    direction: Literal["bearish", "bullish"],
+) -> list[tuple[V4DimensionDefinition, V4DimensionValueDefinition]]:
+    """각 Dimension에서 direction 쪽으로 가장 극단적인 Value를 고른 조합을 만든다.
+
+    이 조합의 contribution 합은 이론상 가능한 전체 조합 중 최소(bearish)/최대(bullish)다.
+    """
+    sign = -1 if direction == "bearish" else 1
+    return [
+        (dimension, max(dimension.values, key=lambda value: sign * _CONTRIBUTION_RANK[value.pressure_contribution]))
+        for dimension in dimension_definitions
+    ]
+
+
+def _build_directional_fallback_scenario(
+    *,
+    direction: Literal["bearish", "bullish"],
+    dimension_definitions: list[V4DimensionDefinition],
+    base_scenario: V4ScenarioCandidate,
+    existing_combinations: set[tuple[tuple[str, str], ...]],
+) -> V4ScenarioCandidate | None:
+    """LLM이 제출한 조합만으로 Base 대비 bearish/bullish 방향이 보장되지 않을 때, 서버가 직접
+    해당 방향의 Scenario를 구성한다. 이 조합이 Base 자신의 조합과 다르면(= Base가 이미 그 방향의
+    전체 극단이 아니면) 항상 Base보다 해당 방향으로 더 치우친 값이 된다.
+    """
+    selection = _extreme_dimension_selection(dimension_definitions, direction=direction)
+    dimension_values = {dimension.dimension_id: value.value_id for dimension, value in selection}
+    combination = tuple(sorted(dimension_values.items()))
+    if combination in existing_combinations:
+        return None
+
+    label = "하방" if direction == "bearish" else "상방"
+    value_sentences = " ".join(f"{value.label}: {value.assumption_rationale}" for _dimension, value in selection)
+    narrative = f"Base 시나리오 대비 모든 Dimension에서 {label} 방향 극단값을 선택한 조합이다. {value_sentences}"
+    return V4ScenarioCandidate(
+        title=f"Base 대비 구조적 {label} 극단",
+        narrative=narrative,
+        dimension_values=dimension_values,
+        common_impact_path_ids=list(base_scenario.common_impact_path_ids),
+        applied_interaction_ids=list(base_scenario.applied_interaction_ids),
+        pressure_band="balanced",
+        pressure_breakdown=V4PressureBreakdown(
+            common_impact=base_scenario.pressure_breakdown.common_impact,
+            value_delta=f"모든 Dimension에서 {label} 방향 극단값을 선택해 Base 대비 압력이 {label}으로 이동한다.",
+            interaction_effect=base_scenario.pressure_breakdown.interaction_effect,
+        ),
+        related_markets=[],
+        probability_score=1,
+        mixed_factors=[],
+        explanation=narrative,
+        pressure_rationale=narrative,
+    )
+
+
 def _validate_scenarios(
     scenarios: list[V4ScenarioCandidate],
     excluded_scenarios: list[V4ExcludedScenarioCandidate],
@@ -1757,14 +1817,48 @@ def _validate_scenarios(
     # 같은 Scenario가 될 수 있다 — 이는 Base가 Bearish/Bullish와 동일시되는 것과 같은 문제다.
     # 따라서 floor/ceiling/mixed role은 Base 대비 delta가 정해진 뒤, Base를 제외한 나머지
     # Scenario 중에서만 다시 선정한다. 이를 위해 Base가 아닌 Scenario 중 bearish 방향(delta<0)과
-    # bullish 방향(delta>0)이 각각 최소 1개씩 존재해야 한다 — 하나라도 없으면 에러를 발생시켜
-    # 기존 재시도 메커니즘이 다른 조합을 다시 생성하도록 한다(기존엔 프롬프트로만 유도했을 뿐
-    # 보장하지 않았다).
+    # bullish 방향(delta>0)이 각각 최소 1개씩 존재해야 한다.
+    #
+    # LLM 재시도에만 기대면 "몇 번을 시도해도 양방향이 안 나올" 확률이 0이 되지 않는다. 100%
+    # 보장하기 위해, 누락된 방향이 있으면 재시도 대신 Dimension Value의 pressureContribution을
+    # 이용해 서버가 직접 그 방향의 조합을 구성해 끼워 넣는다. 이 조합은 이론상 가능한 전체 조합
+    # 중 최소(bearish)/최대(bullish)이므로, Base 자신이 이미 그 전체 극단이 아닌 한 항상 Base보다
+    # 해당 방향으로 더 치우친 값이 된다 — Base가 이미 그 극단인(=더 이상 그 방향으로 갈 곳이 없는)
+    # 경우에만 예외적으로 에러를 발생시켜 기존 재시도 메커니즘으로 넘긴다.
     non_base_deltas = [delta for scenario_id, delta in deltas.items() if scenario_id != id(base_scenario)]
-    if not any(delta < 0 for delta in non_base_deltas):
-        raise ValueError("Base 대비 bearish 방향(delta<0) Scenario가 최소 1개 있어야 합니다")
-    if not any(delta > 0 for delta in non_base_deltas):
-        raise ValueError("Base 대비 bullish 방향(delta>0) Scenario가 최소 1개 있어야 합니다")
+    needs_bearish = not any(delta < 0 for delta in non_base_deltas)
+    needs_bullish = not any(delta > 0 for delta in non_base_deltas)
+    for direction, needed in (("bearish", needs_bearish), ("bullish", needs_bullish)):
+        if not needed:
+            continue
+        fallback = _build_directional_fallback_scenario(
+            direction=direction,
+            dimension_definitions=dimension_definitions,
+            base_scenario=base_scenario,
+            # 여기서 피해야 하는 조합은 (1) Base 자신의 조합(= 똑같으면 그 방향으로 더 갈 곳이
+            # 없다는 뜻) 과 (2) 현재 generated 목록(이번 루프에서 먼저 추가된 fallback 포함)에
+            # 이미 있는 조합뿐이다. excluded_scenarios의 조합과 우연히 같은 것은 막을 이유가
+            # 없다 — excluded는 LLM이 제출을 안 한 것일 뿐, 서버가 같은 조합으로 새 Scenario를
+            # 만드는 것을 금지하지 않는다.
+            existing_combinations={tuple(sorted(scenario.dimension_values.items())) for scenario in scenarios},
+        )
+        if fallback is None:
+            raise ValueError(
+                f"Base가 이미 Dimension 조합 전체의 극단이라 {direction} 방향 Scenario를 구성할 수 없습니다"
+            )
+        logger.warning(
+            f"[SCENARIO][_validate_scenarios] FALLBACK_INJECTED | direction={direction} | "
+            f"dimension_values={fallback.dimension_values}"
+        )
+        combination = tuple(sorted(fallback.dimension_values.items()))
+        combination_owners[combination] = f"fallback({direction})"
+        contributions = [
+            scores[next(value for value in dimension_by_id[dimension_id].values if value.value_id == value_id).pressure_contribution]
+            for dimension_id, value_id in fallback.dimension_values.items()
+        ]
+        scenarios.append(fallback)
+        contribution_by_scenario[id(fallback)] = contributions
+        deltas[id(fallback)] = sum(contributions) - base_sum
 
     for scenario in scenarios:
         delta = deltas[id(scenario)]
@@ -1864,12 +1958,17 @@ def finalize_v4_generation_result(
         for scenario in synthesis.scenarios
     ]
     _normalize_v4_probability_scores(finalized_scenarios)
+    scenario_count_before_validation = len(finalized_scenarios)
     _validate_scenarios(
         finalized_scenarios,
         synthesis.excluded_scenarios,
         dimension_definitions=dimension_design.dimension_definitions,
         impact_analysis=impact_analysis,
     )
+    if len(finalized_scenarios) != scenario_count_before_validation:
+        # _validate_scenarios가 Base 대비 양방향 보장을 위해 fallback Scenario를 추가했다면,
+        # probability_score 합계가 100을 넘어서므로 최종 목록으로 다시 정규화한다.
+        _normalize_v4_probability_scores(finalized_scenarios)
     result = V4GenerationResult(
         group_title=synthesis.group_title,
         group_summary=group_summary,
