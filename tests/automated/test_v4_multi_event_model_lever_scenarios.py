@@ -25,6 +25,7 @@ from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.v4_sche
     V4DimensionDesignResult,
     V4EventImpactAnalysisDraft,
     V4EventImpactAnalysisResult,
+    V4ExcludedScenarioCandidate,
     V4GenerationResult,
     V4LeverStateDraft,
     V4ReadableAdditionalDimensionDesignDraft,
@@ -32,6 +33,7 @@ from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.v4_sche
     V4ReadableEventAnalysisDraft,
     V4ReadableInteractionAnalysisDraft,
     V4ReadableScenarioSynthesisDraft,
+    V4ScenarioCandidateDraft,
     V4ScenarioSynthesisResult,
     expand_v4_readable_dimension_design,
     expand_v4_readable_event_analysis,
@@ -750,6 +752,11 @@ def test_v4_finalizer_normalizes_fractional_probabilities_to_integer_percentages
 
 def test_v4_finalizer_distributes_zero_probability_weights_deterministically() -> None:
     synthesis = _synthesis()
+    # 동률(zero) tie-break는 입력 순서의 index 0이 이긴다. "상단"(strong_bullish)이 index 0이면
+    # tie-break로 뽑힌 Base가 그룹 내 가장 bullish한 Scenario와 같아져, Base가 floor/ceiling(=
+    # Bearish/Bullish)과 겹치는 것을 막는 새 검증에 걸린다. 이 테스트는 확률 정규화의 tie-break
+    # 결정성 자체를 검증하는 목적이므로, "balanced"인 "혼합"이 tie-break로 뽑히도록 순서만 바꾼다.
+    synthesis.scenarios = [synthesis.scenarios[1], synthesis.scenarios[0], synthesis.scenarios[2]]
     for scenario in synthesis.scenarios:
         scenario.probability_score = 0
 
@@ -761,9 +768,203 @@ def test_v4_finalizer_distributes_zero_probability_weights_deterministically() -
         impact_levers=_catalog(),
     )
 
-    assert [scenario.probability_score for scenario in finalized.scenarios] == [34, 33, 33]
+    assert [scenario.probability_score for scenario in finalized.scenarios] == [33, 34, 33]
     assert sum(scenario.probability_score for scenario in finalized.scenarios) == 100
-    assert [scenario.baseline_yn for scenario in finalized.scenarios] == [True, False, False]
+    assert [scenario.baseline_yn for scenario in finalized.scenarios] == [False, True, False]
+
+
+def test_v4_finalizer_injects_fallback_scenario_when_llm_set_misses_one_direction() -> None:
+    # LLM이 제출한 Scenario 3개가 Base(가장 높은 probabilityScore) 대비 전부 bullish 방향이라,
+    # bearish 방향 Scenario가 하나도 없는 상황을 재현한다. 재시도에만 기대지 않고 서버가 직접
+    # Base 대비 bearish 방향 Scenario를 구성해 끼워 넣는지 확인한다.
+    def scenario(title: str, values: dict[str, str], band: str, score: float) -> V4ScenarioCandidateDraft:
+        return V4ScenarioCandidateDraft.model_validate(
+            {
+                "title": title,
+                "narrative": f"{title} 전개",
+                "dimensionValues": values,
+                "commonImpactPathIds": ["path_101_demand", "path_202_supply"],
+                "appliedInteractionIds": ["interaction_1"],
+                "pressureBand": band,
+                "pressureBreakdown": {
+                    "commonImpact": "x",
+                    "valueDelta": "x",
+                    "interactionEffect": "x",
+                },
+                "relatedMarkets": [],
+                "probabilityScore": score,
+                "mixedFactors": [],
+                "explanation": f"{title} 설명",
+            },
+        )
+
+    base = scenario(
+        "base",
+        {"cold_wave_intensity": "high", "liquefaction_recovery": "fast", "risk_premium": "low"},
+        "balanced",
+        80,
+    )
+    combo_a = scenario(
+        "combo-a",
+        {"cold_wave_intensity": "low", "liquefaction_recovery": "delayed", "risk_premium": "high"},
+        "bullish",
+        10,
+    )
+    combo_b = scenario(
+        "combo-b",
+        {"cold_wave_intensity": "high", "liquefaction_recovery": "fast", "risk_premium": "high"},
+        "strong_bullish",
+        10,
+    )
+    excluded = [
+        V4ExcludedScenarioCandidate.model_validate(
+            {
+                "pressureBand": "strong_bearish",
+                "reasonCode": "LOW_PROBABILITY",
+                "reason": "x",
+                "dimensionValues": {
+                    "cold_wave_intensity": "low",
+                    "liquefaction_recovery": "fast",
+                    "risk_premium": "low",
+                },
+            },
+        ),
+        V4ExcludedScenarioCandidate.model_validate(
+            {
+                "pressureBand": "bearish",
+                "reasonCode": "LOW_PROBABILITY",
+                "reason": "x",
+                "dimensionValues": {
+                    "cold_wave_intensity": "low",
+                    "liquefaction_recovery": "fast",
+                    "risk_premium": "high",
+                },
+            },
+        ),
+    ]
+    synthesis = V4ScenarioSynthesisResult.model_validate(
+        {
+            "groupTitle": "test",
+            "groupDescription": "test",
+            "scenarios": [base.model_dump(), combo_a.model_dump(), combo_b.model_dump()],
+            "excludedScenarios": [item.model_dump() for item in excluded],
+        },
+    )
+
+    finalized, _coverage = finalize_v4_generation_result(
+        synthesis,
+        group_summary=_group_summary(),
+        impact_analysis=_analysis(),
+        dimension_design=_dimensions(),
+        impact_levers=_catalog(),
+    )
+
+    assert len(finalized.scenarios) == 4
+    base_result = next(scenario for scenario in finalized.scenarios if scenario.baseline_yn)
+    assert base_result.pressure_band == "balanced"
+    assert base_result.scenario_role not in {"floor", "ceiling"}
+
+    non_base = [scenario for scenario in finalized.scenarios if not scenario.baseline_yn]
+    assert {scenario.scenario_role for scenario in non_base} >= {"floor", "ceiling"}
+    floor_scenario = next(scenario for scenario in non_base if scenario.scenario_role == "floor")
+    assert floor_scenario.pressure_band in {"bearish", "strong_bearish"}
+    assert floor_scenario.dimension_values == {
+        "cold_wave_intensity": "low",
+        "liquefaction_recovery": "fast",
+        "risk_premium": "low",
+    }
+    assert sum(scenario.probability_score for scenario in finalized.scenarios) == 100
+
+
+def test_v4_finalizer_excludes_excess_same_direction_scenarios_beyond_two_slots() -> None:
+    # pressure_band는 방향당 slot이 2개(strong_X/X)뿐이라, Base 대비 같은 방향(여기서는 bullish)에
+    # 3개가 몰리면 전부 다른 band를 줄 수 없다. 가장 극단적인 2개만 남고 나머지 1개는
+    # excludedScenarios로 빠져야 한다(에러 없이 바로 유효한 결과가 나와야 함).
+    def scenario(title: str, values: dict[str, str], band: str, score: float) -> V4ScenarioCandidateDraft:
+        return V4ScenarioCandidateDraft.model_validate(
+            {
+                "title": title,
+                "narrative": f"{title} 전개",
+                "dimensionValues": values,
+                "commonImpactPathIds": ["path_101_demand", "path_202_supply"],
+                "appliedInteractionIds": ["interaction_1"],
+                "pressureBand": band,
+                "pressureBreakdown": {
+                    "commonImpact": "x",
+                    "valueDelta": "x",
+                    "interactionEffect": "x",
+                },
+                "relatedMarkets": [],
+                "probabilityScore": score,
+                "mixedFactors": [],
+                "explanation": f"{title} 설명",
+            },
+        )
+
+    # 사전 검증(LLM 원본 band 분산·5-band 커버리지)을 통과시키기 위해 원본 band는 서로 다르게
+    # 둔다. 실제 recompute는 Base 선정 후 delta 기준으로 다시 계산되므로 이 값 자체는 중요하지
+    # 않다 — 핵심은 bullish_1/2/3이 Base 대비 같은(양수) 방향이라는 것.
+    base = scenario(
+        "base",
+        {"cold_wave_intensity": "high", "liquefaction_recovery": "fast", "risk_premium": "low"},
+        "bearish",
+        40,
+    )
+    bearish = scenario(
+        "bearish",
+        {"cold_wave_intensity": "low", "liquefaction_recovery": "fast", "risk_premium": "low"},
+        "strong_bearish",
+        15,
+    )
+    bullish_1 = scenario(
+        "bullish-1",
+        {"cold_wave_intensity": "low", "liquefaction_recovery": "delayed", "risk_premium": "high"},
+        "balanced",
+        15,
+    )
+    bullish_2 = scenario(
+        "bullish-2",
+        {"cold_wave_intensity": "high", "liquefaction_recovery": "fast", "risk_premium": "high"},
+        "bullish",
+        15,
+    )
+    bullish_3 = scenario(
+        "bullish-3",
+        {"cold_wave_intensity": "high", "liquefaction_recovery": "delayed", "risk_premium": "low"},
+        "strong_bullish",
+        15,
+    )
+    synthesis = V4ScenarioSynthesisResult.model_validate(
+        {
+            "groupTitle": "test",
+            "groupDescription": "test",
+            "scenarios": [item.model_dump() for item in (base, bearish, bullish_1, bullish_2, bullish_3)],
+            "excludedScenarios": [],
+        },
+    )
+
+    finalized, _coverage = finalize_v4_generation_result(
+        synthesis,
+        group_summary=_group_summary(),
+        impact_analysis=_analysis(),
+        dimension_design=_dimensions(),
+        impact_levers=_catalog(),
+    )
+
+    assert len(finalized.scenarios) == 4
+    non_base_bands = [scenario.pressure_band for scenario in finalized.scenarios if not scenario.baseline_yn]
+    assert len(non_base_bands) == len(set(non_base_bands))
+    assert len(finalized.excluded_scenarios) == 1
+    excluded = finalized.excluded_scenarios[0]
+    assert excluded.reason_code == "LOW_DISTINCTIVENESS"
+    # 세 bullish 후보가 delta 동률(+2)이라 정렬이 안정적으로 유지되고, 제출 순서상 마지막
+    # (bullish-3)이 상위 2개(bullish-1, bullish-2) 밖으로 밀려 제외된다.
+    assert excluded.dimension_values == {
+        "cold_wave_intensity": "high",
+        "liquefaction_recovery": "delayed",
+        "risk_premium": "low",
+    }
+    assert sum(scenario.probability_score for scenario in finalized.scenarios) == 100
 
 
 def test_v4_scenario_rejects_missing_common_path() -> None:
