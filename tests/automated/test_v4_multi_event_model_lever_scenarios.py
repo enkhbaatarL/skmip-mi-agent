@@ -26,6 +26,7 @@ from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.v4_sche
     V4DimensionDesignResult,
     V4EventImpactAnalysisDraft,
     V4EventImpactAnalysisResult,
+    V4ExcludedScenarioCandidate,
     V4GenerationResult,
     V4LeverStateDraft,
     V4ReadableAdditionalDimensionDesignDraft,
@@ -33,6 +34,7 @@ from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.v4_sche
     V4ReadableEventAnalysisDraft,
     V4ReadableInteractionAnalysisDraft,
     V4ReadableScenarioSynthesisDraft,
+    V4ScenarioCandidateDraft,
     V4ScenarioSynthesisResult,
     expand_v4_readable_dimension_design,
     expand_v4_readable_event_analysis,
@@ -751,6 +753,11 @@ def test_v4_finalizer_normalizes_fractional_probabilities_to_integer_percentages
 
 def test_v4_finalizer_distributes_zero_probability_weights_deterministically() -> None:
     synthesis = _synthesis()
+    # 동률(zero) tie-break는 입력 순서의 index 0이 이긴다. "상단"(strong_bullish)이 index 0이면
+    # tie-break로 뽑힌 Base가 그룹 내 가장 bullish한 Scenario와 같아져, Base가 floor/ceiling(=
+    # Bearish/Bullish)과 겹치는 것을 막는 새 검증에 걸린다. 이 테스트는 확률 정규화의 tie-break
+    # 결정성 자체를 검증하는 목적이므로, "balanced"인 "혼합"이 tie-break로 뽑히도록 순서만 바꾼다.
+    synthesis.scenarios = [synthesis.scenarios[1], synthesis.scenarios[0], synthesis.scenarios[2]]
     for scenario in synthesis.scenarios:
         scenario.probability_score = 0
 
@@ -762,9 +769,112 @@ def test_v4_finalizer_distributes_zero_probability_weights_deterministically() -
         impact_levers=_catalog(),
     )
 
-    assert [scenario.probability_score for scenario in finalized.scenarios] == [34, 33, 33]
+    assert [scenario.probability_score for scenario in finalized.scenarios] == [33, 34, 33]
     assert sum(scenario.probability_score for scenario in finalized.scenarios) == 100
-    assert [scenario.baseline_yn for scenario in finalized.scenarios] == [True, False, False]
+    assert [scenario.baseline_yn for scenario in finalized.scenarios] == [False, True, False]
+
+
+def test_v4_finalizer_injects_fallback_scenario_when_llm_set_misses_one_direction() -> None:
+    # LLM이 제출한 Scenario 3개가 Base(가장 높은 probabilityScore) 대비 전부 bullish 방향이라,
+    # bearish 방향 Scenario가 하나도 없는 상황을 재현한다. 재시도에만 기대지 않고 서버가 직접
+    # Base 대비 bearish 방향 Scenario를 구성해 끼워 넣는지 확인한다.
+    def scenario(title: str, values: dict[str, str], band: str, score: float) -> V4ScenarioCandidateDraft:
+        return V4ScenarioCandidateDraft.model_validate(
+            {
+                "title": title,
+                "narrative": f"{title} 전개",
+                "dimensionValues": values,
+                "commonImpactPathIds": ["path_101_demand", "path_202_supply"],
+                "appliedInteractionIds": ["interaction_1"],
+                "pressureBand": band,
+                "pressureBreakdown": {
+                    "commonImpact": "x",
+                    "valueDelta": "x",
+                    "interactionEffect": "x",
+                },
+                "relatedMarkets": [],
+                "probabilityScore": score,
+                "mixedFactors": [],
+                "explanation": f"{title} 설명",
+            },
+        )
+
+    base = scenario(
+        "base",
+        {"cold_wave_intensity": "high", "liquefaction_recovery": "fast", "risk_premium": "low"},
+        "balanced",
+        80,
+    )
+    combo_a = scenario(
+        "combo-a",
+        {"cold_wave_intensity": "low", "liquefaction_recovery": "delayed", "risk_premium": "high"},
+        "bullish",
+        10,
+    )
+    combo_b = scenario(
+        "combo-b",
+        {"cold_wave_intensity": "high", "liquefaction_recovery": "fast", "risk_premium": "high"},
+        "strong_bullish",
+        10,
+    )
+    excluded = [
+        V4ExcludedScenarioCandidate.model_validate(
+            {
+                "pressureBand": "strong_bearish",
+                "reasonCode": "LOW_PROBABILITY",
+                "reason": "x",
+                "dimensionValues": {
+                    "cold_wave_intensity": "low",
+                    "liquefaction_recovery": "fast",
+                    "risk_premium": "low",
+                },
+            },
+        ),
+        V4ExcludedScenarioCandidate.model_validate(
+            {
+                "pressureBand": "bearish",
+                "reasonCode": "LOW_PROBABILITY",
+                "reason": "x",
+                "dimensionValues": {
+                    "cold_wave_intensity": "low",
+                    "liquefaction_recovery": "fast",
+                    "risk_premium": "high",
+                },
+            },
+        ),
+    ]
+    synthesis = V4ScenarioSynthesisResult.model_validate(
+        {
+            "groupTitle": "test",
+            "groupDescription": "test",
+            "scenarios": [base.model_dump(), combo_a.model_dump(), combo_b.model_dump()],
+            "excludedScenarios": [item.model_dump() for item in excluded],
+        },
+    )
+
+    finalized, _coverage = finalize_v4_generation_result(
+        synthesis,
+        group_summary=_group_summary(),
+        impact_analysis=_analysis(),
+        dimension_design=_dimensions(),
+        impact_levers=_catalog(),
+    )
+
+    assert len(finalized.scenarios) == 4
+    base_result = next(scenario for scenario in finalized.scenarios if scenario.baseline_yn)
+    assert base_result.pressure_band == "balanced"
+    assert base_result.scenario_role not in {"floor", "ceiling"}
+
+    non_base = [scenario for scenario in finalized.scenarios if not scenario.baseline_yn]
+    assert {scenario.scenario_role for scenario in non_base} >= {"floor", "ceiling"}
+    floor_scenario = next(scenario for scenario in non_base if scenario.scenario_role == "floor")
+    assert floor_scenario.pressure_band in {"bearish", "strong_bearish"}
+    assert floor_scenario.dimension_values == {
+        "cold_wave_intensity": "low",
+        "liquefaction_recovery": "fast",
+        "risk_premium": "low",
+    }
+    assert sum(scenario.probability_score for scenario in finalized.scenarios) == 100
 
 
 def test_v4_scenario_rejects_missing_common_path() -> None:
@@ -1162,6 +1272,39 @@ def test_v4_readable_event_allows_three_evidence_items_and_rejects_four() -> Non
         V4ReadableEventAnalysisDraft.model_validate(payload)
 
 
+def test_v4_readable_event_moves_candidate_one_to_primary_fact() -> None:
+    candidates = {"f1": "동북아 한파 지속 전망", "f2": "역내 LNG 재고가 평년보다 낮다."}
+    readable = _readable_event_draft(101)
+    readable.event_facts = [candidates["f2"], candidates["f1"]]
+    readable.impacts[0].evidence = readable.event_facts
+
+    draft = expand_v4_readable_event_analysis(
+        readable,
+        event_id=101,
+        observed_at="2026-08-05",
+        fact_candidates=candidates,
+    )
+
+    assert [fact.observed_basis for fact in draft.event_facts] == [candidates["f1"], candidates["f2"]]
+    assert [fact.fact_id for fact in draft.event_facts] == ["e101_f1", "e101_f2"]
+    assert draft.impact_paths[0].source_fact_ids == ["e101_f2", "e101_f1"]
+
+
+def test_v4_readable_event_requires_candidate_one_when_impacts_exist() -> None:
+    candidates = {"f1": "동북아 한파 지속 전망", "f2": "역내 LNG 재고가 평년보다 낮다."}
+    readable = _readable_event_draft(101)
+    readable.event_facts = [candidates["f2"]]
+    readable.impacts[0].evidence = readable.event_facts
+
+    with pytest.raises(ValueError, match="Fact candidate 1"):
+        expand_v4_readable_event_analysis(
+            readable,
+            event_id=101,
+            observed_at="2026-08-05",
+            fact_candidates=candidates,
+        )
+
+
 def test_v4_three_facts_hydrate_to_ordered_paths_and_preserve_lineage() -> None:
     facts = [
         "동북아 한파 지속 전망",
@@ -1198,7 +1341,7 @@ def test_v4_three_facts_hydrate_to_ordered_paths_and_preserve_lineage() -> None:
         readable,
         event_id=101,
         observed_at="2026-08-05",
-        fact_candidates={f"f{index}": fact for index, fact in enumerate(reversed(facts), start=1)},
+        fact_candidates={f"f{index}": fact for index, fact in enumerate(facts, start=1)},
     )
     result = finalize_v4_event_impact_analysis(
         draft,
@@ -1261,7 +1404,7 @@ def test_v4_fact_ids_follow_selected_array_order_and_preserve_modality() -> None
         readable,
         event_id=101,
         observed_at="2026-08-05",
-        fact_candidates={"f1": announced, "f2": forecast},
+        fact_candidates={"f1": forecast, "f2": announced},
     )
 
     assert [fact.fact_id for fact in result.event_facts] == ["e101_f1", "e101_f2"]
@@ -2097,8 +2240,8 @@ def test_v4_prompts_follow_fact_path_uncertainty_contract() -> None:
     assert "eventFacts에는 위 후보 문장을 글자까지 그대로 복사" in first
     assert "decisionBasis" in first
     assert "이번 Event openQuestions 목표·상한: 3개" in first
-    assert "eventFacts는 가급적 1~2개만 선택" in first
-    assert "impacts[].evidence에는 선택한 eventFacts를 1~3개 포함하되 가급적 1~2개만 사용" in first
+    assert "eventFacts는 Impact의 근거가 되는 후보를 최대 3개까지 모두 선택" in first
+    assert "impacts[].evidence에는 선택한 eventFacts를 1~3개 포함하며" in first
     assert "impacts는 가급적 1~2개만 작성" in first
     assert "별도 주요 Lever, 반대 방향, 구분되는 기간 또는 독립 원인" in first
     assert "leverStates는 Impact마다 가급적 1~2개만 작성" in first
@@ -2127,8 +2270,8 @@ def test_v4_prompts_follow_fact_path_uncertainty_contract() -> None:
     assert "세 단계가 모두 중요한 전달 경로일 때만 최대 3개" in retry
     assert "같은 Impact의 leverStates 안에서 `lever` code는 반드시 서로 달라야 합니다" in retry
     assert "leverStates List should have at most 3 items" in retry
-    assert "eventFacts는 가급적 1~2개만 선택" in retry
-    assert "impacts[].evidence에는 선택한 eventFacts를 1~3개 포함하되 가급적 1~2개만 사용" in retry
+    assert "eventFacts는 Impact의 근거가 되는 후보를 최대 3개까지 모두 선택" in retry
+    assert "impacts[].evidence에는 선택한 eventFacts를 1~3개 포함하며" in retry
     assert "impacts는 가급적 1~2개만 작성" in retry
     assert "잘못된 영향 경로·Lever·balance·열린 질문만 수정" in retry
     assert "48시간 사전 요청처럼 반복되는 운영 조건" in first
@@ -2161,24 +2304,26 @@ def test_v4_prompts_follow_fact_path_uncertainty_contract() -> None:
     assert scenario.index("[이벤트 1]") < scenario.index("[이벤트 2]")
     assert "루트 title은 20~60자의 한국어" in scenario
     assert "영문 `Event`, `Scenario`를 쓰지 않습니다" in scenario
-    assert "description에는\n  `입력 사실`과 `JKM`을 쓰지 않습니다" in scenario
+    assert "description에는 `입력 사실`을 쓰지 않습니다" in scenario
+    assert "`JKM`을 쓰지 않습니다" not in scenario
+    assert "LNG·JKM·TTF·HH 등 시장·상품 약어와 시설·기업 고유명은" in scenario
+    assert "원문 표기 그대로 쓰고 `엘엔지`, `제이케이엠`처럼 한글로 음역하지 않습니다" in scenario
     assert "[U1]" in dimension
     assert "label은 핵심 대상과 변화 축을 담되 30자를 넘지 않습니다" in dimension
     assert "rationale은 최대 200자의 구체적인 한국어 한 문장" in dimension
     assert "question은 필요한 관측 정보와 판단 대상을 충분히 포함" in dimension
-    assert "2026년 6월 30일 유럽 저장률이 49.1%로 관측" in dimension
+    assert "`사실: … | 파생: … | 가정: … | 영향: …` 형식" in dimension
+    assert "Choice끼리 pressure가 겹치지 않게" in dimension
+    assert "Impact의 현재 상태가\n  지속·강화되는 Choice는 그 Impact와 같은 방향" in dimension
+    assert "같은 상태를 다르게 매기지 않습니다" in dimension
+    assert "월 단위 시점" in dimension
     assert "Choice label은 비교 가능한 하나의 시장·운영 상태를 30자 이내" in dimension
     assert "새로운 수치 경계" in dimension
     assert f"direction은 {StateDirection.prompt_values()}" in dimension
-    assert "`관측된 사실 → 미래 상태 → JKM 영향`" in dimension
-    assert "문장 끝의 `가정`" in dimension
-    assert "가정이라는 메타 표현은 문장 끝에서 한 번만" in dimension
-    assert "`상태를 가정하면`, `상황을 가정하면`, `나타나는 가정이다`" in dimension
-    assert "`Event 배경으로 제시된 사실` 같은 출처 메타 설명 없이" in dimension
-    assert "`답`, `응답`, `선택`, `선택한 값`이라는 말도" in dimension
-    assert "주입 부담이 완화되고 NWE 가격 지지" in dimension
-    assert "스프레드가 다시 벌어지고 아시아가" in dimension
-    assert "별도 Anchor 참조 ID나 새 사실을" in dimension
+    assert "`Event 배경으로 제시된 사실` 같은 메타 표현" in dimension
+    assert "`답`, `응답`, `선택`" in dimension
+    assert "| 가정: 11월 이전에 스프레드가 다시 벌어짐 |" in dimension
+    assert "별도 Anchor 참조 ID, 새 사실을" in dimension
     assert "sourceImpactPathIds" not in dimension
     assert "## Dimension 질문과 선택지" in scenario
     assert "[D1.V1]" in scenario
@@ -2337,9 +2482,8 @@ def test_v4_readable_copy_contract_matches_table_density() -> None:
     assert "관측 시점·수치·시장 신호·대상·영향 경로" in rationale_schema["description"]
     assert rationale_schema["maxLength"] == 200
     assert "minLength" not in rationale_schema
-    assert "Choice의 미래 상태와 JKM 영향을 바로 연결" in why_schema["description"]
-    assert "문장 끝의 '가정'으로만" in why_schema["description"]
-    assert "가정 의미를 반복" in why_schema["description"]
+    assert "'사실: 관측 사실 | 파생:" in why_schema["description"]
+    assert "영향: JKM 전달 경로와 방향" in why_schema["description"]
     assert "답·응답·선택으로 표현하지 않음" in why_schema["description"]
     assert all(len(choice.label) <= 30 for dimension in readable.dimensions for choice in dimension.choices)
 
@@ -2411,7 +2555,8 @@ def test_v4_scenario_group_metadata_schema_describes_korean_event_wording() -> N
     assert "선택한 이벤트" in properties["title"]["description"]
     assert "summary" not in properties
     assert "영문 Event/Scenario" in properties["description"]["description"]
-    assert "'입력 사실', JKM은 사용하지 않음" in properties["description"]["description"]
+    assert "영문 Event/Scenario와 '입력 사실'은 사용하지 않음" in properties["description"]["description"]
+    assert "원문 표기 그대로 쓰고 한글로 음역하지 않음" in properties["description"]["description"]
     assert "0~100 정수 백분율" in schema["$defs"]["V4ReadableScenario"]["properties"]["probability"]["description"]
     assert "합계는 100" in schema["$defs"]["V4ReadableScenario"]["properties"]["probability"]["description"]
 

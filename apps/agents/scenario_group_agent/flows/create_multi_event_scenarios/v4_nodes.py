@@ -58,6 +58,7 @@ from apps.agents.scenario_group_agent.schemas.base import BaseNode
 from apps.agents.scenario_group_agent.utils.scenario_group_summary import (
     build_scenario_group_event_summary,
 )
+from apps.common.configs.config import get_settings
 from apps.common.exceptions.custom import MIBaseError
 from apps.common.tracing.context import TraceContext
 from apps.common.values.error_codes import ErrorCode
@@ -137,7 +138,7 @@ async def _analyze_event_with_retries(
                         ),
                         trace_context=trace_context,
                         stage=f"event_impact_analysis:{event_id}",
-                        reasoning_effort_override="low",
+                        reasoning_effort_override=get_settings().llm_v4_analysis_reasoning_effort,
                     )
             except TimeoutError as exc:
                 raise TimeoutError(
@@ -304,7 +305,7 @@ class AnalyzeEventInteractionsNode(BaseNode):
                 ),
                 trace_context=runtime.context if runtime is not None else None,
                 stage="event_interaction_analysis",
-                reasoning_effort_override="low",
+                reasoning_effort_override=get_settings().llm_v4_analysis_reasoning_effort,
             )
             return {
                 "interaction_attempt": attempt,
