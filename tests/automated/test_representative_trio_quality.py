@@ -25,6 +25,8 @@ from tests.manual.model_parameter_agent.collect_existing_representative_trios im
 from tests.manual.model_parameter_agent.evaluate_representative_trios import (
     EXPECTED_CATALOG_CHECKSUM,
     attach_diagnostic_executions,
+    attach_final_cohort_trio_analysis,
+    build_final_cohort_trio_analysis,
     build_reusable_testset,
     build_selection_plan,
     evaluate_execution,
@@ -32,6 +34,7 @@ from tests.manual.model_parameter_agent.evaluate_representative_trios import (
     merge_execution_evidence,
     reconcile_final_history,
     regenerated_event_pool_checks,
+    render_final_cohort_trio_report,
     render_markdown,
     require_mi_base_fallback_mode,
     select_representative_trio,
@@ -251,7 +254,7 @@ def test_existing_pool_plan_gates_actual_preflight_release_identity() -> None:
                 "catalog_version": "v4.1",
                 "catalog_checksum": EXPECTED_CATALOG_CHECKSUM,
             },
-            "resource": {"proposal_flow_release": "v4.1.2"},
+            "resource": {"proposal_flow_release": "v4.1.3"},
         },
         "safety": {"confirmation_invoked": False, "callback_invoked": False},
         "selection": {"counts": {"discovered": 3, "preflight_fail": 0, "hard_stop": 0}},
@@ -364,7 +367,7 @@ def test_selection_plan_gates_actual_read_only_release_and_scope(tmp_path: Path)
                 "catalog_checksum": EXPECTED_CATALOG_CHECKSUM,
             },
             "resource": {
-                "proposal_flow_release": "v4.1.2",
+                "proposal_flow_release": "v4.1.3",
                 "proposal_capability_release_id": "extend16-v8",
             },
         },
@@ -526,7 +529,7 @@ def _full_plan_and_execution() -> tuple[dict[str, Any], dict[str, Any]]:
                 "catalog_version": "v4.1",
                 "catalog_checksum": EXPECTED_CATALOG_CHECKSUM,
             },
-            "resource": {"proposal_flow_release": "v4.1.2"},
+            "resource": {"proposal_flow_release": "v4.1.3"},
         },
         "safety": {
             "confirmation_invoked": False,
@@ -579,7 +582,7 @@ def test_evaluate_execution_distinguishes_type_and_exact_slot_value_variation() 
                 "catalog_version": "v4.1",
                 "catalog_checksum": EXPECTED_CATALOG_CHECKSUM,
             },
-            "resource": {"proposal_flow_release": "v4.1.2"},
+            "resource": {"proposal_flow_release": "v4.1.3"},
         },
         "safety": {
             "confirmation_invoked": False,
@@ -639,7 +642,7 @@ def test_value_differentiation_ignores_value_cell_order_only_changes() -> None:
                 "catalog_version": "v4.1",
                 "catalog_checksum": EXPECTED_CATALOG_CHECKSUM,
             },
-            "resource": {"proposal_flow_release": "v4.1.2"},
+            "resource": {"proposal_flow_release": "v4.1.3"},
         },
         "safety": {
             "confirmation_invoked": False,
@@ -689,7 +692,7 @@ def test_main_scenario_value_kpi_requires_all_three_signatures_to_differ() -> No
                 "catalog_version": "v4.1",
                 "catalog_checksum": EXPECTED_CATALOG_CHECKSUM,
             },
-            "resource": {"proposal_flow_release": "v4.1.2"},
+            "resource": {"proposal_flow_release": "v4.1.3"},
         },
         "safety": {
             "confirmation_invoked": False,
@@ -717,7 +720,7 @@ def test_merge_execution_evidence_combines_non_overlapping_release_matched_attem
             "release_id": "new-bc-v7",
             "contract_sha256": "contract",
             "proposal_capability_sha256": "capability",
-            "proposal_flow_release": "v4.1.2",
+            "proposal_flow_release": "v4.1.3",
         },
     }
     left = {
@@ -755,7 +758,7 @@ def test_merge_execution_evidence_rejects_duplicate_scenario_attempt() -> None:
                 "catalog_version": "v4.1",
                 "catalog_checksum": EXPECTED_CATALOG_CHECKSUM,
             },
-            "resource": {"proposal_flow_release": "v4.1.2"},
+            "resource": {"proposal_flow_release": "v4.1.3"},
         },
         "attempts": [{"scenario_id": 1, "status": "PASS"}],
     }
@@ -775,7 +778,7 @@ def test_post_fix_evidence_explicitly_replaces_attempt_and_keeps_audit() -> None
             "release_id": "new-bc-v7",
             "contract_sha256": "contract",
             "proposal_capability_sha256": "capability",
-            "proposal_flow_release": "v4.1.2",
+            "proposal_flow_release": "v4.1.3",
         },
     }
     baseline = {
@@ -861,7 +864,7 @@ def test_post_fix_evidence_requires_reason() -> None:
                 "catalog_version": "v4.1",
                 "catalog_checksum": EXPECTED_CATALOG_CHECKSUM,
             },
-            "resource": {"proposal_flow_release": "v4.1.2"},
+            "resource": {"proposal_flow_release": "v4.1.3"},
         },
         "attempts": [{"scenario_id": 1, "status": "ABSTAINED"}],
     }
@@ -977,7 +980,7 @@ def test_authorized_mi_base_trace_backfill_is_audited_and_not_reported_as_direct
                 "catalog_version": "v4.1",
                 "catalog_checksum": EXPECTED_CATALOG_CHECKSUM,
             },
-            "resource": {"proposal_flow_release": "v4.1.2"},
+            "resource": {"proposal_flow_release": "v4.1.3"},
             "required_mi_base_fallback_mode": "configured_fallback",
             "mi_base_fallback_policy": {
                 "active_case_unavailable_mode": "configured_fallback",
@@ -1211,7 +1214,7 @@ def test_semantic_empty_retry_prohibition_is_not_counted_as_integrity_error() ->
                 "catalog_version": "v4.1",
                 "catalog_checksum": EXPECTED_CATALOG_CHECKSUM,
             },
-            "resource": {"proposal_flow_release": "v4.1.2"},
+            "resource": {"proposal_flow_release": "v4.1.3"},
         },
         "safety": {
             "confirmation_invoked": False,
@@ -1498,6 +1501,213 @@ def test_immutable_testset_matches_plan_by_ordered_group_event_and_scenario_ids(
     )
     assert mismatch["checks"]["plan_identity_matches_testset"] is False
     assert mismatch["pass"] is False
+
+
+def _explicit_slot_rationale() -> str:
+    return (
+        "대상·기간: Korea 2027; 근거 유형: BOUNDED_ASSUMPTION; 인과 경로: event→demand; "
+        "기준값: 1; 적용 정책: bounded; 계산: base x factor; 제안값: 2; 근거: test; "
+        "주요 가정: test assumption; 판단 설명: test judgment; 불확실성: review required"
+    )
+
+
+def _final_cohort_fixture_and_history() -> tuple[dict[str, Any], dict[str, Any]]:
+    testset = {
+        "dataset_id": "fixed-two-group-testset",
+        "groups": [
+            {
+                "recency_rank": group_index,
+                "scenario_group_id": group_id,
+                "event_signature": [100 + group_index],
+                "event_type_codes": [f"type_{group_index}"],
+                "scenarios": [
+                    {"scenario_id": scenario_id, "title": f"Scenario {scenario_id}"}
+                    for scenario_id in scenario_ids
+                ],
+            }
+            for group_index, (group_id, scenario_ids) in enumerate(
+                ((10, (1, 2, 3)), (20, (4, 5, 6))),
+                start=1,
+            )
+        ],
+    }
+
+    def proposal_row(scenario_id: int, group_id: int) -> dict[str, Any]:
+        return {
+            "model_param_proposal_id": 1000 + scenario_id,
+            "scenario_id": scenario_id,
+            "scenario_group_id": group_id,
+            "status": "PROPOSED",
+            "callback_status": "SKIPPED",
+            "proposal_parameters": [
+                {
+                    "parameterName": "Temperature",
+                    "values": [
+                        {
+                            "Country": "Korea",
+                            "Year": 2027,
+                            "Month": 1,
+                            "basecaseValue": 1.0,
+                            "proposedValue": float(scenario_id),
+                            "rationale": _explicit_slot_rationale(),
+                        },
+                    ],
+                },
+            ],
+            "confirmation_parameters": None,
+        }
+
+    scenario_to_group = {1: 10, 2: 10, 3: 10, 4: 20, 5: 20, 6: 20}
+    covered_ids = [1, 2, 3, 4, 5]
+    history = {
+        "status": "PASS",
+        "manifest": {
+            "capability_contract": {
+                "catalog_version": "v4.1",
+                "catalog_checksum": EXPECTED_CATALOG_CHECKSUM,
+            },
+            "resource": {"proposal_flow_release": "v4.1.3"},
+        },
+        "selection": {
+            "counts": {
+                "covered_skip": 5,
+                "eligible_uncovered": 1,
+                "lifecycle_or_capability_skip": 0,
+                "hard_stop": 0,
+            },
+            "discovered_scenario_ids": [1, 2, 3, 4, 5, 6],
+            "covered_scenario_ids": covered_ids,
+            "lifecycle_or_capability_skipped_scenario_ids": [],
+        },
+        "preflight": [
+            {
+                "scenario_id": scenario_id,
+                "scenario_group_id": group_id,
+                "status": "PASS",
+                "uncovered_guard": {
+                    "decision": "SKIP" if scenario_id in covered_ids else "ELIGIBLE",
+                    "eligible": scenario_id not in covered_ids,
+                    "history": (
+                        [proposal_row(scenario_id, group_id)]
+                        if scenario_id in covered_ids
+                        else []
+                    ),
+                },
+            }
+            for scenario_id, group_id in scenario_to_group.items()
+        ],
+    }
+    return testset, history
+
+
+def test_final_cohort_analysis_uses_all_scenarios_and_compares_only_full_trios() -> None:
+    testset, history = _final_cohort_fixture_and_history()
+
+    analysis = build_final_cohort_trio_analysis(testset, history)
+
+    assert analysis["pass"] is True
+    assert analysis["verdict"] == "PASS"
+    assert analysis["kpis"]["proposal_success_count"] == 5
+    assert analysis["kpis"]["scenario_count"] == 6
+    assert analysis["kpis"]["triple_success_group_count"] == 1
+    assert analysis["kpis"]["identical_parameter_type_group_count"] == 1
+    assert analysis["kpis"][
+        "same_types_with_all_three_scenario_values_distinct_group_count"
+    ] == 1
+    assert analysis["kpis"]["exact_common_slot_count"] == 1
+    assert analysis["kpis"]["exact_common_slots_with_different_values"] == 1
+    assert analysis["kpis"]["exact_common_slots_with_all_three_values_distinct_rate_percent"] == 100.0
+    assert analysis["kpis"]["slot_rationale_explicit_count"] == 5
+    assert analysis["groups"][1]["actual_parameter_sets_identical"] is False
+
+    markdown = render_final_cohort_trio_report(analysis)
+    assert "최종 DB 기준 Trio Parameter·값 변별" in markdown
+    assert "5 / 6 (83.3%)" in markdown
+    assert "1 / 1 (100.0%)" in markdown
+    assert "| 2 | 20 | 4, 5, 6 | 2/3 | N/A | N/A | N/A | N/A |" in markdown
+
+
+def test_final_cohort_analysis_fails_closed_when_proposal_payload_is_missing() -> None:
+    testset, history = _final_cohort_fixture_and_history()
+    history["preflight"][0]["uncovered_guard"]["history"][0]["proposal_parameters"] = []
+
+    analysis = build_final_cohort_trio_analysis(testset, history)
+
+    assert analysis["pass"] is False
+    assert analysis["verdict"] == "FAIL"
+    assert analysis["checks"]["blocking_proposal_payload_complete"] is False
+    assert analysis["payload_missing_scenario_ids"] == [1]
+
+
+def test_attached_final_cohort_analysis_becomes_mandatory_report_section() -> None:
+    testset, history = _final_cohort_fixture_and_history()
+    report = {
+        "operational_checks": {"base": True},
+        "operational_pass": True,
+        "verdict": "PASS",
+    }
+
+    updated = attach_final_cohort_trio_analysis(report, testset, history)
+
+    assert updated["operational_checks"]["final_cohort_trio_analysis_complete"] is True
+    assert updated["final_cohort_trio_analysis"]["kpis"]["proposal_success_count"] == 5
+    assert updated["verdict"] == "PASS"
+
+
+def test_main_markdown_automatically_renders_attached_final_cohort_section() -> None:
+    plan, execution = _full_plan_and_execution()
+    testset = {
+        "dataset_id": "render-integration-testset",
+        "groups": [
+            {
+                **group,
+                "scenarios": group["selected_scenarios"],
+            }
+            for group in plan["groups"]
+        ],
+    }
+    attempts_by_scenario = {
+        int(attempt["scenario_id"]): attempt for attempt in execution["attempts"]
+    }
+    history = {
+        "status": "PASS",
+        "manifest": execution["manifest"],
+        "selection": {
+            "counts": {"covered_skip": 60},
+            "discovered_scenario_ids": plan["selected_scenario_ids"],
+            "covered_scenario_ids": plan["selected_scenario_ids"],
+            "lifecycle_or_capability_skipped_scenario_ids": [],
+        },
+        "preflight": [
+            {
+                "scenario_id": scenario_id,
+                "scenario_group_id": attempt["scenario_group_id"],
+                "status": "PASS",
+                "uncovered_guard": {
+                    "decision": "SKIP",
+                    "eligible": False,
+                    "history": [
+                        {
+                            **attempt["proposal_db_row"],
+                            "model_param_proposal_id": attempt["model_param_proposal_id"],
+                        },
+                    ],
+                },
+            }
+            for scenario_id in plan["selected_scenario_ids"]
+            for attempt in [attempts_by_scenario[scenario_id]]
+        ],
+    }
+
+    report = attach_final_cohort_trio_analysis(
+        evaluate_execution(plan, execution),
+        testset,
+        history,
+    )
+    markdown = render_markdown(report)
+
+    assert markdown.count("## 최종 DB 기준 Trio Parameter·값 변별") == 1
+    assert "| Proposal 있음 | 60 / 60 (100.0%) |" in markdown
 
 
 def test_reconcile_final_history_matches_quality_outcomes() -> None:

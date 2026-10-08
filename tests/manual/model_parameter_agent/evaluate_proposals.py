@@ -312,7 +312,7 @@ def _matches_frozen_graph_context(
 ) -> bool:
     """Compare persisted Scenario context while ignoring request-local pins.
 
-    Proposal Flow v4.1.2 adds the selected MI Base case to graph state after
+    Proposal Flow v4.1.3 adds the selected MI Base case to graph state after
     loading the persisted Scenario context.  That request-local field is not a
     Scenario mutation and must not trip the pre-persistence drift guard.
     """

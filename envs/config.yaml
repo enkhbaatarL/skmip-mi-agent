@@ -53,7 +53,7 @@ hide_price_pressure: true
 scenario_group_v4_impact_catalog_version: v4.1
 
 # Model parameter
-model_parameter_proposal_flow_release: v4.1.2
+model_parameter_proposal_flow_release: v4.1.3
 model_parameter_transient_retry_max_attempts: 2
 model_parameter_transient_retry_base_delay_seconds: 0.5
 model_parameter_transient_retry_max_jitter_seconds: 0.25
@@ -67,6 +67,10 @@ model_parameter_proposed_value_precision_mode: trunc
 model_parameter_max_parameter_slots: 100
 model_parameter_max_value_prompt_basecase_records: 100
 model_parameter_max_routing_candidates_per_dimension: 2
+model_parameter_v4_max_routing_candidates_per_dimension: 3
+model_parameter_max_conditional_parameters_per_scenario: 4
+model_parameter_variation_mode: balanced
+model_parameter_semantic_repair_max_attempts: 2
 model_parameter_max_total_selected_slots: 300
 model_parameter_max_step2_prompt_bytes: 262144
 model_parameter_max_step3_prompt_bytes: 262144

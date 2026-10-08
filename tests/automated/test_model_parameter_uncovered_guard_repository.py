@@ -48,6 +48,12 @@ def _proposal_row(
         confirmed_dtm=modified_at if status == "CONFIRMED" else None,
         error_code="PROPOSAL_FAILED" if status == "FAILED" else None,
         error_message="safe failure detail" if status == "FAILED" else None,
+        proposal_parameters=[{"parameterName": "Temperature", "values": []}],
+        confirmation_parameters=(
+            [{"parameterName": "Temperature", "values": []}]
+            if status == "CONFIRMED"
+            else None
+        ),
     )
 
 
@@ -123,6 +129,8 @@ def test_fetch_proposal_guard_rows_uses_exact_scope_without_status_filter() -> N
             "confirmed_dtm": row.confirmed_dtm,
             "error_code": row.error_code,
             "error_message": row.error_message,
+            "proposal_parameters": row.proposal_parameters,
+            "confirmation_parameters": row.confirmation_parameters,
         }
         for row in rows
     ]

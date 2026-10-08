@@ -54,6 +54,7 @@ from tests.manual.model_parameter_agent.evaluate_representative_trios import (
     EXPECTED_CATALOG_VERSION,
     EXPECTED_GENERATION_STRATEGY,
     EXPECTED_PROPOSAL_FLOW_RELEASE,
+    FIXED_TESTSET_SOURCE_FLOW_RELEASE,
     PRESSURE_RANK,
     _current_write_eligible,
     _parameter_set,
@@ -807,7 +808,8 @@ def validate_testset(plan: Mapping[str, Any], testset: Mapping[str, Any]) -> dic
         "generation_strategy_fixed": contract.get("generation_strategy") == EXPECTED_GENERATION_STRATEGY,
         "scenario_lever_release_fixed": contract.get("scenario_lever_release") == EXPECTED_CATALOG_VERSION,
         "catalog_checksum_fixed": contract.get("scenario_lever_catalog_checksum") == EXPECTED_CATALOG_CHECKSUM,
-        "proposal_flow_release_fixed": contract.get("proposal_flow_release") == EXPECTED_PROPOSAL_FLOW_RELEASE,
+        "proposal_flow_release_fixed": contract.get("proposal_flow_release")
+        == FIXED_TESTSET_SOURCE_FLOW_RELEASE,
         "selection_policy_fixed": contract.get("selection_policy") == SELECTION_POLICY,
         "read_only_source_policy_fixed": contract.get("source_mutation_policy") == "read-only-existing-scenarios",
         "group_count_within_cap": contract.get("group_count") == len(groups)

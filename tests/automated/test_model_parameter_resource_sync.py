@@ -177,6 +177,11 @@ def test_k8s_single_config_file_uses_same_resource_mapping() -> None:
         "model_parameter_max_total_selected_slots",
         "model_parameter_max_step2_prompt_bytes",
         "model_parameter_max_step3_prompt_bytes",
+        "model_parameter_max_routing_candidates_per_dimension",
+        "model_parameter_v4_max_routing_candidates_per_dimension",
+        "model_parameter_max_conditional_parameters_per_scenario",
+        "model_parameter_variation_mode",
+        "model_parameter_semantic_repair_max_attempts",
     ):
         assert embedded_config[setting_name] == getattr(get_settings(), setting_name)
 

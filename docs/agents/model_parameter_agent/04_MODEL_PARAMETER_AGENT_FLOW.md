@@ -160,14 +160,22 @@ catalog에는 값·기준값이 없고, v4에서만 hierarchy terminal의 적용
 
 Step1.5는 legacy routing, v4 동일 Lever state의 복수 binding, 단일을 포함한 모든 conditional binding에 호출한다.
 v4 단일 deterministic binding만 그대로 통과한다. v4 deterministic 빈 응답은 primary 1건으로 복구하지만
-conditional 빈 응답은 0건을 유지한다. 복수 binding의 applicability가 각각 근거 있으면 설정 상한까지 함께
-유지한다. `CANDIDATE_VALIDATION_SYSTEM`의 핵심 역할은 다음과 같다.
+conditional 응답 누락은 0건을 유지한다. 단, 모든 후보를 빠짐없이 `NOT_APPLICABLE`로 판정한 v4 conditional
+task는 아래 parameter별 정책이 허용하고 물리 경로·방향·범위·기간이 모두 확인될 때만 bounded assumption 후보
+1종을 제한 복구할 수 있다. 복수 binding의 applicability가 각각 근거 있으면 설정 상한까지 함께 유지한다.
+`CANDIDATE_VALIDATION_SYSTEM`의 핵심 역할은 다음과 같다.
 
 - scenario, ordered events, 현재 dimension/value와 source 또는 Lever provenance를 비교해 허용 후보 중 적합한 파라미터만 선택한다.
 - `parameter_hint`로 후보의 의미와 적용 제약을 이해한다.
 - v1/v3는 `mapping_comment`를 필수 조건으로 판단하고, 명시적 근거가 없으면 해당 후보를 제외한다.
-- v4 conditional은 실제 model 대상·좌표·기간으로 이어지는 원인 또는 직접 영향 근거가 있을 때만 선택한다.
-- dimension task별로 0개부터 설정된 최대 개수까지 선택할 수 있다.
+- v4 conditional은 `원인 → 모델 대상 → parameter 방향 → 기간`을 설명할 수 있으면 정량값이 없어도
+  bounded assumption 대상으로 선택할 수 있다. causal path 자체가 없으면 제외한다.
+- 후보별 `conditional_assumption_policy`는 catalog 밖 target을 만드는 규칙이 아니라 정성 branch를 기존 input에
+  투영하는 경계다. 현재 정책 복구는 `route_disruption → ShippingCost`만 허용한다. 통항·우회·지연·대기·병목 또는
+  회복이 direction/scope/time_window와 함께 있어야 하며, 항차 시간·선복 가용성 경로를 명시한다.
+  `ShippingFuelCost`는 IFO380/bunker 가격, `CanalToll`은 Suez/Panama 통항료의 직접 근거 없이는 복구하지 않는다.
+- 각 후보를 `DIRECT`, `ASSUMPTION_ELIGIBLE`, `NOT_APPLICABLE`로 분류하고 근거 유형·대상·방향·기간·confidence를
+  구조화한다. dimension task별 최대 3개, Scenario 전체 conditional Parameter 최대 4개다.
 - 후보 밖의 파라미터나 key를 만들지 않고 Basecase 존재 여부를 선택 근거로 쓰지 않는다.
 
 v4 task에는 Step1.5부터 `parameter_hint`, semantic axes, binding role/selection mode/applicability와 선택 value의
@@ -205,7 +213,12 @@ v4 task에는 Step1.5부터 `parameter_hint`, semantic axes, binding role/select
           "event_type_l2_id": "<원본 event type>",
           "source_event_ids": ["<source event ID>"],
           "source_refs": [{"scenario_dimension_template_id": "<template ID>", "dim_key": "<원본 dimKey>"}],
-          "mapping_comment": "<연결 판단 기준>"
+          "mapping_comment": "<연결 판단 기준>",
+          "conditional_assumption_policy": {
+            "bounded_assumption_allowed": true,
+            "eligibility_rule_ko": "<허용 경계>",
+            "exclusion_rule_ko": "<금지 경계>"
+          }
         }
       ]
     }
@@ -213,20 +226,39 @@ v4 task에는 Step1.5부터 `parameter_hint`, semantic axes, binding role/select
 }
 ```
 
-응답은 선택 key만 받는다.
+응답은 선택 key와 후보별 판단 근거를 함께 받는다.
 
 ```json
 {
   "routing_decisions": [
     {
       "dimension_key": "<입력 dimension_key>",
-      "selected_candidate_keys": ["<입력에 있던 candidate_key>"]
+      "selected_candidate_keys": ["<입력에 있던 candidate_key>"],
+      "candidate_assessments": [
+        {
+          "candidate_key": "<입력에 있던 candidate_key>",
+          "decision": "ASSUMPTION_ELIGIBLE",
+          "evidence_basis": "BOUNDED_ASSUMPTION",
+          "causal_path_ko": "<원인에서 모델 입력까지의 경로>",
+          "target_scope_ko": "<대상 범위>",
+          "direction": "decrease",
+          "time_scope_ko": "<적용 기간>",
+          "confidence": "medium",
+          "rationale_ko": "<선택 또는 제외 근거>"
+        }
+      ]
     }
   ]
 }
 ```
 
-system prompt는 dimension별 선택 개수를 0개부터 설정 상한 사이로 제한한다. 조건을 충족하는 후보가 없으면 `selected_candidate_keys=[]`를 반환한다. 응답 후 서버는 입력 task에 없던 dimension·candidate key, 누락·중복된 routing task, dimension별 선택 상한 초과를 검사하고 위반 후보를 제외한다. Step1.5 이후 같은 모델 파라미터가 여러 dimension이나 event type에서 중복 선택됐으면 모든 source lineage를 보존한 하나의 후속 task로 병합한다. 승인 projection은 보조 근거지만 readiness 또는 projection 부재만으로 routing 후보를 탈락시키지 않는다. Step1.5 compact JSON도 LLM 호출 전에 byte 상한을 검사하고 trace에 prompt 크기를 기록한다.
+system prompt는 dimension별 선택 개수를 0개부터 설정 상한 사이로 제한한다. 서버는 assessment를 정본으로
+재검증하고 `strict|balanced|exploratory` mode, confidence, per-dimension/Scenario 상한을 적용한다. Step1.5 이후
+같은 모델 파라미터가 여러 dimension이나 event type에서 중복 선택됐으면 모든 source lineage와 routing evidence를
+보존한 하나의 후속 task로 병합한다. 승인 projection은 보조 근거지만 readiness 또는 projection 부재만으로
+routing 후보를 탈락시키지 않는다. Step1.5 compact JSON도 LLM 호출 전에 byte 상한을 검사하고 trace에 prompt
+크기를 기록한다. 정책 복구는 `strict`에서는 꺼지고, 불완전한 assessment·응답 누락·미등록 Lever/Parameter에는
+적용되지 않는다. 복구 사실과 policy release는 trace와 최종 rationale의 선정 판단에 남는다.
 
 ### 1.3 Basecase·LUT reference와 slot catalog 준비
 
@@ -702,6 +734,29 @@ request-local `trace_evidence`를 싣는다. trace에는 종료 단계까지의 
 기존 `ABSTAINED_*` 계약은 바뀌지 않으며, 품질 runner는 이 증적을 일반 실행 오류와 분리해 `ABSTAINED`/`REVIEW`로
 집계한다.
 
+v4.1.3은 transient retry와 별도로 불완전한 Step2/Step3 응답의 누락 task만 최대 2회까지 targeted semantic
+repair한다. 정상 응답에는 추가 호출이 없고, repair 실패는 첫 응답의 유효 부분과 deterministic 복구를 버리지 않는다.
+Step2에서 대상 branch가 하나뿐이고 기간만 넓거나 모호한 경우에는 catalog의 가장 이른 exact 기간 한 건만
+보수적으로 복구한다. 현재보다 과거인 월, 여러 대상, PowerMix atomic vector, LNG Plant/Train 증적 대상은 이
+규칙으로 추정하지 않는다.
+
+Step3은 16개 Parameter별 `bounded-expert-v1` policy를 사용한다. slot을 `OBSERVED`, `DERIVED`,
+`BOUNDED_ASSUMPTION`, `NEUTRAL`로 구분하고, bounded assumption만 서버가 reference와 Parameter별
+weak/medium/strong 폭으로 다시 계산한다. 최종 slot rationale은 대상·기간, 근거 유형, 인과 경로, 기준값,
+정책/계산, 제안값, 주요 가정과 불확실성을 고정 템플릿으로 명시한다. targeted repair 후에도 근거 유형별 필수
+설명이나 값 방향이 누락·모순이면 해당 cell을 제외한다. 공개 API와 DB JSON shape는 유지한다.
+
+로컬 `envs/config.yaml`과 내부 Neuro 배포 ConfigMap은 다음 값을 동일하게 유지한다.
+
+| 설정 | v4.1.3 기본값 | 의미 |
+| --- | --- | --- |
+| `model_parameter_proposal_flow_release` | `v4.1.3` | Proposal 로직 release 식별자 |
+| `model_parameter_max_routing_candidates_per_dimension` | `2` | legacy Step1.5 dimension별 기존 후보 상한 |
+| `model_parameter_v4_max_routing_candidates_per_dimension` | `3` | v4 Step1.5 dimension별 후보 상한 |
+| `model_parameter_max_conditional_parameters_per_scenario` | `4` | Scenario 전체 conditional Parameter 상한 |
+| `model_parameter_variation_mode` | `balanced` | `strict\|balanced\|exploratory` 생성 경계 |
+| `model_parameter_semantic_repair_max_attempts` | `2` | request 전체 targeted repair 추가 호출 상한 |
+
 ### 3.5 `uncovered_only` proposal-only campaign
 
 `tests/manual/model_parameter_agent/run_proposal_only.py`는 public proposal endpoint를 대체하지 않는 bounded
@@ -725,7 +780,7 @@ python tests/manual/model_parameter_agent/run_proposal_only.py \
 초기 `uncovered-only-v1` 정책은 우회 옵션을 제공하지 않는다.
 
 - Group 또는 Scenario ID 중 한 종류의 명시 범위가 필수다.
-- runner의 `proposal_flow_release=v4.1.2`는 로직 release이며 Impact Lever catalog version이 아니다.
+- runner의 `proposal_flow_release=v4.1.3`은 로직 release이며 Impact Lever catalog version이 아니다.
   `extend16-v8`는 임의 label이 아니라 catalog `v4.1` / checksum
   `7f4ef0b7aa60efb550b9175654fd82350f0c293debf880a9180e7e935db54d69`, extend16 capability와
   `new-bc-v7` contract SHA, resource semantic schema와 실제 Basecase/LUT content fingerprint를 묶은 고정

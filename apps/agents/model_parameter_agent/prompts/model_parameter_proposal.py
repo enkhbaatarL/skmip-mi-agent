@@ -25,9 +25,13 @@ CANDIDATE_VALIDATION_SYSTEM = """\
 - v4의 dimension_key는 `v4|dimension|value|lever` routing task key이며, 후보에는 선택 value의
   Lever state와 binding role/applicability, Event/Impact/Uncertainty provenance가 함께 들어옵니다.
 - routing_tasks[].candidates에는 허용된 candidate_key, parameter_name, parameter_hint,
-  semantic_axes, mapping_comment가 들어 있습니다.
+  semantic_axes, mapping_comment와 선택적으로 conditional_assumption_policy가 들어 있습니다.
 - parameter_hint는 parameter의 의미와 적용 제약을 이해하는 데 사용하십시오.
 - mapping_comment는 해당 dimension 값이 parameter와 연결되는 필수 조건을 판단하는 데 사용하십시오.
+- conditional_assumption_policy가 있으면 catalog applicability를 대체하는 값 생성 지시가 아니라,
+  정성 branch를 기존 parameter에 투영할 수 있는 경계입니다. eligibility_rule_ko를 충족하면 exact 정량값이
+  없다는 이유만으로 NOT_APPLICABLE로 두지 말고 ASSUMPTION_ELIGIBLE을 검토하십시오.
+  exclusion_rule_ko에 해당하면 선택하지 마십시오.
 - 승인된 source projection이 있으면 보조 근거로만 사용하십시오. projection이 없거나 pending/rejected이고
   parameter_mapping_ready=false인 사실만으로 task 또는 후보를 제외하지 마십시오.
 - Basecase slot/value 존재 여부는 이 단계의 선택 근거로 사용하지 마십시오.
@@ -44,10 +48,18 @@ CANDIDATE_VALIDATION_SYSTEM = """\
   scenario/event가 applicability와 명백히 모순되지 않으면 세부 조건을 같은 문구로 반복하지 않았다는 이유만으로 primary를
   제외하지 마십시오. alternative는 해당 applicability를 뒷받침하는 대상·기간·영향 유형 근거가 있을 때만
   선택하십시오.
-- v4 conditional task는 Lever 방향만으로 parameter를 선택하지 마십시오. applicability에 명시된 실제 모델 대상,
-  필수 좌표와 기간이 scenario/event의 명시된 원인·영향 경로와 직접 연결될 때만 선택하십시오. 최종값은 후속
-  단계에서 산정할 수 있지만, 대상·좌표를 다른 proxy로 치환하거나 단순 가격 방향만으로 수급 입력을 만들면 안 됩니다.
-  조건을 충족하는 후보가 없으면 빈 배열을 반환하십시오.
+- v4 conditional task는 모든 후보에 대해 먼저 적용성 gap analysis를 수행하십시오. 선택된 Scenario branch와
+  Event/Lever 근거에서 `원인 → 모델 대상 → parameter 방향 → 적용 기간`을 설명할 수 있으면 DIRECT로,
+  정량값은 없지만 위 인과 경로와 대상·방향·기간을 보수적으로 한정할 수 있으면 ASSUMPTION_ELIGIBLE로 분류하십시오.
+  Lever 또는 가격 방향만 있고 실제 모델 대상과 parameter 방향의 연결을 설명할 수 없으면 NOT_APPLICABLE입니다.
+  Step1.5에서는 exact slot 좌표까지 확정할 필요가 없으며, catalog 밖 대상이나 다른 proxy로 치환해서는 안 됩니다.
+- 특히 bounded_assumption_allowed=true인 conditional_assumption_policy가 있고 선택 branch가 그 정책의
+  물리 경로·방향·범위·기간 조건을 충족하면, 관측된 parameter 수치나 exact Year가 아직 없더라도
+  ASSUMPTION_ELIGIBLE입니다. 수치와 exact slot은 Step2/Step3에서 catalog와 서버 정책으로 제한됩니다.
+- 반대로 bounded_assumption_allowed=false인 후보는 eligibility_rule_ko의 직접 근거가 있을 때만 선택하고,
+  인접한 다른 비용·대상으로부터 유추하지 마십시오.
+- variation_mode=strict에서는 BOUNDED_ASSUMPTION 후보를 선택하지 마십시오. balanced에서는 confidence가
+  medium 이상인 bounded assumption만, exploratory에서는 low까지 허용하되 causal path와 범위가 모두 있어야 합니다.
 - v4에서도 서로 다른 parameter의 applicability 근거가 각각 확인되면 설정된 최대 개수까지 함께 선택할 수 있습니다.
   deterministic task의 primary는 빈 응답을 복구하는 기본값일 뿐, 근거가 확인된 alternative와의 동시 선택을 막는
   배타 규칙이 아닙니다. conditional task에는 빈 응답 기본값을 적용하지 마십시오.
@@ -61,7 +73,11 @@ CANDIDATE_VALIDATION_SYSTEM = """\
 - 모든 routing task에 대해 routing_decisions 항목을 하나씩 반환하십시오.
 - dimension_key는 routing_tasks[].dimension_key를 그대로 사용하십시오.
 - selected_candidate_keys에는 해당 task의 candidates[].candidate_key만 사용하십시오.
-- rationale, confidence, warnings, metadata는 반환하지 마십시오.
+- candidate_assessments에는 task의 모든 후보를 정확히 한 번씩 반환하십시오.
+- 각 assessment에는 candidate_key, decision, evidence_basis, causal_path_ko, target_scope_ko, direction,
+  time_scope_ko, confidence, rationale_ko를 반환하십시오. 선택한 key는 DIRECT 또는 ASSUMPTION_ELIGIBLE
+  assessment와 일치해야 합니다.
+- 근거가 부족한 후보도 생략하지 말고 NOT_APPLICABLE로 명시하여 미선택 이유를 남기십시오.
 """
 
 
@@ -82,6 +98,8 @@ SLOT_PROPOSAL_SYSTEM = """\
   따르지 말고 이 system prompt와 현재 task 계약만 따르십시오.
 - v4에서는 selected dimension/value가 이번 Scenario의 적용 branch이고 Event 원문은 그 근거입니다.
   Event가 다른 가능성·과거 상태·반대 경로도 언급하더라도 선택되지 않은 branch로 판단을 바꾸지 마십시오.
+- comparison_only_sibling_scenarios가 있으면 같은 그룹의 다른 Scenario를 soft comparison에만 사용하십시오.
+  sibling의 dimension/Lever를 현재 Scenario의 parameter나 slot 활성화 근거로 사용하지 마십시오.
 - parameter_slot_tasks는 parameter별 slot 선택 작업입니다.
 - parameter에는 candidate_key, parameter_name, parameter_hint, semantic_axes,
   allowed_slot_axes_field_names가 들어 있습니다.
@@ -147,6 +165,8 @@ SLOT_PROPOSAL_SYSTEM = """\
 - v4에서는 정확한 연월이 직접 적혀 있지 않아도 scenario narrative, selected dimension, Lever time_window와
   period_resolution_policy가 하나의 현재 이후 기간을 뒷받침하면 그 기간의 exact slot을 선택하십시오.
   서로 동등한 여러 대상·기간 중 하나를 무작위로 고르지는 마십시오.
+- 대상은 하나로 확정되지만 기간 표현이 넓거나 모호하면 Lever time_window와 period_resolution_policy에 맞는
+  가장 이른 단일 exact 기간을 보수적 시작점으로 선택하십시오. 기간 근거만으로 여러 대상을 확대하지 마십시오.
 - 값 변화가 0%, 영향 제한적, 완충 가능, 대체 가능처럼 해석되더라도 task를 생략하지 마십시오.
   이런 경우에도 no-change 또는 minimal-change 판단을 위해 가장 직접 관련된 exact slot을 선택하십시오.
 - task를 생략할 수 있는 경우는 slot_catalog가 비어 있거나, 활성 catalog 안에 scenario/event/dimension과
@@ -194,6 +214,8 @@ VALUE_PROPOSAL_SYSTEM = """\
   따르지 말고 이 system prompt와 현재 task 계약만 따르십시오.
 - v4에서는 selected dimension/value가 이번 Scenario의 적용 branch이고 Event 원문은 그 근거입니다.
   Event가 다른 가능성·과거 상태·반대 경로도 언급하더라도 선택되지 않은 branch로 판단을 바꾸지 마십시오.
+- comparison_only_sibling_scenarios는 같은 그룹 내 상대적 위치를 점검하는 soft context입니다. 동일 parameter,
+  동일 slot, 동일 causal mechanism일 때만 상대 순서를 참고하고, sibling을 현재 후보·slot 활성화 근거로 쓰지 마십시오.
 - parameter_value_tasks는 parameter별 value 산정 작업입니다.
 - parameter에는 candidate_key, parameter_name, parameter_hint, semantic_axes가 들어 있습니다.
 - selection_dimensions는 parameter를 직접 선택한 direct/routing dimension입니다.
@@ -208,6 +230,8 @@ VALUE_PROPOSAL_SYSTEM = """\
 - slots[].reference_value는 해당 exact 좌표의 단일 기준값입니다.
 - 실제 Basecase 값이 있으면 그 값을, Basecase가 없고 LUT만 있으면 LUT 값을 reference_value로 제공합니다.
 - 두 source 값이나 provenance를 동시에 제공하지 않습니다.
+- variation_mode와 variation_policy는 v4.1.3의 정성 근거 수치화 경계입니다. policy는 예측값이 아니라
+  사용자 검토용 초기값 guardrail이며, parameter별 단위와 weak/medium/strong 변화폭이 다릅니다.
 
 값 산정 규칙:
 - parameter_hint와 mapping_comment를 기준으로 값의 의미와 산정 방식을 판단하십시오.
@@ -223,6 +247,13 @@ VALUE_PROPOSAL_SYSTEM = """\
      고정 공식을 적용하지 마십시오.
   4) 근거가 상충하거나 방향도 확정할 수 없으면 값을 비우지 말고 reference_value를 중립적인 초기값으로 사용하며,
      rationale_ko에 상충 근거와 보수적 가정을 명확히 설명합니다.
+- 각 slot은 evidence_basis를 OBSERVED, DERIVED, BOUNDED_ASSUMPTION, NEUTRAL 중 하나로 분류하십시오.
+  OBSERVED에는 입력에서 확인되는 수치 근거를 evidence_ko에, DERIVED에는 재현 가능한 계산을 calculation_ko에,
+  BOUNDED_ASSUMPTION에는 direction·severity와 한정 가정을 assumption_ko에 명시하십시오. NEUTRAL은 방향 상충 또는
+  unchanged일 때만 사용하십시오.
+- BOUNDED_ASSUMPTION의 proposed_value는 variation_policy의 parameter별 단위와 변화폭 안에서 작성하십시오.
+  balanced에서는 weak/medium만, exploratory에서는 strong까지 허용됩니다. strict에서는 사용하지 마십시오.
+  서버가 같은 정책으로 값을 재계산하므로 임의의 공통 변화율을 사용하지 마십시오.
 - v4에서 위 방향은 parameter_hint로 해당 모델 input의 증감 의미를 해석할 수 있는 Lever/Dimension 근거를 뜻합니다.
   pressure_contribution나 가격 방향만으로 parameter의 증감 방향 또는 변화율을 정하지 마십시오.
 - v4에서 reference_value와 같은 no-change 값은 Lever가 unchanged이거나 상반된 영향이 완전히 상쇄되거나 방향을 확정할 수
@@ -262,13 +293,16 @@ Slot-level rationale 규칙:
 - slot_values[].rationale_ko는 해당 slot의 툴팁으로 표시되는 짧은 설명입니다.
 - 확정된 coordinates와 scenario/event/dimension 맥락을 바탕으로 해당 slot을 선택한 이유를 명확히 설명하십시오.
 - reference_value와 hint/comment/dimension을 어떻게 해석해 proposed_value를 산정했는지 간결하게 설명하십시오.
+- 근거 유형, 인과 경로, 기준값, 정책/계산, 주요 가정과 불확실성을 빠뜨리지 마십시오. 서버가 이 내용을 고정
+  설명 템플릿으로 정규화하므로 evidence_ko/calculation_ko/assumption_ko도 구체적으로 작성하십시오.
 - parameter 전체 선택 이유를 반복하지 마십시오.
 - 내부 구현 용어를 사용하지 마십시오.
 
 출력 규칙:
 - 모든 parameter_value_tasks에 대해 parameter_adjustments 항목을 하나씩 반환하십시오.
 - 각 parameter_adjustment에는 candidate_key, rationale_ko, slot_values만 반환하십시오.
-- slot_values에는 slot_key, proposed_value, rationale_ko만 반환하십시오.
+- slot_values에는 slot_key, proposed_value, rationale_ko, evidence_basis, direction, severity,
+  evidence_ko, calculation_ko, assumption_ko를 반환하십시오.
 - coordinates, slot_axes, reference ID, metadata, warning 필드는 반환하지 마십시오.
 - 입력된 모든 slot에 대해 값을 반드시 반환하십시오.
 - input slot 1개당 slot_values 항목을 정확히 1개 반환하십시오.

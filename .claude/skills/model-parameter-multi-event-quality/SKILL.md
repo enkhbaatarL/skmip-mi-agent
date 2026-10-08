@@ -223,6 +223,15 @@ Step1.5/2/3 semantic abstention도 MI Base 준비 뒤 종료되므로 예외의 
 - 실행 attempt Scenario ID 집합은 고정 testset의 proposal-eligible ID 집합과 정확히 같아야 하며 preflight skip ID를
   실행하면 `FAIL`이다. 최종 DB read-back도 건수뿐 아니라 covered/uncovered/skip Scenario ID 집합과 Group identity를
   exact 대조한다.
+- Live Proposal campaign의 최종 DB read-back은 blocking Proposal row의 `proposal_parameters`를 함께 스냅샷해야 한다.
+  완료 시 `evaluate_representative_trios.py final-cohort`로 고정 testset 전체를 다시 평가해 (1) full-trio Parameter
+  type set, (2) 세 Scenario의 전체 proposed-value signature, (3) exact common slot 값 차이, (4) slot별 명시적
+  rationale 완전성을 Markdown/JSON에 자동 생성한다. Proposal payload 누락, 동일 Scenario의 blocking row 중복,
+  fixture/history scope·Group identity 불일치는 fail-closed다.
+- 공식 live campaign Report는 `최종 DB 기준 Trio Parameter·값 변별` 섹션이 없으면 미완료다. `evaluate`에
+  `--testset-input`과 `--final-history-evidence`를 함께 주면 이 섹션을 본문에 자동 부착한다. 실행 증적이 여러 조각이거나
+  기존 covered Proposal과 신규 Proposal이 섞인 campaign은 최종 DB read-back을 source of truth로 삼아 별도
+  `final-cohort` Report를 생성하고 본문에서 링크·수치를 반영한다. 수동으로 성공 건수만 옮겨 적어 대신하지 않는다.
 - Markdown 그룹 표는 triple-success가 아닌 종류/값/exact-slot 지표를 `N/A`로 표시한다. `Read-only KPI`는 핵심
   7개 안팎으로 압축하고 `runtime-capable`, `current write eligible`, `covered`, `coverage limit`을 고정 설명한다.
   `Proposal 결과 KPI`, 그룹 표, post-fix 비교 표의 컬럼 정의도 고정 섹션으로 포함한다. KPI 개선안은 새 지표 제안이

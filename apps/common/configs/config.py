@@ -224,7 +224,7 @@ class Settings(BaseSettings):
     llm_structured_output_strict: bool = Field(default=False)
 
     # Model parameter proposal
-    model_parameter_proposal_flow_release: str = Field(default="v4.1.2", min_length=1)
+    model_parameter_proposal_flow_release: str = Field(default="v4.1.3", min_length=1)
     model_parameter_transient_retry_max_attempts: int = Field(default=2, ge=1, le=5)
     model_parameter_transient_retry_base_delay_seconds: float = Field(default=0.5, ge=0.0, le=30.0)
     model_parameter_transient_retry_max_jitter_seconds: float = Field(default=0.25, ge=0.0, le=30.0)
@@ -241,6 +241,20 @@ class Settings(BaseSettings):
     model_parameter_max_step2_prompt_bytes: int = Field(default=262_144, ge=1)
     model_parameter_max_step3_prompt_bytes: int = Field(default=262_144, ge=1)
     model_parameter_max_routing_candidates_per_dimension: int = Field(default=2, ge=1)
+    model_parameter_v4_max_routing_candidates_per_dimension: int = Field(
+        default=3,
+        ge=1,
+    )
+    model_parameter_max_conditional_parameters_per_scenario: int = Field(
+        default=4,
+        ge=1,
+    )
+    model_parameter_variation_mode: Literal[
+        "strict",
+        "balanced",
+        "exploratory",
+    ] = "balanced"
+    model_parameter_semantic_repair_max_attempts: int = Field(default=2, ge=0, le=2)
     model_parameter_resource_storage: ModelParameterResourceStorageConfig = Field(
         default_factory=ModelParameterResourceStorageConfig,
     )

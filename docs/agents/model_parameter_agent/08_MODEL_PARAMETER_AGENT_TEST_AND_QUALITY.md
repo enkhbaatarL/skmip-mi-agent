@@ -192,7 +192,7 @@ type/value 지표에 Proposal 실패나 semantic abstain을 억지로 포함하�
 남기고, triple-success가 아닌 Group의 종류/값/exact-slot은 `N/A`로 표시한다. exact slot 교집합이 없는 Group은
 `not comparable`로 집계한다. 선정과 평가는
 `tests/manual/model_parameter_agent/evaluate_representative_trios.py`를 사용하며 현재 release identity는
-Scenario Lever `v4.1`, Proposal Flow `v4.1.2`를 각각 기록한다.
+Scenario Lever `v4.1`, Proposal Flow `v4.1.3`을 각각 기록한다.
 중단·재개 등으로 실행 증적이 비중복 파일 여러 개라면 `--execution-evidence`를 반복한다. 도구는 release identity가
 같은지 검사하고 동일 Scenario attempt가 중복되면 덮어쓰지 않고 실패한다. 코드 수정 뒤 동일 Scenario를 재실행한
 증적은 `--post-fix-execution-evidence`와 필수 `--post-fix-reason`으로만 명시 교체하고 원 source/status/stage를
@@ -201,7 +201,10 @@ audit에 보존한다. post-fix가 있으면 baseline과 최종 attempt의 Scena
 Proposal 실행 전에 `evaluate_representative_trios.py freeze --plan <plan> --output
 tests/fixtures/model_parameter_agent/<dataset>.json`으로 해당 campaign의 고정 cohort를 최초 1회 저장하며 기존 파일을
 덮어쓰지 않는다. 기존 expanded Event campaign은 20 Group·60 Scenario 계약을 유지하고, 기존 Event 풀 재생성
-campaign은 40 Group·120 대표 Scenario 계약을 사용한다.
+campaign은 40 Group·120 대표 Scenario 계약을 사용한다. v4.1.3 Before/After는 기존
+`v4_1_2_existing_latest_distinct_representative_trio_40_groups_20261007.json`의 ordered Group/Event/Scenario
+ID를 그대로 사용하며 신규·교체 Scenario를 섞지 않는다. fixture의 source Flow 표기는 v4.1.2로 유지하고 실제
+실행 manifest의 target Flow `v4.1.3`은 별도 release gate로 검증한다.
 이후에는 `--testset-input`으로 fixture SHA-256과 ordered Group/Event/Scenario ID를
 plan과 exact 대조하며 fixture를 다시 생성하지 않는다. 고정 assertion은 release contract·Group/Scenario selection이며
 LLM 결과 baseline은 회귀 비교용 관측값이다. expanded campaign fixture에는
@@ -212,6 +215,44 @@ Read-only KPI 표는 대상, release pin, runtime-capable/coverage limit, curren
 eligible`은 지금 새 Proposal을 쓸 수 있는 상태, `covered`는 기존 Proposal로 인한 중복 쓰기 차단, `coverage limit`은
 runtime 후보가 없어 실행하지 않는 상태라고 설명한다. KPI 개선안은 신규 KPI 추가가 아니라 기존 Proposal 성공률,
 triple-success, 종류 동일성, Scenario별 값 변별을 높이는 방안으로 작성한다.
+
+Live campaign 완료 뒤 최종 DB read-back에는 blocking Proposal row의 `proposal_parameters` payload를 포함한다. 고정
+testset과 이 read-back을 `evaluate_representative_trios.py final-cohort`에 전달해 `최종 DB 기준 Trio
+Parameter·값 변별` Markdown/JSON을 생성한다. 해당 섹션은 전체 고정 Scenario 성공률, full-trio 수, full-trio의
+Parameter type set 동일률, type-consistent trio의 전체 proposed-value signature 변별률, exact common slot 값
+변별률, slot rationale 필수 섹션 완전성을 포함해야 한다. Proposal payload 누락, blocking row 중복, testset/history
+scope 또는 Group identity 불일치는 fail-closed다. 일반 `evaluate` 명령도 `--testset-input`과
+`--final-history-evidence`가 함께 주어지면 같은 섹션을 자동 부착하며, 이 섹션이 없는 live campaign Report는 완료로
+간주하지 않는다.
+
+```bash
+python tests/manual/model_parameter_agent/evaluate_representative_trios.py final-cohort \
+  --testset-input tests/fixtures/model_parameter_agent/<dataset>.json \
+  --final-history-evidence <run-dir>/final-full-cohort-read-only.json \
+  --output-json <run-dir>/final-cohort-trio-quality-report.json \
+  --output-markdown <run-dir>/final-cohort-trio-quality-report.md
+```
+
+v4.1.3 완료 기준은 동일 40 Group trio에서 다음과 같이 판정한다.
+
+| 지표 | Gate | Target |
+| --- | ---: | ---: |
+| Proposal-eligible 성공률 | 70% | 80% |
+| Group triple-success | 60% | 70% |
+| v4.1.2 성공 Scenario 유지율 | 95% | 100% |
+| catalog 밖 Parameter·존재하지 않는 slot | 0건 | 0건 |
+| slot rationale 필수 항목 누락 | 0건 | 0건 |
+| 부당한 causal assumption | 5% 이하 | 0% |
+| 기술적 `FAILED` | 1% 미만 | 0% |
+
+`ABSTAINED_NO_CHANGE`는 resolved no-change로 별도 집계하고, 근거·slot·값 보강이 필요한 actionable semantic
+abstention과 분리한다. 수급모델 결과의 가시적 차이는 이 Flow가 강제하지 않으며 완료 gate에 포함하지 않는다.
+
+Live campaign은 전체 120건 완주가 기본이지만, 최소 20건 실행 뒤 성공률이 Gate보다 20%p 이상 낮고 동일 semantic
+stage가 실패·기권의 70% 이상을 계속 차지하면 조기 중단할 수 있다. 중단 시까지의 원본 증적과 저장된 성공 Proposal은
+보존하고 자동 재시도하지 않는다. 원인 수정 후에는 기존 성공·covered Scenario를 제외한 실패/미제안 Scenario만
+별도 `post-fix re-test` 증적으로 실행하며, 최초 실행과 합쳐 하나의 무중단 campaign처럼 보고하지 않는다.
+
 Object Storage 장애 시 특정 fallback으로 실행해야 하는 campaign은 proposal-only runner에
 `--require-mi-base-fallback-mode configured_fallback`을 주고 evaluator에도
 `--expected-mi-base-fallback-mode configured_fallback`을 준다. 로드된 정책이 다르면 Scenario 실행 전에 `BLOCKED`,
@@ -237,7 +278,7 @@ python tests/manual/model_parameter_agent/collect_existing_representative_trios.
 
 수집 기준은 다음과 같다.
 
-- Scenario Lever `v4.1`, Proposal Flow `v4.1.2`, API `v4`, strategy
+- Scenario Lever `v4.1`, Proposal Flow `v4.1.3`, API `v4`, strategy
   `multi_event_model_lever_dimensions`를 exact pin한다.
 - Group status `created|realized`, stage `completed`, `parameter_mapping_ready=true`와 Dimension/baseline/role/cell
   구조 gate를 통과해야 한다.

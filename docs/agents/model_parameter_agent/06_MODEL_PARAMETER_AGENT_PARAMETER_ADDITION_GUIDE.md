@@ -27,7 +27,9 @@ DB 적용 상태는 runner preflight와 read-back으로 확인한다.
 - source matching 뒤 LLM과 proposal persistence 전에 version별 capability gate를 적용한다. v4의 단일
   `deterministic` binding은 결정적으로 통과시킨다. 복수 binding 또는 단일 `conditional` binding은 Step1.5에서
   각 applicability 근거를 독립 판정한다. 복수 Parameter가 각각 근거를 만족하면 설정 상한까지 함께 유지한다.
-  deterministic 빈 응답은 primary 1건으로 복구하지만 conditional 빈 응답은 자동 보정하지 않는다.
+  deterministic 빈 응답은 primary 1건으로 복구한다. conditional 응답 누락은 자동 보정하지 않으며, complete
+  all-N/A는 별도 승인된 parameter별 conditional routing 정책과 물리 경로·방향·범위·기간을 모두 만족할 때만
+  bounded assumption으로 제한 복구한다.
 - 공개 proposal/confirmation API와 payload, confirmation 동작은 변경하지 않는다.
 - DB migration 정본은 sibling mgmt repository다. v4.1은 기존 master·legacy mapping·v4.0 행을 수정하지 않고
   `tmm_mi_model_impact_lever_m`에 21행을 side-by-side로 추가하며 mgmt migration 0036과 동일해야 한다.
@@ -53,7 +55,9 @@ v4.1 conditional binding의 전체 매트릭스, runtime 선택 규칙, 좌표 �
 5. 신규 proposal을 허용할 parameter인지 별도 승인하고 ID 기반 capability contract 변경 범위와 회귀 테스트를 확정한다.
 6. 동일 Lever의 primary/alternative가 raw 후보가 되는 것이 의도인지 확인한다. Step1.5에는
    applicability와 Scenario/Event/Lever 맥락을 제공한다. 각 binding의 근거가 독립적으로 확인되면 복수 후보를
-   설정 상한까지 유지한다. deterministic 응답 누락만 primary 한 건으로 복구하며 conditional은 0건을 허용한다.
+   설정 상한까지 유지한다. deterministic 응답 누락만 primary 한 건으로 복구한다. conditional은 0건을 허용하되,
+   all-N/A 정책 복구를 추가하려면 허용 Lever/Parameter 쌍, 필요한 정성 증적, direction mapping, scope/time 필수값,
+   인접 Parameter로의 추론 금지 경계를 코드·prompt·회귀 테스트에 함께 등록한다.
 7. 대규모 시설 catalog가 slot·prompt byte 상한 안에 들어오는지 측정한다.
 8. v4 workbook contract 대상이면 authoritative source와 write target을 분리하고, digest·sheet·header·range,
    expected record 수, exact-key 오류 차단, fallback·evidence·atomic 정책을 함께 확정한다.
@@ -384,7 +388,7 @@ applicability는 보존한다. 대표 worst-case prompt를 직렬화해 설정 b
 - 파라미터별 반환 상한: model_parameter_max_parameter_slots=100
 - 요청 전체 선택 slot 상한: model_parameter_max_total_selected_slots
 - 직렬화 상한: model_parameter_max_step2_prompt_bytes, model_parameter_max_step3_prompt_bytes
-- proposal Flow release: model_parameter_proposal_flow_release=v4.1.2
+- proposal Flow release: model_parameter_proposal_flow_release=v4.1.3
 - transient LLM 호출: model_parameter_transient_retry_max_attempts=2,
   base delay 0.5초, max jitter 0.25초; semantic/좌표/DB 오류는 retry 금지
 - 상한 초과: LLM 호출 전 actual/limit과 parameter별 크기를 포함해 실패

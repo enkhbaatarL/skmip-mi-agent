@@ -39,6 +39,7 @@ class ModelParameterProposalOutputState(BaseModel):
 class ModelParameterProposalState(ModelParameterProposalOutputState):
     mi_base_case_id: int | None = Field(default=None, exclude=True)
     mi_base_selection_resolved: bool = Field(default=False, exclude=True)
+    semantic_repair_count: int = Field(default=0, exclude=True)
     # Request-local runtime objects are omitted from Pydantic dumps and the
     # graph output schema so full workbook rows never become API/trace output.
     parameter_knowledge_base: ParameterKnowledgeBase | None = Field(

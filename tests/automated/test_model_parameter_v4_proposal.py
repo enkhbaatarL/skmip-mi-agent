@@ -601,6 +601,7 @@ def test_v4_service_load_context_skips_legacy_mapping_repository_and_uses_active
         group=group,
         group_repository=group_repository_cls.return_value,
         event_repository=event_repository_cls.return_value,
+        scenario_repository=scenario_repository_cls.return_value,
         impact_levers=impact_levers,
         catalog_version=CATALOG_VERSION,
         catalog_checksum=CATALOG_CHECKSUM,

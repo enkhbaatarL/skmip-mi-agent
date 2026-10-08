@@ -224,6 +224,8 @@ class ModelParameterRepository(BaseSyncSQLRepository):
                 "confirmed_dtm": proposal.confirmed_dtm,
                 "error_code": proposal.error_code,
                 "error_message": proposal.error_message,
+                "proposal_parameters": _json_safe(proposal.proposal_parameters or []),
+                "confirmation_parameters": _json_safe(proposal.confirmation_parameters),
             }
             for proposal in rows
         ]

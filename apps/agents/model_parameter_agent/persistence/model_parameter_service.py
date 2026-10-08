@@ -1125,6 +1125,7 @@ def _load_v4_context(
     impact_levers: list[ModelImpactLeverPayload],
     catalog_version: str,
     catalog_checksum: str,
+    scenario_repository: ScenarioRepository | None = None,
 ) -> dict[str, Any]:
     api_version = str(_model_field(group, "api_version", "") or "")
     if api_version != "v4":
@@ -1209,6 +1210,23 @@ def _load_v4_context(
     reason_codes = sorted(
         {str(issue.get("reason_code") or "") for issue in support_issues if str(issue.get("reason_code") or "")},
     )
+    sibling_scenarios = []
+    if scenario_repository is not None:
+        current_scenario_id = _required_context_int(
+            _model_field(scenario, "scenario_id"),
+            field_name="scenario.scenario_id",
+        )
+        sibling_scenarios = [
+            _scenario_to_context_dict(item)
+            for item in scenario_repository.fetch_models_by_group_id(
+                scenario_group_id,
+            )
+            if _required_context_int(
+                _model_field(item, "scenario_id"),
+                field_name="scenario.scenario_id",
+            )
+            != current_scenario_id
+        ]
     return {
         "scenario": scenario_context,
         "scenario_group": group_context,
@@ -1218,6 +1236,7 @@ def _load_v4_context(
         "dimension_template": selected_dimension_template,
         "dimension_value_mappings": [],
         "dimension_lineage": dimension_lineage,
+        "sibling_scenarios": sibling_scenarios,
         "impact_levers": [lever.model_dump(mode="json") for lever in impact_levers],
         "impact_catalog_version": catalog_version,
         "impact_catalog_checksum": catalog_checksum,
@@ -1268,6 +1287,7 @@ class ModelParameterService:
                             group=group,
                             group_repository=group_repository,
                             event_repository=event_repository,
+                            scenario_repository=scenario_repository,
                             impact_levers=impact_levers,
                             catalog_version=catalog_version,
                             catalog_checksum=catalog_checksum,
@@ -1710,6 +1730,14 @@ def _scenario_to_context_dict(scenario: Any) -> dict[str, Any]:
             "hh": scenario.impact_hh,
         },
         "baseline_yn": scenario.baseline_yn,
+        "display_order": _json_safe(getattr(scenario, "display_order", None)),
+        "global_pressure_band": _json_safe(
+            getattr(scenario, "global_pressure_band", None),
+        ),
+        "scenario_role": _json_safe(getattr(scenario, "scenario_role", None)),
+        "global_pressure_rationale": _json_safe(
+            getattr(scenario, "global_pressure_rationale", None),
+        ),
     }
 
 

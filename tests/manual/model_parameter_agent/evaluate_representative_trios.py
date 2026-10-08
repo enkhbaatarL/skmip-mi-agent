@@ -34,7 +34,8 @@ EXPECTED_API_VERSION = "v4"
 EXPECTED_GENERATION_STRATEGY = "multi_event_model_lever_dimensions"
 EXPECTED_CATALOG_VERSION = "v4.1"
 EXPECTED_CATALOG_CHECKSUM = "7f4ef0b7aa60efb550b9175654fd82350f0c293debf880a9180e7e935db54d69"
-EXPECTED_PROPOSAL_FLOW_RELEASE = "v4.1.2"
+EXPECTED_PROPOSAL_FLOW_RELEASE = "v4.1.3"
+FIXED_TESTSET_SOURCE_FLOW_RELEASE = "v4.1.2"
 EXPANDED_EVENT_SELECTION_POLICY = "expanded_event_cohort/add-only"
 REGENERATED_EVENT_POOL_SELECTION_POLICY = "existing_event_pool/add-only-regenerated-scenarios"
 PRESSURE_RANK = {
@@ -54,6 +55,20 @@ NON_SLOT_KEYS = {
     "rationale",
     "operation",
 }
+FINAL_COHORT_PROPOSAL_STATUSES = frozenset({"PROPOSED", "CONFIRMED"})
+EXPLICIT_SLOT_RATIONALE_SECTIONS = (
+    "대상·기간:",
+    "근거 유형:",
+    "인과 경로:",
+    "기준값:",
+    "적용 정책:",
+    "계산:",
+    "제안값:",
+    "근거:",
+    "주요 가정:",
+    "판단 설명:",
+    "불확실성:",
+)
 AUTOMATIC_RETRY_FORBIDDEN_NOTE = "proposal evaluation raised; automatic retry is forbidden"
 AUTHORIZED_INFERRED_BACKFILL = "authorized_inferred_backfill"
 GROUP_RESULT_COLUMN_DEFINITIONS = (
@@ -77,7 +92,7 @@ READ_ONLY_KPI_COLUMN_DEFINITIONS = (
     ),
     (
         "Release 고정",
-        "Scenario Lever v4.1과 Proposal Flow v4.1.2가 실제 preflight 증적에 함께 기록됐는지",
+        "Scenario Lever v4.1과 Proposal Flow v4.1.3이 실제 preflight 증적에 함께 기록됐는지",
     ),
     (
         "Runtime-capable / coverage limit",
@@ -107,6 +122,10 @@ PROPOSAL_KPI_COLUMN_DEFINITIONS = (
     ("Proposal 성공", "전체 고정 Scenario 중 Proposal 저장·응답·DB 정합성을 통과한 비율"),
     ("Preflight→Proposal 전환율", "Proposal 가능 판정된 Scenario 중 실제 성공한 비율"),
     ("Semantic abstention", "근거 부족·적용 위치 없음·값 미생성·무변경으로 의도적으로 제안하지 않은 수"),
+    (
+        "Resolved no-change / actionable abstention",
+        "ABSTAINED_NO_CHANGE로 정상 종료한 수 / 추가 개선이 필요한 나머지 semantic abstention 수",
+    ),
     (
         "Semantic trace 완전 / 누락",
         "Semantic abstention 중 stage evidence·step summary·누적 LLM call이 모두 있는 수 / 빠진 수",
@@ -166,6 +185,28 @@ def _write_json(path: Path, value: Mapping[str, Any]) -> None:
 def _write_text(path: Path, value: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(value.rstrip() + "\n", encoding="utf-8")
+
+
+def _write_new_outputs(
+    *,
+    output_json: Path,
+    output_markdown: Path,
+    payload: Mapping[str, Any],
+    markdown: str,
+) -> None:
+    resolved_json = output_json.resolve()
+    resolved_markdown = output_markdown.resolve()
+    existing = [str(path) for path in (resolved_json, resolved_markdown) if path.exists()]
+    if existing:
+        message = f"Refusing to overwrite final-cohort report output: {existing}"
+        raise FileExistsError(message)
+    resolved_json.parent.mkdir(parents=True, exist_ok=True)
+    resolved_markdown.parent.mkdir(parents=True, exist_ok=True)
+    resolved_json.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    resolved_markdown.write_text(markdown.rstrip() + "\n", encoding="utf-8")
 
 
 def _now() -> str:
@@ -772,6 +813,451 @@ def _percent(numerator: int, denominator: int) -> float:
     return round(100 * numerator / denominator, 1) if denominator else 0.0
 
 
+def _group_scenarios(group: Mapping[str, Any]) -> list[Mapping[str, Any]]:
+    raw = group.get("scenarios")
+    if not isinstance(raw, list):
+        raw = group.get("selected_scenarios")
+    return [item for item in raw or [] if isinstance(item, Mapping)]
+
+
+def _slot_rationale_audit(
+    parameters: Sequence[Mapping[str, Any]],
+) -> tuple[int, int, int, list[dict[str, Any]]]:
+    total = 0
+    nonempty = 0
+    explicit = 0
+    incomplete: list[dict[str, Any]] = []
+    for parameter in parameters:
+        parameter_name = _parameter_name(parameter)
+        for cell in parameter.get("values") or []:
+            if not isinstance(cell, Mapping):
+                continue
+            total += 1
+            rationale = str(cell.get("rationale") or "").strip()
+            if rationale:
+                nonempty += 1
+            missing_sections = [
+                section for section in EXPLICIT_SLOT_RATIONALE_SECTIONS if section not in rationale
+            ]
+            if rationale and not missing_sections:
+                explicit += 1
+                continue
+            coordinates = {key: value for key, value in cell.items() if key not in NON_SLOT_KEYS}
+            incomplete.append(
+                {
+                    "parameter_name": parameter_name,
+                    "coordinates": coordinates,
+                    "rationale_nonempty": bool(rationale),
+                    "missing_sections": missing_sections,
+                },
+            )
+    return total, nonempty, explicit, incomplete
+
+
+def build_final_cohort_trio_analysis(
+    testset: Mapping[str, Any],
+    history: Mapping[str, Any],
+    *,
+    testset_source: str | None = None,
+    testset_sha256: str | None = None,
+    history_source: str | None = None,
+    history_sha256: str | None = None,
+) -> dict[str, Any]:
+    """Evaluate final persisted Proposal payloads for a fixed representative-trio cohort."""
+
+    expected_group_by_scenario: dict[int, int] = {}
+    expected_scenario_ids: list[int] = []
+    fixture_errors: list[str] = []
+    groups = [item for item in testset.get("groups") or [] if isinstance(item, Mapping)]
+    for group in groups:
+        raw_group_id = group.get("scenario_group_id")
+        if raw_group_id is None:
+            fixture_errors.append("testset group is missing scenario_group_id")
+            continue
+        group_id = int(raw_group_id)
+        scenarios = _group_scenarios(group)
+        if len(scenarios) != 3:
+            fixture_errors.append(
+                f"scenario_group_id={group_id}: expected 3 scenarios, got {len(scenarios)}",
+            )
+        for scenario in scenarios:
+            raw_scenario_id = scenario.get("scenario_id")
+            if raw_scenario_id is None:
+                fixture_errors.append(f"scenario_group_id={group_id}: missing scenario_id")
+                continue
+            scenario_id = int(raw_scenario_id)
+            if scenario_id in expected_group_by_scenario:
+                fixture_errors.append(f"duplicate testset scenario_id={scenario_id}")
+            expected_group_by_scenario[scenario_id] = group_id
+            expected_scenario_ids.append(scenario_id)
+
+    preflight_by_scenario: dict[int, list[Mapping[str, Any]]] = {}
+    history_identity_errors: list[str] = []
+    for item in history.get("preflight") or []:
+        if not isinstance(item, Mapping):
+            continue
+        raw_scenario_id = item.get("scenario_id")
+        if raw_scenario_id is None:
+            history_identity_errors.append("preflight row is missing scenario_id")
+            continue
+        scenario_id = int(raw_scenario_id)
+        preflight_by_scenario.setdefault(scenario_id, []).append(item)
+        expected_group_id = expected_group_by_scenario.get(scenario_id)
+        if expected_group_id is None:
+            history_identity_errors.append(f"out-of-scope scenario_id={scenario_id}")
+        elif item.get("scenario_group_id") != expected_group_id:
+            history_identity_errors.append(
+                f"scenario_id={scenario_id}: group={item.get('scenario_group_id')!r}, "
+                f"expected={expected_group_id!r}",
+            )
+
+    duplicate_preflight_ids = sorted(
+        scenario_id for scenario_id, rows in preflight_by_scenario.items() if len(rows) != 1
+    )
+    missing_preflight_ids = sorted(set(expected_scenario_ids) - set(preflight_by_scenario))
+    out_of_scope_preflight_ids = sorted(set(preflight_by_scenario) - set(expected_scenario_ids))
+    multiple_blocking_proposal_ids: dict[int, list[int]] = {}
+    payload_missing_scenario_ids: list[int] = []
+    empty_value_cell_scenario_ids: list[int] = []
+    selected_proposal_rows: dict[int, Mapping[str, Any]] = {}
+
+    for scenario_id, items in preflight_by_scenario.items():
+        if len(items) != 1:
+            continue
+        item = items[0]
+        guard = item.get("uncovered_guard")
+        guard = guard if isinstance(guard, Mapping) else {}
+        blocking_rows = [
+            row
+            for row in guard.get("history") or []
+            if isinstance(row, Mapping)
+            and str(row.get("status") or "") in FINAL_COHORT_PROPOSAL_STATUSES
+        ]
+        blocking_rows.sort(key=lambda row: int(row.get("model_param_proposal_id") or -1))
+        if len(blocking_rows) > 1:
+            multiple_blocking_proposal_ids[scenario_id] = [
+                int(row.get("model_param_proposal_id") or -1) for row in blocking_rows
+            ]
+        if not blocking_rows:
+            continue
+        selected = blocking_rows[-1]
+        selected_proposal_rows[scenario_id] = selected
+        expected_group_id = expected_group_by_scenario.get(scenario_id)
+        if selected.get("scenario_id") != scenario_id or selected.get("scenario_group_id") != expected_group_id:
+            history_identity_errors.append(
+                f"proposal_id={selected.get('model_param_proposal_id')}: Scenario/Group identity mismatch",
+            )
+        raw_parameters = selected.get("proposal_parameters")
+        parameters = [
+            parameter for parameter in raw_parameters or [] if isinstance(parameter, Mapping)
+        ] if isinstance(raw_parameters, list) else []
+        if not parameters:
+            payload_missing_scenario_ids.append(scenario_id)
+        elif not any(
+            isinstance(cell, Mapping)
+            for parameter in parameters
+            for cell in parameter.get("values") or []
+        ):
+            empty_value_cell_scenario_ids.append(scenario_id)
+
+    group_results: list[dict[str, Any]] = []
+    parameter_frequency: Counter[str] = Counter()
+    rationale_total = 0
+    rationale_nonempty = 0
+    rationale_explicit = 0
+    rationale_incomplete_by_scenario: dict[int, list[dict[str, Any]]] = {}
+    proposal_success_ids: set[int] = set()
+    coverage_limit_ids: set[int] = set()
+
+    for group in groups:
+        if group.get("scenario_group_id") is None:
+            continue
+        group_id = int(group["scenario_group_id"])
+        fixture_scenarios = _group_scenarios(group)
+        selected_ids = [
+            int(item["scenario_id"])
+            for item in fixture_scenarios
+            if item.get("scenario_id") is not None
+        ]
+        parameter_sets: list[frozenset[str]] = []
+        value_signatures: list[dict[str, str]] = []
+        exact_slots: list[dict[str, object]] = []
+        scenario_results: list[dict[str, Any]] = []
+        payload_complete_count = 0
+        for scenario in fixture_scenarios:
+            scenario_id = int(scenario["scenario_id"])
+            preflight_rows = preflight_by_scenario.get(scenario_id) or []
+            preflight = preflight_rows[0] if len(preflight_rows) == 1 else {}
+            proposal_row = selected_proposal_rows.get(scenario_id)
+            raw_parameters = proposal_row.get("proposal_parameters") if proposal_row else None
+            parameters = [
+                dict(item) for item in raw_parameters or [] if isinstance(item, Mapping)
+            ] if isinstance(raw_parameters, list) else []
+            names = frozenset(
+                _parameter_name(parameter)
+                for parameter in parameters
+                if _parameter_name(parameter)
+            )
+            value_cell_count = sum(
+                len([cell for cell in parameter.get("values") or [] if isinstance(cell, Mapping)])
+                for parameter in parameters
+            )
+            if proposal_row is not None:
+                proposal_success_ids.add(scenario_id)
+            elif preflight.get("status") == "SKIP":
+                coverage_limit_ids.add(scenario_id)
+            if parameters and value_cell_count:
+                payload_complete_count += 1
+                parameter_sets.append(names)
+                value_signatures.append(_parameter_value_signatures(parameters))
+                exact_slots.append(_exact_slot_values(parameters))
+                parameter_frequency.update(names)
+            slot_total, slot_nonempty, slot_explicit, incomplete = _slot_rationale_audit(parameters)
+            rationale_total += slot_total
+            rationale_nonempty += slot_nonempty
+            rationale_explicit += slot_explicit
+            if incomplete:
+                rationale_incomplete_by_scenario[scenario_id] = incomplete
+            scenario_results.append(
+                {
+                    **dict(scenario),
+                    "status": (
+                        "PASS"
+                        if proposal_row is not None
+                        else "COVERAGE_LIMIT" if preflight.get("status") == "SKIP" else "UNPROPOSED"
+                    ),
+                    "proposal_id": (
+                        proposal_row.get("model_param_proposal_id") if proposal_row else None
+                    ),
+                    "proposal_status": proposal_row.get("status") if proposal_row else None,
+                    "actual_parameter_names": sorted(names),
+                    "value_cell_count": value_cell_count,
+                    "slot_rationale_nonempty_count": slot_nonempty,
+                    "slot_rationale_explicit_count": slot_explicit,
+                },
+            )
+
+        successful_count = sum(scenario_id in proposal_success_ids for scenario_id in selected_ids)
+        triple_success = successful_count == 3
+        trio_payload_comparable = triple_success and payload_complete_count == 3
+        identical_sets = trio_payload_comparable and len(set(parameter_sets)) == 1
+        common_parameters = (
+            set.intersection(*(set(item) for item in parameter_sets))
+            if trio_payload_comparable and parameter_sets
+            else set()
+        )
+        varied_parameters: list[str] = []
+        all_three_distinct_parameters: list[str] = []
+        if trio_payload_comparable:
+            for name in sorted(common_parameters):
+                signatures = {item.get(name) for item in value_signatures}
+                if len(signatures) > 1:
+                    varied_parameters.append(name)
+                if len(signatures) == 3:
+                    all_three_distinct_parameters.append(name)
+        scenario_value_signatures = [
+            json.dumps(item, ensure_ascii=False, sort_keys=True, default=str)
+            for item in value_signatures
+        ]
+        all_three_values_distinct = (
+            trio_payload_comparable and len(set(scenario_value_signatures)) == 3
+        )
+        common_slot_keys = (
+            set.intersection(*(set(item) for item in exact_slots))
+            if trio_payload_comparable
+            else set()
+        )
+        different_common_slots = [
+            key for key in common_slot_keys if len({item[key] for item in exact_slots}) > 1
+        ]
+        all_three_distinct_slots = [
+            key for key in common_slot_keys if len({item[key] for item in exact_slots}) == 3
+        ]
+        event_type_codes = group.get("event_type_codes")
+        event_type_code = (
+            ", ".join(str(item) for item in event_type_codes)
+            if isinstance(event_type_codes, list)
+            else str(group.get("event_type_code") or "")
+        )
+        event_signature = group.get("event_signature")
+        event_ids = (
+            [int(item) for item in event_signature]
+            if isinstance(event_signature, list)
+            else ([int(group["event_id"])] if group.get("event_id") is not None else [])
+        )
+        group_results.append(
+            {
+                "cohort_order": group.get("recency_rank") or group.get("cohort_order"),
+                "scenario_group_id": group_id,
+                "event_ids": event_ids,
+                "event_type_code": event_type_code,
+                "selected_scenario_ids": selected_ids,
+                "successful_count": successful_count,
+                "triple_success": triple_success,
+                "trio_payload_comparable": trio_payload_comparable,
+                "actual_parameter_sets_identical": identical_sets,
+                "common_parameter_names": sorted(common_parameters),
+                "parameters_with_different_value_signatures": varied_parameters,
+                "parameters_with_all_three_value_signatures_distinct": all_three_distinct_parameters,
+                "all_three_scenario_value_signatures_distinct": all_three_values_distinct,
+                "exact_common_slot_count": len(common_slot_keys),
+                "exact_common_slots_with_different_values": len(different_common_slots),
+                "exact_common_slots_with_all_three_values_distinct": len(all_three_distinct_slots),
+                "ideal_same_types_different_values": identical_sets and all_three_values_distinct,
+                "scenarios": scenario_results,
+            },
+        )
+
+    triple_success_groups = [item for item in group_results if item["triple_success"]]
+    comparable_groups = [item for item in triple_success_groups if item["trio_payload_comparable"]]
+    identical_type_groups = [
+        item for item in comparable_groups if item["actual_parameter_sets_identical"]
+    ]
+    ideal_groups = [item for item in identical_type_groups if item["ideal_same_types_different_values"]]
+    exact_slot_groups = [item for item in comparable_groups if item["exact_common_slot_count"]]
+    exact_common_slot_count = sum(item["exact_common_slot_count"] for item in exact_slot_groups)
+    exact_different_slot_count = sum(
+        item["exact_common_slots_with_different_values"] for item in exact_slot_groups
+    )
+    exact_all_three_distinct_slot_count = sum(
+        item["exact_common_slots_with_all_three_values_distinct"] for item in exact_slot_groups
+    )
+    selection = history.get("selection")
+    selection = selection if isinstance(selection, Mapping) else {}
+    selection_counts = selection.get("counts")
+    selection_counts = selection_counts if isinstance(selection_counts, Mapping) else {}
+    discovered_ids = [int(item) for item in selection.get("discovered_scenario_ids") or []]
+    covered_ids = {int(item) for item in selection.get("covered_scenario_ids") or []}
+    capability_skip_ids = {
+        int(item) for item in selection.get("lifecycle_or_capability_skipped_scenario_ids") or []
+    }
+    manifest = history.get("manifest")
+    manifest = manifest if isinstance(manifest, Mapping) else {}
+    capability = manifest.get("capability_contract")
+    capability = capability if isinstance(capability, Mapping) else {}
+    resource = manifest.get("resource")
+    resource = resource if isinstance(resource, Mapping) else {}
+    checks = {
+        "testset_has_groups": bool(groups),
+        "testset_has_exactly_three_scenarios_per_group": not any(
+            len(_group_scenarios(group)) != 3 for group in groups
+        ),
+        "testset_scenario_ids_unique": len(expected_scenario_ids) == len(set(expected_scenario_ids)),
+        "history_status_pass": history.get("status") == "PASS",
+        "history_preflight_scope_exact": (
+            not missing_preflight_ids
+            and not out_of_scope_preflight_ids
+            and not duplicate_preflight_ids
+            and len(preflight_by_scenario) == len(expected_scenario_ids)
+        ),
+        "selection_discovered_scope_exact": discovered_ids == expected_scenario_ids,
+        "history_scenario_group_identity": not history_identity_errors,
+        "at_most_one_blocking_proposal_per_scenario": not multiple_blocking_proposal_ids,
+        "blocking_proposal_payload_complete": not payload_missing_scenario_ids,
+        "blocking_proposal_has_value_cells": not empty_value_cell_scenario_ids,
+        "covered_count_matches_proposal_rows": (
+            selection_counts.get("covered_skip") == len(proposal_success_ids)
+        ),
+        "covered_scenario_ids_match_proposal_rows": covered_ids == proposal_success_ids,
+        "capability_skip_scenario_ids_match": capability_skip_ids == coverage_limit_ids,
+        "scenario_lever_release_v4_1": capability.get("catalog_version") == EXPECTED_CATALOG_VERSION,
+        "scenario_lever_checksum": capability.get("catalog_checksum") == EXPECTED_CATALOG_CHECKSUM,
+        "proposal_flow_release_v4_1_3": (
+            resource.get("proposal_flow_release") == EXPECTED_PROPOSAL_FLOW_RELEASE
+        ),
+        "fixture_structure_valid": not fixture_errors,
+    }
+    kpis = {
+        "group_count": len(group_results),
+        "scenario_count": len(expected_scenario_ids),
+        "proposal_success_count": len(proposal_success_ids),
+        "proposal_success_rate_percent": _percent(
+            len(proposal_success_ids),
+            len(expected_scenario_ids),
+        ),
+        "unproposed_scenario_count": (
+            len(expected_scenario_ids) - len(proposal_success_ids) - len(coverage_limit_ids)
+        ),
+        "coverage_limit_scenario_count": len(coverage_limit_ids),
+        "triple_success_group_count": len(triple_success_groups),
+        "triple_success_group_rate_percent": _percent(len(triple_success_groups), len(group_results)),
+        "trio_payload_comparable_group_count": len(comparable_groups),
+        "identical_parameter_type_group_count": len(identical_type_groups),
+        "parameter_type_consistency_rate_percent": _percent(
+            len(identical_type_groups),
+            len(triple_success_groups),
+        ),
+        "same_types_with_all_three_scenario_values_distinct_group_count": len(ideal_groups),
+        "same_types_with_all_three_scenario_values_distinct_rate_percent": _percent(
+            len(ideal_groups),
+            len(identical_type_groups),
+        ),
+        "groups_with_exact_common_slots": len(exact_slot_groups),
+        "exact_common_slot_count": exact_common_slot_count,
+        "exact_common_slots_with_different_values": exact_different_slot_count,
+        "exact_common_slots_with_different_values_rate_percent": _percent(
+            exact_different_slot_count,
+            exact_common_slot_count,
+        ),
+        "exact_common_slots_with_all_three_values_distinct": (
+            exact_all_three_distinct_slot_count
+        ),
+        "exact_common_slots_with_all_three_values_distinct_rate_percent": _percent(
+            exact_all_three_distinct_slot_count,
+            exact_common_slot_count,
+        ),
+        "value_cell_count": rationale_total,
+        "slot_rationale_nonempty_count": rationale_nonempty,
+        "slot_rationale_nonempty_rate_percent": _percent(rationale_nonempty, rationale_total),
+        "slot_rationale_explicit_count": rationale_explicit,
+        "slot_rationale_explicit_rate_percent": _percent(rationale_explicit, rationale_total),
+    }
+    quality_review_reasons: list[str] = []
+    if rationale_explicit != rationale_total:
+        quality_review_reasons.append(
+            "모든 proposed-value slot의 근거가 필수 명시 섹션을 충족하지는 않음",
+        )
+    if len(ideal_groups) != len(identical_type_groups):
+        quality_review_reasons.append(
+            "Parameter 종류가 같은 full-trio 중 세 Scenario의 전체 proposed-value signature가 "
+            "모두 다른 조건을 충족하지 못한 Group이 있음",
+        )
+    evidence_pass = all(checks.values())
+    verdict = "FAIL" if not evidence_pass else "REVIEW" if quality_review_reasons else "PASS"
+    return {
+        "schema_version": 1,
+        "generated_at": _now(),
+        "scope": "final-persisted-proposal/read-only/fixed-representative-trios",
+        "testset": {
+            "source": testset_source,
+            "sha256": testset_sha256,
+            "dataset_id": testset.get("dataset_id"),
+        },
+        "final_history": {
+            "source": history_source,
+            "sha256": history_sha256,
+        },
+        "release": {
+            "scenario_lever_release": capability.get("catalog_version"),
+            "scenario_lever_catalog_checksum": capability.get("catalog_checksum"),
+            "proposal_flow_release": resource.get("proposal_flow_release"),
+        },
+        "kpis": kpis,
+        "parameter_frequency": dict(sorted(parameter_frequency.items())),
+        "payload_missing_scenario_ids": sorted(payload_missing_scenario_ids),
+        "empty_value_cell_scenario_ids": sorted(empty_value_cell_scenario_ids),
+        "multiple_blocking_proposal_ids": multiple_blocking_proposal_ids,
+        "slot_rationale_incomplete_by_scenario": rationale_incomplete_by_scenario,
+        "fixture_errors": fixture_errors,
+        "history_identity_errors": history_identity_errors,
+        "quality_review_reasons": quality_review_reasons,
+        "checks": checks,
+        "pass": evidence_pass,
+        "verdict": verdict,
+        "groups": group_results,
+    }
+
+
 def _qualitative_label(rate: float, *, comparable: bool = True) -> str:
     if not comparable:
         return "판정 불가"
@@ -1035,7 +1521,7 @@ def _is_authorized_inferred_trace(trace: Mapping[str, Any]) -> bool:
     return bool(
         isinstance(provenance, Mapping)
         and provenance.get("kind") == AUTHORIZED_INFERRED_BACKFILL
-        and provenance.get("directly_observed") is False
+        and provenance.get("directly_observed") is False,
     )
 
 
@@ -1423,6 +1909,11 @@ def evaluate_execution(plan: Mapping[str, Any], execution: Mapping[str, Any]) ->
     ]
     exact_slot_groups = [item for item in comparable_groups if item["exact_common_slot_count"] > 0]
     semantic_empty_count = failure_reason_frequency["semantic_empty"]
+    resolved_no_change_count = semantic_reason_frequency["ABSTAINED_NO_CHANGE"]
+    actionable_semantic_abstention_count = max(
+        semantic_empty_count - resolved_no_change_count,
+        0,
+    )
     nonsemantic_failure_count = sum(
         item.get("status") in {"FAIL", "BLOCKED"} and _semantic_empty_result(item) is None
         for item in raw_attempts
@@ -1526,7 +2017,7 @@ def evaluate_execution(plan: Mapping[str, Any], execution: Mapping[str, Any]) ->
     release_checks = {
         "scenario_lever_version_v4_1": capability.get("catalog_version") == EXPECTED_CATALOG_VERSION,
         "scenario_lever_checksum": capability.get("catalog_checksum") == EXPECTED_CATALOG_CHECKSUM,
-        "proposal_flow_release_v4_1_2": resource.get("proposal_flow_release") == EXPECTED_PROPOSAL_FLOW_RELEASE,
+        "proposal_flow_release_v4_1_3": resource.get("proposal_flow_release") == EXPECTED_PROPOSAL_FLOW_RELEASE,
         "confirmation_not_invoked": execution.get("safety", {}).get("confirmation_invoked") is False,
         "callback_not_invoked": execution.get("safety", {}).get("callback_invoked") is False,
         "automatic_retry_disabled": execution.get("safety", {}).get("automatic_retry") is False,
@@ -1580,6 +2071,8 @@ def evaluate_execution(plan: Mapping[str, Any], execution: Mapping[str, Any]) ->
         "preflight_to_proposal_conversion_percent": _percent(succeeded_count, selected_eligible_count),
         "semantic_empty_failure_count": semantic_empty_count,
         "semantic_abstention_count": semantic_empty_count,
+        "resolved_no_change_count": resolved_no_change_count,
+        "actionable_semantic_abstention_count": actionable_semantic_abstention_count,
         "semantic_empty_rate_percent": _percent(semantic_empty_count, attempted_count),
         "other_failure_count": nonsemantic_failure_count,
         "structured_semantic_abstention_count": structured_semantic_count,
@@ -1970,7 +2463,7 @@ def build_reusable_testset(
             "generation_strategy": EXPECTED_GENERATION_STRATEGY,
             "scenario_lever_release": EXPECTED_CATALOG_VERSION,
             "scenario_lever_catalog_checksum": EXPECTED_CATALOG_CHECKSUM,
-            "proposal_flow_release": EXPECTED_PROPOSAL_FLOW_RELEASE,
+            "proposal_flow_release": FIXED_TESTSET_SOURCE_FLOW_RELEASE,
             "selection_policy": plan.get("selection_policy"),
             "group_count": len(groups),
             "representative_scenarios_per_group": 3,
@@ -2043,7 +2536,8 @@ def validate_immutable_testset(
         "generation_strategy_fixed": contract.get("generation_strategy") == EXPECTED_GENERATION_STRATEGY,
         "scenario_lever_release_fixed": contract.get("scenario_lever_release") == EXPECTED_CATALOG_VERSION,
         "catalog_checksum_fixed": contract.get("scenario_lever_catalog_checksum") == EXPECTED_CATALOG_CHECKSUM,
-        "proposal_flow_release_fixed": contract.get("proposal_flow_release") == EXPECTED_PROPOSAL_FLOW_RELEASE,
+        "proposal_flow_release_fixed": contract.get("proposal_flow_release")
+        == FIXED_TESTSET_SOURCE_FLOW_RELEASE,
         "selection_policy_fixed": contract.get("selection_policy") == selection_policy,
         "group_count_matches_plan": contract.get("group_count")
         == len(testset_identity)
@@ -2206,6 +2700,197 @@ def reconcile_final_history(
     if not updated["operational_pass"]:
         updated["verdict"] = "FAIL"
     return updated
+
+
+def attach_final_cohort_trio_analysis(
+    report: Mapping[str, Any],
+    testset: Mapping[str, Any],
+    history: Mapping[str, Any],
+    *,
+    testset_source: str | None = None,
+    testset_sha256: str | None = None,
+    history_source: str | None = None,
+    history_sha256: str | None = None,
+) -> dict[str, Any]:
+    updated = dict(report)
+    analysis = build_final_cohort_trio_analysis(
+        testset,
+        history,
+        testset_source=testset_source,
+        testset_sha256=testset_sha256,
+        history_source=history_source,
+        history_sha256=history_sha256,
+    )
+    updated["final_cohort_trio_analysis"] = analysis
+    operational_checks = dict(updated.get("operational_checks") or {})
+    operational_checks["final_cohort_trio_analysis_complete"] = analysis["pass"]
+    updated["operational_checks"] = operational_checks
+    updated["operational_pass"] = all(operational_checks.values())
+    if not updated["operational_pass"]:
+        updated["verdict"] = "FAIL"
+    elif analysis["quality_review_reasons"] and updated.get("verdict") == "PASS":
+        updated["verdict"] = "REVIEW"
+    return updated
+
+
+def render_final_cohort_trio_section(analysis: Mapping[str, Any]) -> str:
+    kpis = analysis.get("kpis")
+    kpis = kpis if isinstance(kpis, Mapping) else {}
+    groups = [item for item in analysis.get("groups") or [] if isinstance(item, Mapping)]
+    incomplete_by_scenario = analysis.get("slot_rationale_incomplete_by_scenario")
+    incomplete_by_scenario = (
+        incomplete_by_scenario if isinstance(incomplete_by_scenario, Mapping) else {}
+    )
+    lines = [
+        "## 최종 DB 기준 Trio Parameter·값 변별",
+        "",
+        (
+            f"- 고정 {kpis.get('group_count', 0)} Group x 대표 3개 Scenario 전체를 분모로 최종 "
+            "저장된 Proposal payload를 read-only 재조회한 결과입니다. 종류·값 비교는 세 Proposal이 "
+            "모두 있는 Group만 수행합니다."
+        ),
+        "",
+        "| KPI | 결과 |",
+        "| --- | ---: |",
+        (
+            f"| Proposal 있음 | {kpis.get('proposal_success_count', 0)} / "
+            f"{kpis.get('scenario_count', 0)} ({kpis.get('proposal_success_rate_percent', 0)}%) |"
+        ),
+        (
+            f"| 그룹 내 3개 모두 Proposal 있음 | {kpis.get('triple_success_group_count', 0)} / "
+            f"{kpis.get('group_count', 0)} ({kpis.get('triple_success_group_rate_percent', 0)}%) |"
+        ),
+        (
+            "| 파라미터 종류 동일 (full-trio 분모) | "
+            f"{kpis.get('identical_parameter_type_group_count', 0)} / "
+            f"{kpis.get('triple_success_group_count', 0)} "
+            f"({kpis.get('parameter_type_consistency_rate_percent', 0)}%) |"
+        ),
+        (
+            "| 같은 종류 + 세 Scenario 전체 proposed-value signature 모두 다름 | "
+            f"{kpis.get('same_types_with_all_three_scenario_values_distinct_group_count', 0)} / "
+            f"{kpis.get('identical_parameter_type_group_count', 0)} "
+            f"({kpis.get('same_types_with_all_three_scenario_values_distinct_rate_percent', 0)}%) |"
+        ),
+        (
+            "| exact common slot 값 차이 | "
+            f"{kpis.get('exact_common_slots_with_different_values', 0)} / "
+            f"{kpis.get('exact_common_slot_count', 0)} "
+            f"({kpis.get('exact_common_slots_with_different_values_rate_percent', 0)}%) |"
+        ),
+        (
+            "| exact common slot 세 값 모두 다름 | "
+            f"{kpis.get('exact_common_slots_with_all_three_values_distinct', 0)} / "
+            f"{kpis.get('exact_common_slot_count', 0)} "
+            f"({kpis.get('exact_common_slots_with_all_three_values_distinct_rate_percent', 0)}%) |"
+        ),
+        f"| Value cell | {kpis.get('value_cell_count', 0)} |",
+        (
+            "| Slot 근거 non-empty | "
+            f"{kpis.get('slot_rationale_nonempty_count', 0)} / "
+            f"{kpis.get('value_cell_count', 0)} "
+            f"({kpis.get('slot_rationale_nonempty_rate_percent', 0)}%) |"
+        ),
+        (
+            "| Slot 근거 필수 섹션 완전 | "
+            f"{kpis.get('slot_rationale_explicit_count', 0)} / "
+            f"{kpis.get('value_cell_count', 0)} "
+            f"({kpis.get('slot_rationale_explicit_rate_percent', 0)}%) |"
+        ),
+        "",
+        "### Group별 최종 결과",
+        "",
+        "| # | Group | Scenario IDs | 성공 | 동일 종류 | 값 차이 | exact slot / 차이 slot | Parameter |",
+        "| ---: | ---: | --- | ---: | --- | --- | ---: | --- |",
+    ]
+    for index, group in enumerate(groups, start=1):
+        triple_success = group.get("triple_success") is True
+        comparable = group.get("trio_payload_comparable") is True
+        identical = group.get("actual_parameter_sets_identical") is True
+        lines.append(
+            "| {order} | {group_id} | {scenario_ids} | {success}/3 | {same} | {different} | "
+            "{slots} | {parameters} |".format(
+                order=group.get("cohort_order") or index,
+                group_id=group.get("scenario_group_id"),
+                scenario_ids=", ".join(
+                    str(item) for item in group.get("selected_scenario_ids") or []
+                ),
+                success=group.get("successful_count", 0),
+                same=("Y" if identical else "N") if comparable else "N/A",
+                different=(
+                    "Y" if group.get("all_three_scenario_value_signatures_distinct") else "N"
+                ) if comparable and identical else "N/A",
+                slots=(
+                    f"{group.get('exact_common_slot_count', 0)}/"
+                    f"{group.get('exact_common_slots_with_different_values', 0)}"
+                    if comparable
+                    else "N/A"
+                ),
+                parameters=(
+                    ", ".join(str(item) for item in group.get("common_parameter_names") or [])
+                    or "-"
+                ) if triple_success else "N/A",
+            ),
+        )
+    lines.extend(
+        [
+            "",
+            "### 판정 기준과 증적 완전성",
+            "",
+            (
+                "- `값 차이`는 같은 Parameter 종류를 제안한 full-trio에서 각 Scenario의 전체 "
+                "`proposedValue` signature 세 개가 서로 모두 다른지 판정합니다."
+            ),
+            (
+                "- `exact slot`은 Parameter명과 모든 좌표가 세 Proposal에 공통인 cell만 비교하는 "
+                "보조 지표입니다. 좌표 구성이 다르면 이 분모에 들어가지 않습니다."
+            ),
+            (
+                "- Slot 근거 필수 섹션은 대상·기간, 근거 유형, 인과 경로, 기준값, 적용 정책, 계산, "
+                "제안값, 근거, 주요 가정, 판단 설명, 불확실성입니다."
+            ),
+            (
+                "- 필수 섹션 미완전 Scenario: "
+                + (", ".join(str(item) for item in sorted(map(int, incomplete_by_scenario))) or "없음")
+            ),
+            "",
+            f"- 증적 정합성: `{'PASS' if analysis.get('pass') else 'FAIL'}`",
+            *[
+                f"- [{'x' if passed else ' '}] `{name}`"
+                for name, passed in (analysis.get("checks") or {}).items()
+            ],
+        ],
+    )
+    review_reasons = analysis.get("quality_review_reasons") or []
+    if review_reasons:
+        lines.extend(["", "### 품질 검토 필요", "", *[f"- {item}" for item in review_reasons]])
+    return "\n".join(lines)
+
+
+def render_final_cohort_trio_report(analysis: Mapping[str, Any]) -> str:
+    testset = analysis.get("testset")
+    testset = testset if isinstance(testset, Mapping) else {}
+    final_history = analysis.get("final_history")
+    final_history = final_history if isinstance(final_history, Mapping) else {}
+    verdict = analysis.get("verdict") or (
+        "FAIL"
+        if analysis.get("pass") is not True
+        else "REVIEW" if analysis.get("quality_review_reasons") else "PASS"
+    )
+    return "\n".join(
+        [
+            "# v4.1.x Proposal Flow 최종 고정 Cohort Trio 품질 Report",
+            "",
+            f"- 생성 시각(UTC): {analysis.get('generated_at')}",
+            f"- 판정: `{verdict}`",
+            f"- 고정 테스트셋: `{testset.get('source')}`",
+            f"- 테스트셋 SHA-256: `{testset.get('sha256')}`",
+            f"- 최종 DB read-back: `{final_history.get('source')}`",
+            f"- read-back SHA-256: `{final_history.get('sha256')}`",
+            "",
+            render_final_cohort_trio_section(analysis),
+        ],
+    )
 
 
 def require_mi_base_fallback_mode(
@@ -2393,7 +3078,7 @@ def render_markdown(report: Mapping[str, Any]) -> str:
         == EXPECTED_PROPOSAL_FLOW_RELEASE
     )
     lines = [
-        "# v4.1 Scenario Lever / v4.1.2 Proposal Flow 대표 3개 품질 평가",
+        "# v4.1 Scenario Lever / v4.1.3 Proposal Flow 대표 3개 품질 평가",
         "",
         f"- 생성 시각(UTC): {report['generated_at']}",
         f"- Proposal 품질 실행 상태: `{report.get('execution_status')}`",
@@ -2556,6 +3241,11 @@ def render_markdown(report: Mapping[str, Any]) -> str:
         (
             f"| Semantic abstention | {kpis['semantic_abstention_count']} / "
             f"{kpis['attempted_scenario_count']} ({kpis['semantic_empty_rate_percent']}%) |"
+        ),
+        (
+            f"| Resolved no-change / actionable abstention | "
+            f"{kpis['resolved_no_change_count']} / "
+            f"{kpis['actionable_semantic_abstention_count']} |"
         ),
         (
             f"| Semantic trace 완전 / 누락 | {kpis['semantic_trace_complete_count']} / "
@@ -2760,6 +3450,9 @@ def render_markdown(report: Mapping[str, Any]) -> str:
                 f"| 대조 판정 | {'PASS' if reconciliation.get('pass') else 'FAIL'} |",
             ],
         )
+    final_cohort_analysis = report.get("final_cohort_trio_analysis")
+    if isinstance(final_cohort_analysis, Mapping):
+        lines.extend(["", *render_final_cohort_trio_section(final_cohort_analysis).splitlines()])
     if report.get("failure_reason_counts"):
         lines.extend(
             [
@@ -2856,6 +3549,10 @@ def render_markdown(report: Mapping[str, Any]) -> str:
             (
                 "- `Semantic abstention`은 근거·적용 좌표·유효한 값이 부족해 쓰지 않은 안전한 품질 결과입니다. "
                 "전체 coverage는 낮추지만 하드 오류와 구분합니다."
+            ),
+            (
+                "- `ABSTAINED_NO_CHANGE`는 unchanged 또는 완전 상쇄를 정직하게 보존한 resolved no-change로 "
+                "따로 집계하며, 근거·slot·값 보강 대상인 actionable abstention과 섞지 않습니다."
             ),
             "- `파라미터 종류 동일`은 그룹 내 3개 Proposal이 모두 성공한 경우에만 판정합니다.",
             (
@@ -2957,6 +3654,11 @@ def _build_parser() -> argparse.ArgumentParser:
     freeze = subparsers.add_parser("freeze")
     freeze.add_argument("--plan", type=Path, required=True)
     freeze.add_argument("--output", type=Path, required=True)
+    final_cohort = subparsers.add_parser("final-cohort")
+    final_cohort.add_argument("--testset-input", type=Path, required=True)
+    final_cohort.add_argument("--final-history-evidence", type=Path, required=True)
+    final_cohort.add_argument("--output-json", type=Path, required=True)
+    final_cohort.add_argument("--output-markdown", type=Path, required=True)
     evaluate = subparsers.add_parser("evaluate")
     evaluate.add_argument("--plan", type=Path, required=True)
     evaluate.add_argument("--execution-evidence", type=Path, action="append", required=True)
@@ -3014,6 +3716,44 @@ def main(argv: Sequence[str] | None = None) -> int:
         digest = hashlib.sha256(output_path.read_bytes()).hexdigest()
         print(json.dumps({"output": str(output_path), "sha256": digest}, ensure_ascii=False))
         return 0
+    if args.command == "final-cohort":
+        testset_path = args.testset_input.resolve()
+        history_path = args.final_history_evidence.resolve()
+        testset_bytes = testset_path.read_bytes()
+        history_bytes = history_path.read_bytes()
+        testset = json.loads(testset_bytes)
+        history = json.loads(history_bytes)
+        if not isinstance(testset, Mapping):
+            message = f"Expected a JSON object: {testset_path}"
+            raise TypeError(message)
+        if not isinstance(history, Mapping):
+            message = f"Expected a JSON object: {history_path}"
+            raise TypeError(message)
+        analysis = build_final_cohort_trio_analysis(
+            testset,
+            history,
+            testset_source=str(testset_path),
+            testset_sha256=hashlib.sha256(testset_bytes).hexdigest(),
+            history_source=str(history_path),
+            history_sha256=hashlib.sha256(history_bytes).hexdigest(),
+        )
+        _write_new_outputs(
+            output_json=args.output_json,
+            output_markdown=args.output_markdown,
+            payload=analysis,
+            markdown=render_final_cohort_trio_report(analysis),
+        )
+        print(
+            json.dumps(
+                {
+                    "verdict": analysis["verdict"],
+                    "pass": analysis["pass"],
+                    "kpis": analysis["kpis"],
+                },
+                ensure_ascii=False,
+            ),
+        )
+        return 0 if analysis["pass"] else 1
     plan = _read_json(args.plan.resolve())
     execution_sources = [(str(path.resolve()), _read_json(path.resolve())) for path in args.execution_evidence]
     post_fix_sources = [
@@ -3037,6 +3777,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             for path in args.diagnostic_execution_evidence
         ]
         report = attach_diagnostic_executions(report, diagnostic_sources)
+    testset: Mapping[str, Any] | None = None
+    testset_path: Path | None = None
+    testset_sha256: str | None = None
     if args.testset_input:
         testset_path = args.testset_input.resolve()
         testset_bytes = testset_path.read_bytes()
@@ -3050,6 +3793,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             source=str(testset_path),
             sha256=hashlib.sha256(testset_bytes).hexdigest(),
         )
+        testset_sha256 = immutable["sha256"]
         report["immutable_testset"] = immutable
         report["operational_checks"] = {
             **report["operational_checks"],
@@ -3059,11 +3803,31 @@ def main(argv: Sequence[str] | None = None) -> int:
         if not report["operational_pass"]:
             report["verdict"] = "FAIL"
     if args.final_history_evidence:
+        if testset is None or testset_path is None or testset_sha256 is None:
+            message = (
+                "--final-history-evidence requires --testset-input so the mandatory final-cohort "
+                "trio Parameter/value section can be generated"
+            )
+            raise ValueError(message)
         history_path = args.final_history_evidence.resolve()
+        history_bytes = history_path.read_bytes()
+        history = json.loads(history_bytes)
+        if not isinstance(history, Mapping):
+            message = f"Expected a JSON object: {history_path}"
+            raise TypeError(message)
         report = reconcile_final_history(
             report,
-            _read_json(history_path),
+            history,
             source=str(history_path),
+        )
+        report = attach_final_cohort_trio_analysis(
+            report,
+            testset,
+            history,
+            testset_source=str(testset_path),
+            testset_sha256=testset_sha256,
+            history_source=str(history_path),
+            history_sha256=hashlib.sha256(history_bytes).hexdigest(),
         )
     _write_json(args.output_json.resolve(), report)
     _write_text(args.output_markdown.resolve(), render_markdown(report))

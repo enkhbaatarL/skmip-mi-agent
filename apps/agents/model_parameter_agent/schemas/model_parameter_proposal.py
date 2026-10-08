@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -115,6 +115,17 @@ class LLMValueCell(ApiModel):
     )
     proposed_value: str | int | float | None
     rationale_ko: str
+    evidence_basis: Literal[
+        "OBSERVED",
+        "DERIVED",
+        "BOUNDED_ASSUMPTION",
+        "NEUTRAL",
+    ] | None = None
+    direction: Literal["increase", "decrease", "unchanged"] | None = None
+    severity: Literal["weak", "medium", "strong"] | None = None
+    evidence_ko: str | None = Field(default=None, max_length=600)
+    calculation_ko: str | None = Field(default=None, max_length=600)
+    assumption_ko: str | None = Field(default=None, max_length=600)
 
 
 class LLMValueAdjustment(ApiModel):
@@ -158,9 +169,29 @@ class ParameterSlotProposal(ApiModel):
         return value or []
 
 
+class CandidateRoutingAssessment(ApiModel):
+    candidate_key: str
+    decision: Literal["DIRECT", "ASSUMPTION_ELIGIBLE", "NOT_APPLICABLE"]
+    evidence_basis: Literal[
+        "OBSERVED",
+        "DERIVED",
+        "BOUNDED_ASSUMPTION",
+        "NOT_APPLICABLE",
+    ]
+    causal_path_ko: str = Field(min_length=1, max_length=600)
+    target_scope_ko: str = Field(min_length=1, max_length=400)
+    direction: Literal["increase", "decrease", "mixed", "unchanged", "unknown"]
+    time_scope_ko: str = Field(min_length=1, max_length=400)
+    confidence: Literal["high", "medium", "low"]
+    rationale_ko: str = Field(min_length=1, max_length=800)
+
+
 class RoutingDecision(ApiModel):
     dimension_key: str
     selected_candidate_keys: list[str] = Field(default_factory=list)
+    candidate_assessments: list[CandidateRoutingAssessment] = Field(
+        default_factory=list,
+    )
 
 
 class NonInputItem(ApiModel):

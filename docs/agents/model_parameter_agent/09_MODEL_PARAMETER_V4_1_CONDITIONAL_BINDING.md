@@ -37,6 +37,38 @@ workbook hash/contract를 검증한 cache만 허용하며, 없으면 다른 Base
 이 변경은 public API JSON을 늘리지 않으며 sibling mgmt v0037의 nullable
 `tmm_mi_model_param_proposal_m.mi_base_case_id`로 요청별 선택을 저장한다.
 
+### v4.1.3 proposal Flow release
+
+`v4.1.3`은 Scenario Lever catalog `v4.1`, checksum, 21개 Lever·56개 binding, Parameter master,
+workbook/LUT와 공개 API/DB schema를 그대로 둔다. 변경 범위는 proposal 내부 의사결정과 설명 가능성이다.
+
+- Step1.5가 모든 conditional 후보를 `DIRECT`, `ASSUMPTION_ELIGIBLE`, `NOT_APPLICABLE`로 분류하고
+  causal path·대상·방향·기간·confidence를 구조화한다.
+- Step1.5 complete all-N/A는 그대로 성공 처리하지 않는다. 다만 parameter별 conditional routing 정책이 허용하고
+  선택 branch의 물리 경로·방향·범위·기간이 모두 확인되는 후보만 `BOUNDED_ASSUMPTION`으로 제한 복구한다.
+  현재 허용 쌍은 `route_disruption → ShippingCost` 하나다. 이는 항차 시간·선복 가용성에서 전역 LNG charter
+  rate로 이어지는 추론을 명시하며, `ShippingFuelCost`와 `CanalToll`은 직접 근거 없이는 복구하지 않는다.
+- 기본 `balanced` mode는 medium 이상 근거의 bounded assumption과 weak/medium 값 variation을 허용한다.
+  `strict`는 assumption을 막고, `exploratory`는 low confidence/strong까지 허용하되 catalog·slot 경계는 동일하다.
+- 선택 상한은 dimension별 3개, Scenario 전체 conditional Parameter 4개다. 선택된 Scenario value에서 도달 가능한
+  active binding만 검토하며 다른 Lever나 legacy mapping을 scan하지 않는다.
+- Step2는 parent 전체 영향이 명시된 경우에만 child를 확장한다. 대상이 유일하고 기간만 모호하면 가장 이른 exact
+  현재·미래 기간 한 건을 복구하며, 과거 월·PowerMix·LNG Plant/Train 증적 대상에는 적용하지 않는다.
+- Step2/Step3 누락 task만 request 전체 최대 2회의 targeted semantic repair를 허용한다. Scenario 전체 outer retry는 없다.
+- Step3은 active 16종별 `bounded-expert-v1` variation policy를 prompt와 서버 계산에 함께 적용하고, 모든 slot의
+  대상·기간·근거 유형·인과 경로·기준값·계산·가정·불확실성을 rationale에 명시한다. repair 후에도 구조화 근거가
+  없거나 선언 방향과 실제 값 방향이 모순인 cell은 저장하지 않는다.
+- 같은 Group의 sibling Scenario는 동일 Parameter·slot·causal mechanism의 soft comparison에만 사용하며 현재
+  Scenario 후보 또는 slot을 활성화하지 않는다.
+
+배포 식별자는 `model_parameter_proposal_flow_release=v4.1.3`이며, catalog version은 계속 `v4.1`이다.
+
+DB/mgmt migration은 필수가 아니다. 최종 proposal은 기존 `proposal_parameters` JSON과 slot `rationale` 문자열에
+저장하고 상태도 기존 `PROPOSED`/`ABSTAINED`/`FAILED` 계약을 사용한다. candidate assessment와 variation policy
+trace는 request-local 실행 증적이며 공개 JSON이나 신규 컬럼으로 영속화하지 않는다. 향후 운영 화면에서 근거 유형,
+policy release, confidence를 구조화 검색해야 할 때만 mgmt 레포에서 별도 audit JSON 컬럼/테이블을 신규 버전으로
+검토하며, 이는 v4.1.3 실행의 선행 조건이 아니다.
+
 ## 2. 확장 binding
 
 모든 추가 binding은 `role=alternative`, `selection_mode=conditional`, `support_status=executable`이다.
@@ -59,7 +91,7 @@ workbook hash/contract를 검증한 cache만 허용하며, 없으면 다른 Base
 |---|---|---|---|
 | 단일 deterministic | 생략 | 해당 없음 | 해당 없음 |
 | 복수 deterministic primary/alternative | 실행 | primary 1건으로 복구 | 각 applicability가 독립적으로 근거 있으면 설정 상한까지 유지 |
-| 단일·복수 conditional | 실행 | 0건 유지 | 각 applicability가 독립적으로 근거 있으면 설정 상한까지 유지 |
+| 단일·복수 conditional | 실행 | 응답 누락은 0건 유지. complete all-N/A는 승인된 parameter별 정책을 만족할 때만 제한 복구 | 각 applicability가 독립적으로 근거 있으면 설정 상한까지 유지 |
 
 `price_only`는 더 이상 domain 이름만으로 탈락하지 않는다. conditional binding이 있으면 `partial` support로 후보화하며,
 binding이 없는 기존 catalog만 `PRICE_ONLY`로 분류한다. 후보 확대 뒤에도 capability ID/name/target, exact slot,
@@ -111,7 +143,9 @@ bounded period만 허용하며, `재가동 지연`, `10월 하순 이후`만으�
 - Pydantic에 default 필드를 추가하면 과거 checksum이 바뀔 수 있다. `selection_mode=deterministic`은 checksum
   payload에서 생략해 v4.0 pin을 보존하고, `conditional`만 v4.1 checksum에 포함한다.
 - conditional binding이 한 건뿐이어도 direct로 우회시키지 말고 Step1.5를 거쳐야 한다.
-- conditional LLM 응답 누락을 primary default로 채우면 사실상 deterministic binding이 되므로 금지한다.
+- conditional LLM 응답 누락을 primary default로 채우면 사실상 deterministic binding이 되므로 금지한다. complete
+  all-N/A 정책 복구도 등록된 Lever/Parameter 쌍, non-strict mode, direction/scope/time_window와 요구 물리 경로를
+  모두 만족해야 하며 일반 primary fallback으로 확대하지 않는다.
 - Scenario support status, Model Parameter context loader, matcher의 `price_only` 판정 세 곳을 함께 변경한다.
 - proposal capability의 Parameter set은 그대로여도 catalog version/checksum이 바뀌므로 release ID/SHA와
   local/Kubernetes 설정을 함께 갱신한다. workbook input·좌표·원본이 같으면 workbook release는 올리지 않는다.

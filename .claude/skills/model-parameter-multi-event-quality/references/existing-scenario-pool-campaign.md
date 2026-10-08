@@ -118,6 +118,23 @@ Markdown은 후보군 압축, read-only KPI, Group별 trio, KPI 개선안, 고�
 읽을 수 있는 범위와 실제 Proposal을 실행하지 않아 읽을 수 없는 범위, `Covered`/`coverage limit` 해석, 동일 fixture
 identity·release·context fingerprint에서만 회귀 비교한다는 조건을 명시한다.
 
+Live Proposal campaign 뒤에는 최종 DB read-back의 blocking Proposal row에 `proposal_parameters`가 포함되어야 한다.
+기존 covered Proposal과 이번 신규 Proposal을 합친 최종 고정 cohort 품질은 다음 명령으로 별도 산출한다.
+
+```bash
+python tests/manual/model_parameter_agent/evaluate_representative_trios.py final-cohort \
+  --testset-input tests/fixtures/model_parameter_agent/<dataset>.json \
+  --final-history-evidence <run-dir>/final-full-cohort-read-only.json \
+  --output-json <run-dir>/final-cohort-trio-quality-report.json \
+  --output-markdown <run-dir>/final-cohort-trio-quality-report.md
+```
+
+이 Report의 `최종 DB 기준 Trio Parameter·값 변별` 섹션은 전체 고정 Scenario 성공률, full-trio, 동일 Parameter
+종류, 세 Scenario의 전체 proposed-value signature 변별, exact common slot 변별, slot rationale 명시 완전성을 항상
+포함한다. triple-success가 아닌 Group은 type/value/exact-slot을 `N/A`로 남긴다. 이 섹션이나 payload snapshot이
+없으면 live campaign Report는 완료로 처리하지 않는다. 일반 `evaluate` 명령에서도 `--testset-input`과
+`--final-history-evidence`를 함께 지정하면 동일 섹션이 자동 부착된다.
+
 ## 7. 기존 Event 풀로 Scenario부터 재생성
 
 기존 Scenario를 그대로 수집하는 대신 reference fixture의 Event 40개로 Scenario를 다시 만들라는 요청은
