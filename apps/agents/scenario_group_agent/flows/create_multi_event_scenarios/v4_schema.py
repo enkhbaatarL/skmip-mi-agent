@@ -1871,6 +1871,38 @@ def _validate_scenarios(
         contribution_by_scenario[id(fallback)] = contributions
         deltas[id(fallback)] = sum(contributions) - base_sum
 
+    # pressure_band 슬롯은 방향당 2개(strong_X/X)뿐이라, Base 대비 같은 방향에 3개 이상 몰리면
+    # 전부 다른 band를 줄 수 없다. 이 경우 가장 극단적인(= |delta| 큰) 2개만 생성 Scenario로
+    # 남기고, 나머지는 excludedScenarios로 돌린다 — 이미 선택된 같은 방향 Scenario보다 압력이
+    # 약해 독립적인 검토 가치가 낮다고 보는 것으로, LLM이 LOW_DISTINCTIVENESS로 직접 제외하는
+    # 것과 같은 개념을 서버가 기계적으로 적용한다. 재시도 없이 그 자리에서 유효한 결과를 만든다.
+    for sign, direction_label in ((1, "bullish"), (-1, "bearish")):
+        same_direction = [
+            scenario
+            for scenario in scenarios
+            if not scenario.baseline_yn and deltas[id(scenario)] * sign > 0
+        ]
+        if len(same_direction) <= 2:
+            continue
+        same_direction.sort(key=lambda scenario: abs(deltas[id(scenario)]), reverse=True)
+        for excess in same_direction[2:]:
+            scenarios.remove(excess)
+            logger.warning(
+                f"[SCENARIO][_validate_scenarios] EXCESS_EXCLUDED | direction={direction_label} | "
+                f"title={excess.title!r} | delta={deltas[id(excess)]}"
+            )
+            excluded_scenarios.append(
+                V4ExcludedScenarioCandidate(
+                    pressure_band=excess.pressure_band,
+                    reason_code="LOW_DISTINCTIVENESS",
+                    reason=(
+                        "Base 대비 같은 방향으로 이미 선택된 Scenario보다 압력이 약해 "
+                        "독립적인 검토 가치가 낮습니다."
+                    ),
+                    dimension_values=dict(excess.dimension_values),
+                )
+            )
+
     for scenario in scenarios:
         delta = deltas[id(scenario)]
         if delta == 0:
@@ -1886,6 +1918,7 @@ def _validate_scenarios(
 
     # strong band가 겹치면(동일 임계값을 여러 시나리오가 동시에 넘으면), Base 대비 편차의 절댓값이
     # 가장 큰 시나리오만 strong을 유지하고 나머지는 같은 방향의 완화된 band로 내린다(상대적 극단성 순서는 보존).
+    # 위에서 방향당 최대 2개로 줄였으므로 이 완화만으로 항상 해소된다.
     for strong_band, moderate_band in (("strong_bullish", "bullish"), ("strong_bearish", "bearish")):
         holders = [scenario for scenario in scenarios if scenario.pressure_band == strong_band]
         if len(holders) > 1:
@@ -1893,8 +1926,8 @@ def _validate_scenarios(
             for demoted in holders[1:]:
                 demoted.pressure_band = moderate_band
 
-    # 안전망: 위 완화 로직으로도 band 중복이 해소되지 않으면(예: 같은 방향에 3개 이상 몰린 경우)
-    # 에러를 발생시켜 기존 재시도 메커니즘이 다른 조합을 다시 생성하도록 한다.
+    # 안전망: 위 로직으로도 band 중복이 해소되지 않으면(설계상 발생해선 안 되는 경우) 에러를
+    # 발생시켜 기존 재시도 메커니즘이 다른 조합을 다시 생성하도록 한다.
     non_base_bands = [scenario.pressure_band for scenario in scenarios if not scenario.baseline_yn]
     if len(set(non_base_bands)) != len(non_base_bands):
         raise ValueError(

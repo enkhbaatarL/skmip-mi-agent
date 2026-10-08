@@ -876,6 +876,97 @@ def test_v4_finalizer_injects_fallback_scenario_when_llm_set_misses_one_directio
     assert sum(scenario.probability_score for scenario in finalized.scenarios) == 100
 
 
+def test_v4_finalizer_excludes_excess_same_direction_scenarios_beyond_two_slots() -> None:
+    # pressure_band는 방향당 slot이 2개(strong_X/X)뿐이라, Base 대비 같은 방향(여기서는 bullish)에
+    # 3개가 몰리면 전부 다른 band를 줄 수 없다. 가장 극단적인 2개만 남고 나머지 1개는
+    # excludedScenarios로 빠져야 한다(에러 없이 바로 유효한 결과가 나와야 함).
+    def scenario(title: str, values: dict[str, str], band: str, score: float) -> V4ScenarioCandidateDraft:
+        return V4ScenarioCandidateDraft.model_validate(
+            {
+                "title": title,
+                "narrative": f"{title} 전개",
+                "dimensionValues": values,
+                "commonImpactPathIds": ["path_101_demand", "path_202_supply"],
+                "appliedInteractionIds": ["interaction_1"],
+                "pressureBand": band,
+                "pressureBreakdown": {
+                    "commonImpact": "x",
+                    "valueDelta": "x",
+                    "interactionEffect": "x",
+                },
+                "relatedMarkets": [],
+                "probabilityScore": score,
+                "mixedFactors": [],
+                "explanation": f"{title} 설명",
+            },
+        )
+
+    # 사전 검증(LLM 원본 band 분산·5-band 커버리지)을 통과시키기 위해 원본 band는 서로 다르게
+    # 둔다. 실제 recompute는 Base 선정 후 delta 기준으로 다시 계산되므로 이 값 자체는 중요하지
+    # 않다 — 핵심은 bullish_1/2/3이 Base 대비 같은(양수) 방향이라는 것.
+    base = scenario(
+        "base",
+        {"cold_wave_intensity": "high", "liquefaction_recovery": "fast", "risk_premium": "low"},
+        "bearish",
+        40,
+    )
+    bearish = scenario(
+        "bearish",
+        {"cold_wave_intensity": "low", "liquefaction_recovery": "fast", "risk_premium": "low"},
+        "strong_bearish",
+        15,
+    )
+    bullish_1 = scenario(
+        "bullish-1",
+        {"cold_wave_intensity": "low", "liquefaction_recovery": "delayed", "risk_premium": "high"},
+        "balanced",
+        15,
+    )
+    bullish_2 = scenario(
+        "bullish-2",
+        {"cold_wave_intensity": "high", "liquefaction_recovery": "fast", "risk_premium": "high"},
+        "bullish",
+        15,
+    )
+    bullish_3 = scenario(
+        "bullish-3",
+        {"cold_wave_intensity": "high", "liquefaction_recovery": "delayed", "risk_premium": "low"},
+        "strong_bullish",
+        15,
+    )
+    synthesis = V4ScenarioSynthesisResult.model_validate(
+        {
+            "groupTitle": "test",
+            "groupDescription": "test",
+            "scenarios": [item.model_dump() for item in (base, bearish, bullish_1, bullish_2, bullish_3)],
+            "excludedScenarios": [],
+        },
+    )
+
+    finalized, _coverage = finalize_v4_generation_result(
+        synthesis,
+        group_summary=_group_summary(),
+        impact_analysis=_analysis(),
+        dimension_design=_dimensions(),
+        impact_levers=_catalog(),
+    )
+
+    assert len(finalized.scenarios) == 4
+    non_base_bands = [scenario.pressure_band for scenario in finalized.scenarios if not scenario.baseline_yn]
+    assert len(non_base_bands) == len(set(non_base_bands))
+    assert len(finalized.excluded_scenarios) == 1
+    excluded = finalized.excluded_scenarios[0]
+    assert excluded.reason_code == "LOW_DISTINCTIVENESS"
+    # 세 bullish 후보가 delta 동률(+2)이라 정렬이 안정적으로 유지되고, 제출 순서상 마지막
+    # (bullish-3)이 상위 2개(bullish-1, bullish-2) 밖으로 밀려 제외된다.
+    assert excluded.dimension_values == {
+        "cold_wave_intensity": "high",
+        "liquefaction_recovery": "delayed",
+        "risk_premium": "low",
+    }
+    assert sum(scenario.probability_score for scenario in finalized.scenarios) == 100
+
+
 def test_v4_scenario_rejects_missing_common_path() -> None:
     synthesis = _synthesis()
     synthesis.scenarios[0].common_impact_path_ids = ["path_101_demand"]
