@@ -207,6 +207,16 @@ class Settings(BaseSettings):
         "high",
         "xhigh",
     ] = "low"
+    # v4 group title is a short headline written after scenarios; it runs on the SPEED model with low reasoning.
+    llm_v4_group_title_reasoning_effort: Literal[
+        "default",
+        "none",
+        "minimal",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+    ] = "low"
     llm_verbosity: Literal["default", "low", "medium", "high"] = "default"
     llm_structured_output_strict: bool = Field(default=False)
 

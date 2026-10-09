@@ -32,6 +32,7 @@ _NODE_PHASES = {
     "validate_model_lever_dimensions": "dimension_design",
     "synthesize_v4_scenarios": "scenario_synthesis",
     "finalize_v4_scenarios": "scenario_synthesis",
+    "generate_v4_group_title": "scenario_synthesis",
     "persist_generation": "persistence",
 }
 _VALIDATION_NODES = {

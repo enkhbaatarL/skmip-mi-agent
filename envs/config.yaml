@@ -22,7 +22,7 @@ api_key: ${MODEL_API_KEY}
 
 model_endpoint: https://aip-stg.sktai.io/api/v1/gateway
 model_api_key: ${MODEL_API_KEY}
-model_api_deployment_name: "skmidev-gpt-5.5-20260424"
+model_api_deployment_name: "skmidev-gpt-5.6-sol-skgas"
 lightly_thinking_model_api_deployment_name: "skmidev-gpt-5.5-20260424"
 deeply_thinking_model_api_deployment_name: "skmidev-gpt-5.5-20260424"
 llm_timeout_sec: 310
@@ -30,6 +30,7 @@ llm_max_retries: 1
 llm_concurrency: 10
 llm_stream_enabled: true
 llm_reasoning_effort: default
+llm_verbosity: high
 llm_structured_output_strict: true
 
 # HTTP client

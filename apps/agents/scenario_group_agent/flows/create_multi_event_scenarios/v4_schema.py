@@ -517,7 +517,6 @@ class V4ExcludedScenarioCandidate(ApiModel):
 class V4ScenarioSynthesisResult(ApiModel):
     model_config = ConfigDict(extra="forbid")
 
-    group_title: str = Field(min_length=1)
     group_description: str = Field(min_length=1)
     scenarios: list[V4ScenarioCandidateDraft] = Field(min_length=3, max_length=5)
     excluded_scenarios: list[V4ExcludedScenarioCandidate] = Field(default_factory=list)
@@ -627,11 +626,6 @@ class V4ReadableScenarioSynthesisDraft(ApiModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    title: str = Field(
-        min_length=1,
-        max_length=120,
-        description="선택한 이벤트의 구체적인 대상·지역·지표·변화를 나타내는 시나리오 그룹 제목",
-    )
     description: str = Field(
         min_length=1,
         max_length=600,
@@ -644,6 +638,21 @@ class V4ReadableScenarioSynthesisDraft(ApiModel):
     )
     scenarios: list[V4ReadableScenario] = Field(min_length=3, max_length=5)
     excluded: list[V4ReadableExcludedScenarioCandidate] = Field(default_factory=list, max_length=2)
+
+
+class V4GroupTitleDraft(ApiModel):
+    """Group title written after scenarios are finalized, from their common premise and branching questions."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    title: str = Field(
+        min_length=1,
+        max_length=120,
+        description=(
+            "모든 시나리오가 공유하는 전제와 시나리오를 가르는 핵심 질문을 담은 20~45자 시나리오 그룹 제목. "
+            "특정 시나리오의 답이나 결말을 쓰지 않음"
+        ),
+    )
 
 
 class V4GenerationResult(ApiModel):
@@ -1362,7 +1371,6 @@ def expand_v4_readable_scenario_synthesis(
             ),
         )
     return V4ScenarioSynthesisResult(
-        group_title=readable.title,
         group_description=readable.description,
         scenarios=scenarios,
         excluded_scenarios=excluded_scenarios,
@@ -1864,7 +1872,8 @@ def _validate_scenarios(
         combination = tuple(sorted(fallback.dimension_values.items()))
         combination_owners[combination] = f"fallback({direction})"
         contributions = [
-            scores[next(value for value in dimension_by_id[dimension_id].values if value.value_id == value_id).pressure_contribution]
+            scores[next(value for value in dimension_by_id[dimension_id].values
+                        if value.value_id == value_id).pressure_contribution]
             for dimension_id, value_id in fallback.dimension_values.items()
         ]
         scenarios.append(fallback)
@@ -1989,6 +1998,7 @@ def _normalize_v4_probability_scores(scenarios: list[V4ScenarioCandidate]) -> No
 def finalize_v4_generation_result(
     synthesis: V4ScenarioSynthesisResult,
     *,
+    group_title: str,
     group_summary: str,
     impact_analysis: V4EventImpactAnalysisResult,
     dimension_design: V4DimensionDesignResult,
@@ -2014,7 +2024,7 @@ def finalize_v4_generation_result(
         # probability_score 합계가 100을 넘어서므로 최종 목록으로 다시 정규화한다.
         _normalize_v4_probability_scores(finalized_scenarios)
     result = V4GenerationResult(
-        group_title=synthesis.group_title,
+        group_title=group_title,
         group_summary=group_summary,
         group_description=synthesis.group_description,
         impact_analysis=impact_analysis,
@@ -2098,6 +2108,7 @@ __all__ = [
     "V4EventImpactPathDraft",
     "V4ExcludedScenarioCandidate",
     "V4GenerationResult",
+    "V4GroupTitleDraft",
     "V4InteractionUncertainty",
     "V4LeverState",
     "V4LeverStateDraft",

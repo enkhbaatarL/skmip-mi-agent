@@ -144,7 +144,8 @@ flowchart TD
     F --> G[Dimension·Value lineage 검증]
     G --> H[Scenario 합성]
     H --> I[조합·pressure·확률 검증]
-    I --> J[일괄 persistence]
+    I --> K[그룹 제목 생성]
+    K --> J[일괄 persistence]
 ```
 
 #### 1. Event impact 분석
@@ -204,7 +205,8 @@ LLM은 ID나 source lineage를 만들지 않는다. 서버가 catalog와 검증�
 #### 4. Scenario 합성
 
 검증된 Dimension choice와 interaction으로 3~5개의 고유 조합을 선택한다. 각 Scenario는 title, narrative,
-Dimension value 조합, JKM `pressureBand`, 근거, role, 상대 확률 가중치를 가진다.
+Dimension value 조합, JKM `pressureBand`, 근거, role, 상대 확률 가중치를 가진다. 이 호출은 그룹 description만
+만들고 그룹 제목은 만들지 않는다.
 
 서버는 다음을 최종화한다.
 
@@ -218,7 +220,27 @@ Dimension value 조합, JKM `pressureBand`, 근거, role, 상대 확률 가중�
 TTF·HH 관련성이 명확한 경우만 `relatedMarkets`에 보조 근거를 둔다. JKM 근거는 `pressureRationale`이
 정본이며 시장별 별도 price direction을 생성하지 않는다.
 
-#### 5. Persistence와 Presentation projection
+#### 5. 그룹 제목 생성
+
+`generate_v4_group_title`은 최종화된 Scenario를 기준으로 그룹 제목을 만든다. 제목은 그룹의 모든 Scenario를
+대표해야 하므로 특정 Scenario의 답이나 결말이 아니라 공통 전제와 Scenario를 가르는 핵심 질문을 담는다.
+
+1. 서버가 제목 초점을 고른다(`select_v4_group_title_focus`).
+   - 핵심 분기: 생성된 Scenario들이 서로 다른 `pressureContribution`의 value를 고른 Dimension.
+     `price_only`는 제외하고, 같은 `primaryLeverCode`는 하나만 쓰며, 최대 2개다.
+   - 공통 전제: 핵심 분기가 1개일 때만, 모든 Scenario가 같은 방향(0 제외)을 고른 Dimension.
+2. 제목 전용 structured-output 호출(stage `group_title`)에 분기·전제의 질문(`description`)과 출처 Event의
+   제목·요약·태그만 전달한다. 공통 영향·Interaction 문구와 value(답)는 전달하지 않는다. 20~45자, `{공통 전제} 속 {핵심 질문의
+   대상} 여부/폭/시점/지속성` 형태이며 지표 변경·지역명 묶음·결말 단정·Event 나열을 금지한다.
+   짧은 출력이므로 `ModelPreference.SPEED` 모델과 `llm_v4_group_title_reasoning_effort`(기본 `low`)를 쓴다.
+3. 핵심 분기의 출처 Event 토큰이 제목에 없으면 feedback과 함께 제목만 다시 만든다(최초 포함 최대 3회).
+   모두 실패하거나 호출이 실패하면 출처 Event 라벨로 만든 결정적 제목(`{출처 Event 라벨}에 따른 JKM 시나리오`)을 쓴다.
+   제목 생성 실패는 create 실패로 이어지지 않는다.
+
+finalize 단계는 Event 라벨 기반 임시 제목을 두고 이 노드가 확정한다. 진행 이벤트 phase는
+`scenario_synthesis`를 그대로 사용한다.
+
+#### 6. Persistence와 Presentation projection
 
 검증이 끝난 결과만 service 호출 한 번으로 Scenario Group과 Scenario에 저장한다. graph 진행 중에는
 검증 경계마다 operation의 `presentation_snapshot`을 갱신하고 revision을 증가시킨 뒤 `section_ready`를

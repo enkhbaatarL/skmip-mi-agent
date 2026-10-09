@@ -95,11 +95,17 @@ V4_SCENARIO_SYSTEM_PROMPT = (
 현재 단계에서는 공통 영향, Interaction, Dimension 질문과 선택지를 변경하지 말고 대표 Scenario
 3~5개를 합성하십시오. 각 Scenario는 모든 질문에 정확히 하나씩 답하고, 서로 구분되는 핵심 전제 조합과
 결과 전달 경로를 가져야 합니다. narrative는 주요 조건과 최종 JKM 전달 경로를 두 문장으로 설명하십시오.
-루트 그룹 title·description은 원본 이벤트와 검증된 분석을 대표하는 한국어 메타데이터로 작성하십시오.
+루트 그룹 description은 원본 이벤트와 검증된 분석을 대표하는 한국어 메타데이터로 작성하십시오.
+그룹 제목은 다음 단계에서 Scenario를 바탕으로 따로 작성하므로 출력하지 마십시오.
 영문 Event·Scenario를 사용하지 말고 description에는 `입력 사실`을 사용하지 마십시오.
 probability는 0~100 정수 백분율로 작성하고 모든 Scenario probability의 합계를 정확히 100으로 맞추십시오.
 """
 )
+
+V4_GROUP_TITLE_SYSTEM_PROMPT = """LNG 시장 시나리오 그룹의 화면용 한국어 제목을 작성합니다.
+제목은 그룹에 속한 모든 시나리오를 대표해야 하므로, 모든 시나리오가 공유하는 전제와 시나리오를 가르는
+핵심 질문을 담고 특정 시나리오의 답이나 결말은 담지 않습니다.
+"""
 
 
 _IMPACT_DOMAINS = ("demand", "supply", "trade", "price_only")
@@ -759,7 +765,7 @@ def build_v4_scenario_synthesis_user_prompt(
     return (
         "## 목적\n"
         "공통 영향에 모든 Dimension 질문의 답과 필요한 Interaction을 더해 대표 JKM Scenario를 만듭니다.\n\n"
-        "## 그룹 제목·설명의 근거가 되는 이벤트\n"
+        "## 그룹 설명의 근거가 되는 이벤트\n"
         f"{_render_group_metadata_event_cards(events)}\n\n"
         "## 모든 Scenario에 공통인 영향\n"
         f"{_render_common_impact_cards(impact_analysis)}\n\n"
@@ -773,19 +779,14 @@ def build_v4_scenario_synthesis_user_prompt(
         "- 어떤 선택지 조합이 서로 구분되는 대표 전개를 만듭니까?\n"
         "- 공통 영향, 선택지 효과, Interaction이 최종 JKM 압력에 각각 어떻게 기여합니까?\n\n"
         "## 출력 규칙\n"
-        "- 루트 title과 description은 개별 시나리오가 아니라 시나리오 그룹의 화면용 메타데이터입니다.\n"
-        "- 루트 title은 20~60자의 한국어로 작성합니다. 여러 이벤트이면 위 이벤트에서 사용자가 검색할 만한\n"
-        "  구체적인 대상·지역·지표·변화 2~3개를, 단일 이벤트이면 대표 요소 1개를 제목에 직접 반영합니다.\n"
-        "  `JKM 대표 전개`, `합성 초안`, `복수 이벤트 시나리오`처럼 생성 목적만 표현하지 않습니다.\n"
-        "  `선택 MI Event`, `모델 영향 레버`, `복수 이벤트 시나리오`처럼 생성 방식 중심의 일반 문구를 쓰지 않습니다.\n"
+        "- 루트 description은 개별 시나리오가 아니라 시나리오 그룹의 화면용 메타데이터입니다.\n"
         "- 루트 description은 정확히 두 문장으로 작성합니다. 첫 문장은 관측된 이벤트 사실을 직접 서술하고\n"
         "  `반영한다`, `바탕으로 한다`, `정리한다` 같은 메타 표현을 쓰지 않습니다. 둘째 문장은 Dimension 이름을\n"
         "  나열하지 않고 충격의 지속·전달·증폭과 대체·회복·상쇄 같은 인과 묶음으로 핵심 분기를 설명합니다.\n"
         "- description의 인과 관계는 검증된 Event fact, impact path, interaction, Dimension에 있는 내용만 사용합니다.\n"
         "  독립 이벤트에는 임의의 상호작용을 만들지 않습니다. 발생한 사건은 `이벤트`, 미래 분기는 `시나리오`로\n"
-        "  지칭합니다. 영문 `Event`, `Scenario`를 쓰지 않습니다. 이 규칙은 루트 title과 description에\n"
-        "  모두 적용합니다. description에는 `입력 사실`을 쓰지 않습니다.\n"
-        "- LNG·JKM·TTF·HH 등 시장·상품 약어와 시설·기업 고유명은 title, description, Scenario를 포함한 모든\n"
+        "  지칭합니다. 영문 `Event`, `Scenario`와 `입력 사실`을 쓰지 않습니다.\n"
+        "- LNG·JKM·TTF·HH 등 시장·상품 약어와 시설·기업 고유명은 description과 Scenario를 포함한 모든\n"
         "  문장에서 원문 표기 그대로 쓰고 `엘엔지`, `제이케이엠`처럼 한글로 음역하지 않습니다.\n"
         "- Scenario 3~5개를 만들고 생성·제외 결과를 합쳐 다섯 pressure band를 한 번씩 다룹니다.\n"
         "- 생성하는 Scenario 조합 중 선택한 Dimension 값들의 pressureContribution 합산이 양수(+)인 조합을\n"
@@ -825,8 +826,72 @@ def build_v4_scenario_synthesis_user_prompt(
     )
 
 
+def _render_group_title_event_cards(events: list[dict[str, Any]]) -> str:
+    """Compact event cards for the title call: subject and indicator wording only, without key-fact bullets."""
+    cards = []
+    for index, event in enumerate(events, start=1):
+        compact = CompactEventContext.from_event(event)
+        cards.append(
+            f"### [이벤트 {index}]\n"
+            f"- ID: {compact.event_id or '없음'}\n"
+            f"- 제목: {compact.title[:120] or '없음'}\n"
+            f"- 요약: {compact.summary[:240] or '없음'}\n"
+            f"- 태그: {', '.join(compact.tags) or '없음'}"
+        )
+    return "\n\n".join(cards) or "- 없음"
+
+
+def _render_group_title_dimension(dimension: dict[str, Any]) -> str:
+    source_ids = ", ".join(str(event_id) for event_id in dimension.get("source_event_ids") or []) or "없음"
+    return f"- 질문: {dimension.get('description') or dimension.get('label')}\n- 출처 이벤트 ID: {source_ids}"
+
+
+def build_v4_group_title_user_prompt(
+    *,
+    events: list[dict[str, Any]],
+    branching_dimensions: list[dict[str, Any]],
+    premise_dimension: dict[str, Any] | None,
+    previous_title: str | None = None,
+    validation_feedback: str | None = None,
+) -> str:
+    branching = "\n\n".join(_render_group_title_dimension(item) for item in branching_dimensions) or "- 없음"
+    premise = _render_group_title_dimension(premise_dimension) if premise_dimension else "- 없음"
+    retry = ""
+    if validation_feedback:
+        retry = (
+            "## 이전 제목 검증 실패\n"
+            f"- 이전 제목: {previous_title or '없음'}\n"
+            f"- 검증 오류: {validation_feedback[:600]}\n\n"
+        )
+    return (
+        "## 시나리오를 가르는 핵심 질문\n"
+        f"{branching}\n\n"
+        "## 모든 시나리오에 공통인 전제\n"
+        f"{premise}\n\n"
+        "## 위 질문·전제의 출처 이벤트\n"
+        f"{_render_group_title_event_cards(events)}\n\n"
+        f"{retry}"
+        "## 출력 규칙\n"
+        "- title은 20~45자의 한국어 명사구입니다. 공통 전제가 있으면 `{공통 전제} 속 {핵심 질문의 대상} 여부`처럼\n"
+        "  전제와 핵심 질문을 함께 담고, 없으면 핵심 질문만 담습니다.\n"
+        "- 핵심 질문은 대상만 쓰고 `여부`, `폭`, `시점`, `지속성`처럼 답이 정해지지 않은 표현으로 마무리합니다.\n"
+        "  선택지나 답, 시나리오 결말(완화, 확대, 제한, 하락 압력 등)은 쓰지 않습니다.\n"
+        "- `여부`는 `수출 연결 여부`처럼 변화·동작을 나타내는 말 뒤에만 붙이고 `스프레드 여부`, `수요 전망 여부`처럼\n"
+        "  명사 바로 뒤에 붙이지 않습니다. 대상이 수치·수준이면 `폭`, 기간이면 `지속성`이나 `시점`을 씁니다.\n"
+        "- 대상·지표는 출처 이벤트 카드의 원문 표현을 유지합니다. 원문의 지표를 다른 지표로 바꾸지 않고\n"
+        "  (예: 가스 생산을 LNG 공급으로 바꾸지 않음), 서로 다른 이벤트를 지역명으로 합치지 않습니다.\n"
+        "- 출처 이벤트의 제목·요약에 `전망`, `논의`, `가능성`이 있으면 해당 대상 바로 뒤에 같은 표현을 반드시\n"
+        "  남깁니다. 아직 일어나지 않은 전망을 이미 일어난 변화처럼 쓰지 않습니다\n"
+        "  (예: `스페인 가스 수요 감소`가 아니라 `스페인 가스 수요 감소 전망`).\n"
+        "- 이벤트를 나열하지 않습니다. 위 질문·전제와 무관한 내용은 넣지 않습니다.\n"
+        "- 영문 `Event`, `Scenario`를 쓰지 않고 LNG·JKM·TTF·HH 등 약어와 고유명은 원문 표기 그대로 쓰며\n"
+        "  한글로 음역하지 않습니다. 띄어쓰기를 유지합니다.\n"
+    )
+
+
 __all__ = [
     "MODEL_LEVER_SYSTEM_PROMPT",
+    "V4_GROUP_TITLE_SYSTEM_PROMPT",
     "V4_ADDITIONAL_DIMENSION_SYSTEM_PROMPT",
     "V4_DIMENSION_SYSTEM_PROMPT",
     "V4_EVENT_IMPACT_SYSTEM_PROMPT",
@@ -838,6 +903,7 @@ __all__ = [
     "build_v4_additional_dimension_user_prompt",
     "build_v4_event_fact_candidates",
     "build_v4_event_impact_analysis_user_prompt",
+    "build_v4_group_title_user_prompt",
     "event_open_question_budgets",
     "event_open_question_recommendations",
     "build_v4_interaction_analysis_user_prompt",

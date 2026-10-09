@@ -27,6 +27,7 @@ from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.v4_sche
     V4EventImpactAnalysisResult,
     V4ExcludedScenarioCandidate,
     V4GenerationResult,
+    V4GroupTitleDraft,
     V4LeverStateDraft,
     V4ReadableAdditionalDimensionDesignDraft,
     V4ReadableDimensionDesignDraft,
@@ -425,7 +426,6 @@ def _synthesis() -> V4ScenarioSynthesisResult:
 
     return V4ScenarioSynthesisResult.model_validate(
         {
-            "groupTitle": "JKM 복수 Event 시나리오",
             "groupDescription": "공통 영향 경로와 잔여 불확실성을 결합한 JKM 시나리오",
             "scenarios": [
                 scenario(
@@ -494,6 +494,7 @@ def _group_summary() -> str:
 def _finalized() -> tuple[V4GenerationResult, object]:
     return finalize_v4_generation_result(
         _synthesis(),
+        group_title="테스트 그룹",
         group_summary=_group_summary(),
         impact_analysis=_analysis(),
         dimension_design=_dimensions(),
@@ -739,6 +740,7 @@ def test_v4_finalizer_normalizes_fractional_probabilities_to_integer_percentages
 
     finalized, _coverage = finalize_v4_generation_result(
         synthesis,
+        group_title="테스트 그룹",
         group_summary=_group_summary(),
         impact_analysis=_analysis(),
         dimension_design=_dimensions(),
@@ -762,6 +764,7 @@ def test_v4_finalizer_distributes_zero_probability_weights_deterministically() -
 
     finalized, _coverage = finalize_v4_generation_result(
         synthesis,
+        group_title="테스트 그룹",
         group_summary=_group_summary(),
         impact_analysis=_analysis(),
         dimension_design=_dimensions(),
@@ -844,7 +847,6 @@ def test_v4_finalizer_injects_fallback_scenario_when_llm_set_misses_one_directio
     ]
     synthesis = V4ScenarioSynthesisResult.model_validate(
         {
-            "groupTitle": "test",
             "groupDescription": "test",
             "scenarios": [base.model_dump(), combo_a.model_dump(), combo_b.model_dump()],
             "excludedScenarios": [item.model_dump() for item in excluded],
@@ -853,6 +855,7 @@ def test_v4_finalizer_injects_fallback_scenario_when_llm_set_misses_one_directio
 
     finalized, _coverage = finalize_v4_generation_result(
         synthesis,
+        group_title="테스트 그룹",
         group_summary=_group_summary(),
         impact_analysis=_analysis(),
         dimension_design=_dimensions(),
@@ -936,7 +939,6 @@ def test_v4_finalizer_excludes_excess_same_direction_scenarios_beyond_two_slots(
     )
     synthesis = V4ScenarioSynthesisResult.model_validate(
         {
-            "groupTitle": "test",
             "groupDescription": "test",
             "scenarios": [item.model_dump() for item in (base, bearish, bullish_1, bullish_2, bullish_3)],
             "excludedScenarios": [],
@@ -945,6 +947,7 @@ def test_v4_finalizer_excludes_excess_same_direction_scenarios_beyond_two_slots(
 
     finalized, _coverage = finalize_v4_generation_result(
         synthesis,
+        group_title="테스트 그룹",
         group_summary=_group_summary(),
         impact_analysis=_analysis(),
         dimension_design=_dimensions(),
@@ -973,7 +976,8 @@ def test_v4_scenario_rejects_missing_common_path() -> None:
     with pytest.raises(ValueError, match="all common Impact Paths"):
         finalize_v4_generation_result(
             synthesis,
-            group_summary=_group_summary(),
+            group_title="테스트 그룹",
+        group_summary=_group_summary(),
             impact_analysis=_analysis(),
             dimension_design=_dimensions(),
             impact_levers=_catalog(),
@@ -987,7 +991,8 @@ def test_v4_scenario_duplicate_combination_error_identifies_both_scenarios() -> 
     with pytest.raises(ValueError) as error:
         finalize_v4_generation_result(
             synthesis,
-            group_summary=_group_summary(),
+            group_title="테스트 그룹",
+        group_summary=_group_summary(),
             impact_analysis=_analysis(),
             dimension_design=_dimensions(),
             impact_levers=_catalog(),
@@ -1849,7 +1854,6 @@ def _readable_scenario_draft() -> V4ReadableScenarioSynthesisDraft:
 
     return V4ReadableScenarioSynthesisDraft.model_validate(
         {
-            "title": "동북아 한파와 미국 Gulf 액화시설 중단",
             "description": (
                 "동북아 한파 전망과 미국 Gulf LNG 액화시설 가동 중단이 관측됐다. "
                 "수요 충격의 지속과 공급 차질의 전달·증폭, 기온 완화와 설비 회복에 따른 상쇄가 핵심 분기를 만든다."
@@ -1913,6 +1917,8 @@ def test_v4_graph_parallelizes_events_and_retries_only_the_failed_event() -> Non
             return _readable_interaction_draft()
         if output_schema is V4ReadableDimensionDesignDraft:
             return _readable_dimension_draft()
+        if output_schema is V4GroupTitleDraft:
+            return V4GroupTitleDraft(title="동북아 한파 지속 속 미국 액화시설 정비 지속성")
         return _readable_scenario_draft()
 
     group = ScenarioGroupPayload(
@@ -1955,10 +1961,11 @@ def test_v4_graph_parallelizes_events_and_retries_only_the_failed_event() -> Non
     v4_flow_module.get_compiled_graph.cache_clear()
 
     assert calls.count("V4ReadableEventAnalysisDraft") == 3
-    assert calls[-3:] == [
+    assert calls[-4:] == [
         "V4ReadableInteractionAnalysisDraft",
         "V4ReadableDimensionDesignDraft",
         "V4ReadableScenarioSynthesisDraft",
+        "V4GroupTitleDraft",
     ]
     assert attempts_by_event == {101: 2, 202: 1}
     assert final_state["analysis_attempt"] == 2
@@ -1966,6 +1973,7 @@ def test_v4_graph_parallelizes_events_and_retries_only_the_failed_event() -> Non
     assert final_state["dimension_attempt"] == 1
     assert final_state["scenario_attempt"] == 1
     persist.assert_called_once()
+    assert persist.call_args.kwargs["title"] == "동북아 한파 지속 속 미국 액화시설 정비 지속성"
     assert persist.call_args.kwargs["summary"] == ("한파로 난방 수요가 증가했다. | 액화시설 유지보수가 시작됐다.")
     assert persist.call_args.kwargs["dimension_definitions"][0]["rationale"] == "동북아 한파와 추가 분기 기준"
 
@@ -2336,7 +2344,8 @@ def test_v4_prompts_follow_fact_path_uncertainty_contract() -> None:
     assert "서로 다른 Impact에서는 같은 Lever code를 다시 사용할 수 있습니다" in first
     assert "첫 번째 `lever` code를 비교해" in first
     assert "루트 summary" not in scenario
-    assert "`선택 MI Event`, `모델 영향 레버`, `복수 이벤트 시나리오`" in scenario
+    assert "그룹 제목은 다음 단계에서" not in scenario
+    assert "루트 title" not in scenario
     assert "첫 문장은 관측된 이벤트 사실을 직접 서술" in scenario
     assert "`반영한다`, `바탕으로 한다`, `정리한다`" in scenario
     assert "Dimension 이름을" in scenario
@@ -2376,7 +2385,7 @@ def test_v4_prompts_follow_fact_path_uncertainty_contract() -> None:
     assert "unused question을 최소 1개" in dimension
     assert "## 숫자·시점 판단 근거" in dimension
     assert "분석 기준일 2026-08-07 현재 동북아 한파 전망" in dimension
-    assert "## 그룹 제목·설명의 근거가 되는 이벤트" in scenario
+    assert "## 그룹 설명의 근거가 되는 이벤트" in scenario
     assert "[이벤트 1]" in scenario
     assert "제목: 동북아 한파" in scenario
     assert "요약: 한파로 난방 수요가 증가했다." in scenario
@@ -2385,9 +2394,7 @@ def test_v4_prompts_follow_fact_path_uncertainty_contract() -> None:
     assert "[이벤트 2]" in scenario
     assert "제목: 액화시설 정비" in scenario
     assert scenario.index("[이벤트 1]") < scenario.index("[이벤트 2]")
-    assert "루트 title은 20~60자의 한국어" in scenario
-    assert "영문 `Event`, `Scenario`를 쓰지 않습니다" in scenario
-    assert "description에는 `입력 사실`을 쓰지 않습니다" in scenario
+    assert "영문 `Event`, `Scenario`와 `입력 사실`을 쓰지 않습니다" in scenario
     assert "`JKM`을 쓰지 않습니다" not in scenario
     assert "LNG·JKM·TTF·HH 등 시장·상품 약어와 시설·기업 고유명은" in scenario
     assert "원문 표기 그대로 쓰고 `엘엔지`, `제이케이엠`처럼 한글로 음역하지 않습니다" in scenario
@@ -2524,7 +2531,6 @@ def test_llm_validation_error_detail_preserves_field_locations_for_retry() -> No
     with pytest.raises(ValueError) as error:
         V4ReadableScenarioSynthesisDraft.model_validate(
             {
-                "title": "테스트 그룹",
                 "description": "테스트 설명",
                 "scenarios": [{}],
             },
@@ -2635,7 +2641,10 @@ def test_v4_scenario_group_metadata_schema_describes_korean_event_wording() -> N
     schema = V4ReadableScenarioSynthesisDraft.model_json_schema()
     properties = schema["properties"]
 
-    assert "선택한 이벤트" in properties["title"]["description"]
+    assert "title" not in properties
+    title_description = V4GroupTitleDraft.model_json_schema()["properties"]["title"]["description"]
+    assert "모든 시나리오가 공유하는 전제와 시나리오를 가르는 핵심 질문" in title_description
+    assert "특정 시나리오의 답이나 결말을 쓰지 않음" in title_description
     assert "summary" not in properties
     assert "영문 Event/Scenario" in properties["description"]["description"]
     assert "영문 Event/Scenario와 '입력 사실'은 사용하지 않음" in properties["description"]["description"]
