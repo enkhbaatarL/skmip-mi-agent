@@ -14,18 +14,18 @@ from apps.agents.model_parameter_agent.flows.propose_parameters.state import (
 )
 from apps.agents.model_parameter_agent.schemas.model_parameter_proposal import (
     CandidateRoutingAssessment,
-    LLMSlotAxis,
-    LLMSlotProposal,
     LLMSlotProposalResponse,
     LLMValueAdjustment,
     LLMValueCell,
     LLMValueProposalResponse,
+    LLMVariationFactors,
     RoutingDecision,
 )
 from apps.agents.model_parameter_agent.utils.variation_policy import (
     CONDITIONAL_ROUTING_POLICIES,
     PARAMETER_VARIATION_POLICIES,
     VARIATION_POLICY_RELEASE,
+    VariationFactors,
     calculate_bounded_assumption,
     validate_atomic_share_assumption,
 )
@@ -43,7 +43,7 @@ V4_CONTEXT = {
 
 
 def test_bounded_expert_policy_covers_exactly_the_active_v4_1_parameters() -> None:
-    assert VARIATION_POLICY_RELEASE == "bounded-expert-v1"
+    assert VARIATION_POLICY_RELEASE == "bounded-expert-v3"
     assert set(PARAMETER_VARIATION_POLICIES) == {
         "GDP",
         "PMI",
@@ -70,14 +70,20 @@ def test_v4_routing_limit_is_separate_from_the_legacy_limit() -> None:
         model_parameter_v4_max_routing_candidates_per_dimension=3,
     )
 
-    assert nodes._configured_routing_candidate_limit(  # noqa: SLF001
-        settings,
-        V4_CONTEXT,
-    ) == 3
-    assert nodes._configured_routing_candidate_limit(  # noqa: SLF001
-        settings,
-        {"scenario_group": {"api_version": "v3"}},
-    ) == 2
+    assert (
+        nodes._configured_routing_candidate_limit(  # noqa: SLF001
+            settings,
+            V4_CONTEXT,
+        )
+        == 3
+    )
+    assert (
+        nodes._configured_routing_candidate_limit(  # noqa: SLF001
+            settings,
+            {"scenario_group": {"api_version": "v3"}},
+        )
+        == 2
+    )
 
 
 def test_balanced_policy_clips_strong_assumption_to_parameter_specific_medium() -> None:
@@ -93,6 +99,69 @@ def test_balanced_policy_clips_strong_assumption_to_parameter_specific_medium() 
     assert result.applied_severity == "medium"
     assert result.clipped is True
     assert "절대 변화" in result.calculation_ko
+
+
+def test_profiled_assumption_is_deterministic_and_varies_inside_the_severity_band() -> None:
+    lower = VariationFactors(
+        duration="short",
+        scope="narrow",
+        offset="strong",
+        confidence="low",
+        sibling_position="lower",
+        rationale_ko="단기·국소 영향이며 대체 수단이 충분함",
+    )
+    upper = VariationFactors(
+        duration="long",
+        scope="broad",
+        offset="none",
+        confidence="high",
+        sibling_position="upper",
+        rationale_ko="장기·광역 영향이며 상쇄 수단이 없음",
+    )
+
+    low_result = calculate_bounded_assumption(
+        parameter_name="ShippingCost",
+        reference_value=100_000.0,
+        direction="increase",
+        severity="medium",
+        mode="balanced",
+        variation_factors=lower,
+    )
+    high_result = calculate_bounded_assumption(
+        parameter_name="ShippingCost",
+        reference_value=100_000.0,
+        direction="increase",
+        severity="medium",
+        mode="balanced",
+        variation_factors=upper,
+    )
+    repeated = calculate_bounded_assumption(
+        parameter_name="ShippingCost",
+        reference_value=100_000.0,
+        direction="increase",
+        severity="medium",
+        mode="balanced",
+        variation_factors=upper,
+    )
+
+    assert low_result.proposed_value == 105_000.0
+    assert high_result.proposed_value == 115_000.0
+    assert repeated == high_result
+    assert low_result.profile_position == 0.0
+    assert high_result.profile_position == 1.0
+
+
+def test_missing_profile_preserves_the_existing_severity_cap() -> None:
+    result = calculate_bounded_assumption(
+        parameter_name="ShippingCost",
+        reference_value=100_000.0,
+        direction="increase",
+        severity="medium",
+        mode="balanced",
+    )
+
+    assert result.proposed_value == 115_000.0
+    assert result.profile_position is None
 
 
 def test_strict_mode_rejects_assumption_and_power_mix_enforces_member_guardrail() -> None:
@@ -199,9 +268,7 @@ def _route_disruption_candidate(
         "time_window": time_window,
         "source_dimension_label": "항로 차질 강도",
         "source_dimension_value_label": "통항 지연·우회 확인",
-        "derivation_rationale": (
-            "실제 LNG 선박 통항 지연과 우회로 항차 시간이 늘어나는 경로"
-        ),
+        "derivation_rationale": ("실제 LNG 선박 통항 지연과 우회로 항차 시간이 늘어나는 경로"),
     }
 
 
@@ -234,19 +301,14 @@ def test_route_routing_policy_recovers_only_shipping_cost_after_complete_all_na(
     decision = RoutingDecision(
         dimension_key=task["dimension_key"],
         selected_candidate_keys=[],
-        candidate_assessments=[
-            _not_applicable_assessment(str(candidate["candidate_key"]))
-            for candidate in candidates
-        ],
+        candidate_assessments=[_not_applicable_assessment(str(candidate["candidate_key"])) for candidate in candidates],
     )
 
-    recovered, warnings = (
-        nodes._recover_all_not_applicable_v4_conditional_candidates(  # noqa: SLF001
-            [decision],
-            [task],
-            [],
-            variation_mode="balanced",
-        )
+    recovered, warnings = nodes._recover_all_not_applicable_v4_conditional_candidates(  # noqa: SLF001
+        [decision],
+        [task],
+        [],
+        variation_mode="balanced",
     )
 
     assert [item["canonical_parameter_name"] for item in recovered] == [
@@ -256,12 +318,11 @@ def test_route_routing_policy_recovers_only_shipping_cost_after_complete_all_na(
     assert evidence["decision"] == "ASSUMPTION_ELIGIBLE"
     assert evidence["evidence_basis"] == "BOUNDED_ASSUMPTION"
     assert evidence["direction"] == "increase"
+    assert evidence["direction_semantics"] == "parameter"
     assert evidence["confidence"] == "medium"
     assert "선복" in evidence["causal_path_ko"]
-    assert "연료가격" in evidence["rationale_ko"]
-    assert recovered[0]["_routing_selection_method"] == (
-        "POLICY_BACKED_ALL_NOT_APPLICABLE_RECOVERY"
-    )
+    assert "제외 경계" in evidence["rationale_ko"]
+    assert recovered[0]["_routing_selection_method"] == ("POLICY_BACKED_ALL_NOT_APPLICABLE_RECOVERY")
     assert len(warnings) == 1
 
 
@@ -270,16 +331,12 @@ def test_route_routing_policy_keeps_hallucination_boundaries() -> None:
         ("route_disruption", "ShippingCost"),
         ("route_disruption", "ShippingFuelCost"),
         ("route_disruption", "CanalToll"),
+        ("regional_price_spread", "ShippingCost"),
     }
-    assert CONDITIONAL_ROUTING_POLICIES[
-        ("route_disruption", "ShippingCost")
-    ].allow_policy_recovery is True
-    assert CONDITIONAL_ROUTING_POLICIES[
-        ("route_disruption", "ShippingFuelCost")
-    ].allow_policy_recovery is False
-    assert CONDITIONAL_ROUTING_POLICIES[
-        ("route_disruption", "CanalToll")
-    ].allow_policy_recovery is False
+    assert CONDITIONAL_ROUTING_POLICIES[("route_disruption", "ShippingCost")].allow_policy_recovery is True
+    assert CONDITIONAL_ROUTING_POLICIES[("route_disruption", "ShippingFuelCost")].allow_policy_recovery is False
+    assert CONDITIONAL_ROUTING_POLICIES[("route_disruption", "CanalToll")].allow_policy_recovery is False
+    assert CONDITIONAL_ROUTING_POLICIES[("regional_price_spread", "ShippingCost")].allow_policy_recovery is True
 
     candidate = _route_disruption_candidate("ShippingCost", time_window="")
     task = {
@@ -311,6 +368,60 @@ def test_route_routing_policy_keeps_hallucination_boundaries() -> None:
 
     assert no_time == []
     assert strict == []
+
+
+def test_regional_spread_policy_requires_physical_cargo_reallocation() -> None:
+    candidate = {
+        "candidate_key": "spread-shipping",
+        "mapping_strategy": "v4",
+        "mapping_method": "routing",
+        "binding_selection_mode": "conditional",
+        "canonical_parameter_name": "ShippingCost",
+        "parameter_name": "ShippingCost",
+        "lever_code": "regional_price_spread",
+        "direction": "increase",
+        "level": "지역 스프레드 확대",
+        "scope": "유럽향 LNG cargo",
+        "time_window": "2027년",
+        "source_dimension_label": "지역 가격 격차",
+        "source_dimension_value_label": "유럽 프리미엄 확대",
+        "derivation_rationale": "아시아행 선적이 유럽향으로 재배분되어 장거리 선복 수요가 증가",
+    }
+    task = {
+        "dimension_key": "v4|d1|d1v3|regionalpricespread",
+        "is_v4": True,
+        "selection_mode": "conditional",
+        "candidates": [candidate],
+    }
+    decision = RoutingDecision(
+        dimension_key=task["dimension_key"],
+        selected_candidate_keys=[],
+        candidate_assessments=[_not_applicable_assessment("spread-shipping")],
+    )
+
+    recovered, _ = nodes._recover_all_not_applicable_v4_conditional_candidates(  # noqa: SLF001
+        [decision],
+        [task],
+        [],
+        variation_mode="balanced",
+    )
+    assert [item["canonical_parameter_name"] for item in recovered] == [
+        "ShippingCost",
+    ]
+
+    price_only = {
+        **candidate,
+        "scope": "유럽 LNG 가격",
+        "derivation_rationale": "유럽 프리미엄이 확대된다",
+    }
+    price_task = {**task, "candidates": [price_only]}
+    excluded, _ = nodes._recover_all_not_applicable_v4_conditional_candidates(  # noqa: SLF001
+        [decision],
+        [price_task],
+        [],
+        variation_mode="balanced",
+    )
+    assert excluded == []
 
 
 def test_step1_5_live_shape_all_na_is_recovered_before_semantic_abstention(
@@ -368,16 +479,9 @@ def test_step1_5_live_shape_all_na_is_recovered_before_semantic_abstention(
 
     output = asyncio.run(nodes.validate_parameter_candidates(state))
 
-    assert [
-        item["canonical_parameter_name"] for item in output["candidate_mappings"]
-    ] == ["ShippingCost"]
-    assert output["candidate_mappings"][0]["routing_evidence"][0][
-        "evidence_basis"
-    ] == "BOUNDED_ASSUMPTION"
-    assert any(
-        "bounded routing 정책" in warning
-        for warning in output["validation_warnings"]
-    )
+    assert [item["canonical_parameter_name"] for item in output["candidate_mappings"]] == ["ShippingCost"]
+    assert output["candidate_mappings"][0]["routing_evidence"][0]["evidence_basis"] == "BOUNDED_ASSUMPTION"
+    assert any("bounded routing 정책" in warning for warning in output["validation_warnings"])
 
 
 def test_step2_conservative_recovery_uses_one_target_and_earliest_period_only() -> None:
@@ -456,6 +560,374 @@ def test_step2_conservative_recovery_never_selects_a_past_month(
     ]
 
 
+def test_step2_grounded_recovery_resolves_unique_pipeline_and_explicit_period(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(nodes, "_current_year_month", lambda: (2026, 10))
+    candidate = {
+        "candidate_key": "pipeline",
+        "canonical_parameter_name": "PipelineAdjustment",
+        "parameter_name": "PipelineAdjustment",
+        "source_event_ids": [11],
+    }
+    context = {
+        **V4_CONTEXT,
+        "events": [
+            {
+                "mi_event_id": 11,
+                "detail_analysis": ("Northeast Pipeline의 US발 Canada행 흐름이 2027년에 감소"),
+            },
+        ],
+    }
+    catalog = {
+        "candidate_key": "pipeline",
+        "fixed_axis_names": ["Pipeline", "From", "To"],
+        "time_axis_names": ["Year"],
+        "fixed_axis_hierarchy": [
+            {
+                "axis_value": "Northeast Pipeline",
+                "children": [
+                    {
+                        "axis_value": "US",
+                        "children": [
+                            {"axis_value": "Canada", "period_group_id": "p1"},
+                        ],
+                    },
+                ],
+            },
+        ],
+        "period_groups": [
+            {
+                "period_group_id": "p1",
+                "available_periods": [{"Year": 2026}, {"Year": 2027}],
+            },
+        ],
+    }
+
+    recovered, warnings = nodes._grounded_v4_slot_recovery(  # noqa: SLF001
+        [],
+        [candidate],
+        [catalog],
+        scenario_context=context,
+    )
+
+    assert recovered[0]["_selection_method"] == "V4_GROUNDED_CATALOG_EXPANSION"
+    assert recovered[0]["slot_axes"] == [
+        {"axis_name": "Pipeline", "axis_value": "Northeast Pipeline"},
+        {"axis_name": "From", "axis_value": "US"},
+        {"axis_name": "To", "axis_value": "Canada"},
+        {"axis_name": "Year", "axis_value": 2027},
+    ]
+    assert len(warnings) == 1
+
+
+def test_step2_grounded_recovery_enriches_existing_slot_for_closed_range(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(nodes, "_current_year_month", lambda: (2026, 10))
+    candidate = {
+        "candidate_key": "shipping-cost",
+        "canonical_parameter_name": "ShippingCost",
+        "parameter_name": "ShippingCost",
+        "source_event_ids": [11],
+    }
+    context = {
+        **V4_CONTEXT,
+        "events": [
+            {
+                "mi_event_id": 11,
+                "detail_analysis": "LNG cargo 재배분이 2026년 10월-2026년 12월 이어진다.",
+            },
+        ],
+    }
+    catalog = {
+        "candidate_key": "shipping-cost",
+        "fixed_axis_names": [],
+        "time_axis_names": ["Year", "Month"],
+        "fixed_axis_hierarchy": [{"period_group_id": "p1"}],
+        "period_groups": [
+            {
+                "period_group_id": "p1",
+                "available_periods": [{"Year": 2026, "Months": [10, 11, 12]}],
+            },
+        ],
+    }
+    existing = [
+        {
+            "candidate_key": "shipping-cost",
+            "slot_axes": [
+                {"axis_name": "Year", "axis_value": 2026},
+                {"axis_name": "Month", "axis_value": 10},
+            ],
+        },
+    ]
+
+    expanded, warnings = nodes._grounded_v4_slot_recovery(  # noqa: SLF001
+        existing,
+        [candidate],
+        [catalog],
+        scenario_context=context,
+    )
+
+    assert [
+        nodes._coordinates_for_selected_slot(slot)["Month"]  # noqa: SLF001
+        for slot in expanded
+    ] == [10, 11, 12]
+    assert len(warnings) == 2
+
+
+def test_step2_grounding_ignores_llm_routing_catalog_horizon(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(nodes, "_current_year_month", lambda: (2026, 10))
+    candidate = {
+        "candidate_key": "shipping-cost",
+        "canonical_parameter_name": "ShippingCost",
+        "parameter_name": "ShippingCost",
+        "source_event_ids": [11],
+        "routing_evidence": [
+            {
+                "time_scope_ko": "허용된 2026~2030 Year 좌표에서 선택",
+                "target_scope_ko": "Year별 전역 LNG charter rate",
+            },
+        ],
+        "lever_provenance": [
+            {
+                "source_event_ids": [11],
+                "time_window": "분석 기준일 이후 단기",
+            },
+        ],
+    }
+    context = {
+        **V4_CONTEXT,
+        "events": [
+            {
+                "mi_event_id": 11,
+                "detail_analysis": "2026년 10월 이후 LNG cargo 운송 차질이 단기 지속된다.",
+            },
+        ],
+    }
+    catalog = {
+        "candidate_key": "shipping-cost",
+        "fixed_axis_names": [],
+        "time_axis_names": ["Year"],
+        "fixed_axis_hierarchy": [{"period_group_id": "p1"}],
+        "period_groups": [
+            {
+                "period_group_id": "p1",
+                "available_periods": [
+                    {"Year": year}
+                    for year in range(2026, 2031)
+                ],
+            },
+        ],
+    }
+
+    grounded = nodes._grounded_v4_slot_candidates(  # noqa: SLF001
+        candidate,
+        catalog,
+        context,
+    )
+
+    assert grounded == [{"Year": 2026}]
+
+
+def test_step2_grounded_recovery_rejects_ambiguous_pipeline_targets(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(nodes, "_current_year_month", lambda: (2026, 10))
+    candidate = {
+        "candidate_key": "pipeline",
+        "canonical_parameter_name": "PipelineAdjustment",
+        "parameter_name": "PipelineAdjustment",
+        "source_event_ids": [11],
+    }
+    context = {
+        **V4_CONTEXT,
+        "events": [
+            {
+                "mi_event_id": 11,
+                "detail_analysis": "US발 Canada행 흐름이 2027년에 감소",
+            },
+        ],
+    }
+    pipeline_nodes = [
+        {
+            "axis_value": pipeline,
+            "children": [
+                {
+                    "axis_value": "US",
+                    "children": [
+                        {"axis_value": "Canada", "period_group_id": "p1"},
+                    ],
+                },
+            ],
+        }
+        for pipeline in ("Northeast Pipeline", "Northern Pipeline")
+    ]
+    catalog = {
+        "candidate_key": "pipeline",
+        "fixed_axis_names": ["Pipeline", "From", "To"],
+        "time_axis_names": ["Year"],
+        "fixed_axis_hierarchy": pipeline_nodes,
+        "period_groups": [
+            {"period_group_id": "p1", "available_periods": [{"Year": 2027}]},
+        ],
+    }
+
+    assert (
+        nodes._grounded_v4_slot_candidates(  # noqa: SLF001
+            candidate,
+            catalog,
+            context,
+        )
+        == []
+    )
+
+
+def test_step2_grounded_recovery_requires_both_liquefaction_plant_and_train(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(nodes, "_current_year_month", lambda: (2026, 10))
+    candidate = {
+        "candidate_key": "liq-util",
+        "canonical_parameter_name": "LiqUtilAdjustment",
+        "parameter_name": "LiqUtilAdjustment",
+        "source_event_ids": [11],
+    }
+    catalog = {
+        "candidate_key": "liq-util",
+        "fixed_axis_names": ["LNG Plant", "LNG Plant Train"],
+        "time_axis_names": ["Year", "Month"],
+        "fixed_axis_hierarchy": [
+            {
+                "axis_value": "Sabine Pass LNG Plant",
+                "children": [
+                    {"axis_value": "Train 1", "period_group_id": "p1"},
+                    {"axis_value": "Train 2", "period_group_id": "p1"},
+                ],
+            },
+        ],
+        "period_groups": [
+            {
+                "period_group_id": "p1",
+                "available_periods": [{"Year": 2026, "Months": [9, 11]}],
+            },
+        ],
+    }
+    plant_only = {
+        **V4_CONTEXT,
+        "events": [
+            {
+                "mi_event_id": 11,
+                "detail_analysis": "Sabine Pass LNG Plant의 2026년 11월 이용률 하락",
+            },
+        ],
+    }
+    exact = {
+        **V4_CONTEXT,
+        "events": [
+            {
+                "mi_event_id": 11,
+                "detail_analysis": ("Sabine Pass LNG Plant Train 2의 2026년 11월 이용률 하락"),
+            },
+        ],
+    }
+
+    assert (
+        nodes._grounded_v4_slot_candidates(  # noqa: SLF001
+            candidate,
+            catalog,
+            plant_only,
+        )
+        == []
+    )
+    assert nodes._grounded_v4_slot_candidates(  # noqa: SLF001
+        candidate,
+        catalog,
+        exact,
+    ) == [
+        {
+            "LNG Plant": "Sabine Pass LNG Plant",
+            "LNG Plant Train": "Train 2",
+            "Year": 2026,
+            "Month": 11,
+        },
+    ]
+
+
+def test_step2_prompt_exposes_only_grounded_catalog_hint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(nodes, "_current_year_month", lambda: (2026, 10))
+    monkeypatch.setattr(
+        nodes,
+        "get_settings",
+        lambda: SimpleNamespace(
+            model_parameter_max_parameter_slots=100,
+            model_parameter_grounded_slot_recovery_enabled=True,
+        ),
+    )
+    candidate = {
+        "candidate_key": "liq-util",
+        "canonical_parameter_name": "LiqUtilAdjustment",
+        "parameter_name": "LiqUtilAdjustment",
+        "source_event_ids": [11],
+    }
+    context = {
+        **V4_CONTEXT,
+        "events": [
+            {
+                "mi_event_id": 11,
+                "detail_analysis": ("Sabine Pass LNG Plant Train 2의 2026년 11월 이용률 하락"),
+            },
+        ],
+    }
+    catalog = {
+        "candidate_key": "liq-util",
+        "parameter_name": "LiqUtilAdjustment",
+        "key_axes": ["LNG Plant", "LNG Plant Train", "Year", "Month"],
+        "fixed_axis_names": ["LNG Plant", "LNG Plant Train"],
+        "time_axis_names": ["Year", "Month"],
+        "fixed_axis_hierarchy": [
+            {
+                "axis_value": "Sabine Pass LNG Plant",
+                "children": [
+                    {"axis_value": "Train 2", "period_group_id": "p1"},
+                ],
+            },
+        ],
+        "period_groups": [
+            {
+                "period_group_id": "p1",
+                "available_periods": [{"Year": 2026, "Months": [11]}],
+            },
+        ],
+    }
+
+    tasks = nodes._build_parameter_slot_tasks(  # noqa: SLF001
+        context,
+        [candidate],
+        [catalog],
+        [],
+    )
+
+    assert tasks[0]["evidence_grounded_coordinate_hints"] == [
+        {
+            "coordinates": {
+                "LNG Plant": "Sabine Pass LNG Plant",
+                "LNG Plant Train": "Train 2",
+                "Year": 2026,
+                "Month": 11,
+            },
+            "policy": (
+                "현재 Scenario/Event/Lever 원문과 실제 catalog에서 유일 일치한 대상·기간; "
+                "LLM은 현재 task applicability를 재확인하되 다른 target으로 확대하지 않음"
+            ),
+        },
+    ]
+
+
 def test_step3_bounded_assumption_is_server_calculated_and_slot_rationale_is_explicit() -> None:
     candidate = {
         "candidate_key": "liq-util",
@@ -515,6 +987,14 @@ def test_step3_bounded_assumption_is_server_calculated_and_slot_rationale_is_exp
                 direction="decrease",
                 severity="medium",
                 assumption_ko="차질 강도를 medium으로 한정",
+                variation_factors=LLMVariationFactors(
+                    duration="long",
+                    scope="broad",
+                    offset="none",
+                    confidence="high",
+                    sibling_position="middle",
+                    rationale_ko="장기·광역 차질이고 상쇄 수단이 확인되지 않음",
+                ),
             ),
         ],
     )
@@ -535,7 +1015,8 @@ def test_step3_bounded_assumption_is_server_calculated_and_slot_rationale_is_exp
     assert "근거 유형: BOUNDED_ASSUMPTION" in rationale
     assert "인과 경로:" in rationale
     assert "기준값: 0.8 utilization_fraction" in rationale
-    assert "적용 정책: bounded-expert-v1/balanced/decrease/medium" in rationale
+    assert "적용 정책: bounded-expert-v3/balanced/decrease/medium" in rationale
+    assert "변형 요인: 지속=long, 범위=broad, 상쇄=none, 신뢰도=high" in rationale
     assert "불확실성:" in rationale
     assert sanitized[0]["_variation_policy_trace"][0]["structured_fields_supplied"] is True
 
@@ -647,7 +1128,7 @@ def test_step3_rejects_direction_that_conflicts_with_derived_value() -> None:
     assert any("서로 모순" in warning for warning in warnings)
 
 
-def test_step2_repairs_only_a_missing_candidate_task(
+def test_step2_recovers_global_explicit_periods_without_semantic_retry(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     candidate = {
@@ -656,17 +1137,7 @@ def test_step2_repairs_only_a_missing_candidate_task(
         "canonical_parameter_name": "ShippingCost",
         "parameter_name": "ShippingCost",
     }
-    responses = [
-        LLMSlotProposalResponse(parameter_slots=[]),
-        LLMSlotProposalResponse(
-            parameter_slots=[
-                LLMSlotProposal(
-                    candidate_key="shipping-cost",
-                    slot_axes=[LLMSlotAxis(axis_name="Year", axis_value=2026)],
-                ),
-            ],
-        ),
-    ]
+    responses = [LLMSlotProposalResponse(parameter_slots=[])]
 
     async def fake_invoke(**_: object) -> SimpleNamespace:
         return SimpleNamespace(result=responses.pop(0), usage=None, model="test")
@@ -675,7 +1146,15 @@ def test_step2_repairs_only_a_missing_candidate_task(
     monkeypatch.setattr(nodes, "_debug_stage_payload", lambda *_args, **_kwargs: None)
     state = ModelParameterProposalState(
         scenario_id=501,
-        scenario_context=V4_CONTEXT,
+        scenario_context={
+            **V4_CONTEXT,
+            "events": [
+                {
+                    "mi_event_id": 11,
+                    "detail_analysis": "LNG cargo 재배분이 2026-2027년에 이어진다.",
+                },
+            ],
+        },
         candidate_mappings=[candidate],
         slot_catalog=[
             {
@@ -686,25 +1165,27 @@ def test_step2_repairs_only_a_missing_candidate_task(
                 "period_groups": [
                     {
                         "period_group_id": "p1",
-                        "available_periods": [{"Year": 2026}],
+                        "available_periods": [{"Year": 2026}, {"Year": 2027}],
                     },
                 ],
             },
         ],
-        resolved_config={"model_parameter_semantic_repair_max_attempts": 2},
     )
 
     output = asyncio.run(nodes.propose_parameter_slots(state))
 
-    assert len(output["parameter_slots"]) == 1
-    assert output["semantic_repair_count"] == 1
-    assert [call["step"] for call in output["llm_calls"]] == [
-        "Step2 slot proposal",
-        "Step2 semantic repair",
-    ]
+    assert [
+        slot["slot_axes"][0]["axis_value"]
+        for slot in output["parameter_slots"]
+    ] == [2026, 2027]
+    assert all(
+        slot["_selection_method"] == "V4_GROUNDED_CATALOG_EXPANSION"
+        for slot in output["parameter_slots"]
+    )
+    assert [call["step"] for call in output["llm_calls"]] == ["Step2 slot proposal"]
 
 
-def test_step3_repairs_missing_evidence_and_uses_server_policy(
+def test_step3_uses_deterministic_weak_fallback_without_semantic_retry(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     candidate = {
@@ -715,6 +1196,19 @@ def test_step3_repairs_missing_evidence_and_uses_server_policy(
         "parameter_name": "LiqUtilAdjustment",
         "canonical_parameter_name": "LiqUtilAdjustment",
         "proposal_constraints": {"minimum": 0},
+        "routing_evidence": [
+            {
+                "decision": "DIRECT",
+                "evidence_basis": "DERIVED",
+                "direction": "decrease",
+                "direction_semantics": "parameter",
+                "lever_code": "liquefaction_utilization",
+                "causal_path_ko": "feedgas 차질로 이용률 하락",
+                "target_scope_ko": "검증된 exact slot",
+                "time_scope_ko": "2026년",
+                "rationale_ko": "catalog-pinned 방향",
+            },
+        ],
     }
     invalid = LLMValueProposalResponse(
         parameter_adjustments=[
@@ -731,26 +1225,7 @@ def test_step3_repairs_missing_evidence_and_uses_server_policy(
             ),
         ],
     )
-    repaired = LLMValueProposalResponse(
-        parameter_adjustments=[
-            LLMValueAdjustment(
-                candidate_key="liq-util",
-                rationale_ko="가동률 하락",
-                slot_values=[
-                    LLMValueCell(
-                        slot_key="slot-1",
-                        proposed_value=0.5,
-                        rationale_ko="정성적 feedgas 차질을 보수적으로 반영",
-                        evidence_basis="BOUNDED_ASSUMPTION",
-                        direction="decrease",
-                        severity="medium",
-                        assumption_ko="차질 강도를 medium으로 한정",
-                    ),
-                ],
-            ),
-        ],
-    )
-    responses = [invalid, repaired]
+    responses = [invalid]
 
     async def fake_invoke(**_: object) -> SimpleNamespace:
         return SimpleNamespace(result=responses.pop(0), usage=None, model="test")
@@ -781,21 +1256,104 @@ def test_step3_repairs_missing_evidence_and_uses_server_policy(
             },
         ],
         resolved_config={
-            "model_parameter_semantic_repair_max_attempts": 2,
             "model_parameter_variation_mode": "balanced",
         },
     )
 
     output = asyncio.run(nodes.propose_parameter_values(state))
 
-    assert output["parameter_adjustments"][0]["value_grid"][0][
-        "proposed_value"
-    ] == pytest.approx(0.72)
-    assert output["semantic_repair_count"] == 1
-    assert [call["step"] for call in output["llm_calls"]] == [
-        "Step3 value proposal",
-        "Step3 semantic repair",
+    value = output["parameter_adjustments"][0]["value_grid"][0]["proposed_value"]
+    assert value < 0.8
+    assert output["parameter_adjustments"][0]["_variation_policy_trace"][0]["applied_severity"] == "weak"
+    assert any("deterministic weak fallback" in warning for warning in output["validation_warnings"])
+    assert [call["step"] for call in output["llm_calls"]] == ["Step3 value proposal"]
+
+
+def test_step3_no_change_fallback_requires_one_unambiguous_parameter_direction() -> None:
+    candidate = {
+        "candidate_key": "shipping-cost",
+        "mapping_strategy": "v4",
+        "parameter_name": "ShippingCost",
+        "canonical_parameter_name": "ShippingCost",
+        "routing_evidence": [
+            {
+                "direction": "increase",
+                "direction_semantics": "parameter",
+                "lever_code": "regional_price_spread",
+            },
+        ],
+    }
+    slots = [
+        {
+            "candidate_key": "shipping-cost",
+            "slot_key": "slot-1",
+            "slot_axes": [{"axis_name": "Year", "axis_value": 2027}],
+        },
     ]
+    references = [
+        {
+            "candidate_key": "shipping-cost",
+            "slot_key": "slot-1",
+            "axes": {"Year": 2027},
+            "value": 100_000.0,
+            "reference_id": "ref-1",
+        },
+    ]
+    unchanged = LLMValueAdjustment(
+        candidate_key="shipping-cost",
+        rationale_ko="기준값 유지",
+        slot_values=[
+            LLMValueCell(
+                slot_key="slot-1",
+                proposed_value=100_000.0,
+                rationale_ko="변화 없음",
+                evidence_basis="DERIVED",
+                direction="unchanged",
+                calculation_ko="기준값 유지",
+            ),
+        ],
+    )
+
+    fallback_keys = nodes._derived_no_change_candidate_keys(  # noqa: SLF001
+        [unchanged],
+        slots,
+        references,
+    )
+    replaced, warnings = nodes._apply_deterministic_value_fallbacks(  # noqa: SLF001
+        [unchanged],
+        [candidate],
+        slots,
+        references,
+        fallback_candidate_keys=fallback_keys,
+        variation_mode="balanced",
+    )
+
+    assert fallback_keys == {"shipping-cost"}
+    assert replaced[0].slot_values[0].evidence_basis == "BOUNDED_ASSUMPTION"
+    assert replaced[0].slot_values[0].direction == "increase"
+    assert len(warnings) == 1
+
+    conflicted = {
+        **candidate,
+        "routing_evidence": [
+            *candidate["routing_evidence"],
+            {
+                "direction": "decrease",
+                "direction_semantics": "parameter",
+                "lever_code": "route_disruption",
+            },
+        ],
+    }
+    retained, conflict_warnings = nodes._apply_deterministic_value_fallbacks(  # noqa: SLF001
+        [unchanged],
+        [conflicted],
+        slots,
+        references,
+        fallback_candidate_keys=fallback_keys,
+        variation_mode="balanced",
+    )
+    assert retained == [unchanged]
+    assert conflict_warnings == []
 
 
 def test_sibling_scenarios_are_comparison_only_in_v4_prompt() -> None:
@@ -845,4 +1403,5 @@ def test_v4_value_prompt_exposes_mode_and_policy_without_new_public_fields(
     )
 
     assert packet["variation_mode"] == "balanced"
-    assert packet["variation_policy_release"] == "bounded-expert-v1"
+    assert packet["variation_policy_release"] == "bounded-expert-v3"
+    assert packet["variation_profile_enabled"] is True

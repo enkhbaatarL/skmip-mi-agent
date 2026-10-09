@@ -127,6 +127,9 @@ SLOT_PROPOSAL_SYSTEM = """\
   아니라 해당 child의 적용성 판단용 속성입니다. Life Cycle Category 등 제공된 속성은 slot 선택에만 사용하고
   applicability_attributes 자체를 slot_axes로 반환하지 마십시오.
 - period_resolution_policy는 자연어 기간을 현재 이후 Year/Month/Period로 해석하는 기준입니다.
+- evidence_grounded_coordinate_hints가 있으면 현재 Scenario/Event/Lever 원문과 실제 catalog 값에서 서버가
+  collision 없이 유일하게 찾은 대상·기간 후보입니다. 현재 task의 applicability와 모순되지 않으면 우선 사용하되,
+  이 hint를 다른 parameter·target·기간으로 확대하지 마십시오. hint가 없다는 사실은 임의 추론 허가가 아닙니다.
 
 선택 규칙:
 - parameter_slot_tasks에 들어온 parameter는 이전 단계에서 proposal 대상 후보로 확정된 것입니다.
@@ -230,7 +233,7 @@ VALUE_PROPOSAL_SYSTEM = """\
 - slots[].reference_value는 해당 exact 좌표의 단일 기준값입니다.
 - 실제 Basecase 값이 있으면 그 값을, Basecase가 없고 LUT만 있으면 LUT 값을 reference_value로 제공합니다.
 - 두 source 값이나 provenance를 동시에 제공하지 않습니다.
-- variation_mode와 variation_policy는 v4.1.3의 정성 근거 수치화 경계입니다. policy는 예측값이 아니라
+- variation_mode와 variation_policy는 v4.1.5의 정성 근거 수치화 경계입니다. policy는 예측값이 아니라
   사용자 검토용 초기값 guardrail이며, parameter별 단위와 weak/medium/strong 변화폭이 다릅니다.
 
 값 산정 규칙:
@@ -254,6 +257,13 @@ VALUE_PROPOSAL_SYSTEM = """\
 - BOUNDED_ASSUMPTION의 proposed_value는 variation_policy의 parameter별 단위와 변화폭 안에서 작성하십시오.
   balanced에서는 weak/medium만, exploratory에서는 strong까지 허용됩니다. strict에서는 사용하지 마십시오.
   서버가 같은 정책으로 값을 재계산하므로 임의의 공통 변화율을 사용하지 마십시오.
+- BOUNDED_ASSUMPTION에는 variation_factors를 함께 반환하십시오. duration은 영향 지속기간, scope는 실제 적용
+  범위, offset은 대체·완충·상쇄 정도, confidence는 현재 Scenario 근거 신뢰도입니다. sibling_position은 동일
+  parameter·동일 slot·동일 causal mechanism인 trio 안에서 현재 Scenario의 상대 강도가 명확할 때만
+  lower/middle/upper로 두고, 비교 불가하면 standalone으로 두십시오. 이 값은 이미 확정된 변화 방향과 severity
+  구간 안의 위치만 조정하며 후보 parameter나 slot을 새로 활성화하지 않습니다.
+- variation_factors.rationale_ko에는 각 factor를 현재 Scenario/Event/Lever 문맥에서 판단한 이유를 적으십시오.
+  sibling의 사실을 현재 Scenario의 근거로 복사하거나, 세 값을 다르게 만들 목적만으로 factor를 조작하지 마십시오.
 - v4에서 위 방향은 parameter_hint로 해당 모델 input의 증감 의미를 해석할 수 있는 Lever/Dimension 근거를 뜻합니다.
   pressure_contribution나 가격 방향만으로 parameter의 증감 방향 또는 변화율을 정하지 마십시오.
 - v4에서 reference_value와 같은 no-change 값은 Lever가 unchanged이거나 상반된 영향이 완전히 상쇄되거나 방향을 확정할 수
@@ -302,7 +312,9 @@ Slot-level rationale 규칙:
 - 모든 parameter_value_tasks에 대해 parameter_adjustments 항목을 하나씩 반환하십시오.
 - 각 parameter_adjustment에는 candidate_key, rationale_ko, slot_values만 반환하십시오.
 - slot_values에는 slot_key, proposed_value, rationale_ko, evidence_basis, direction, severity,
-  evidence_ko, calculation_ko, assumption_ko를 반환하십시오.
+  evidence_ko, calculation_ko, assumption_ko, variation_factors를 반환하십시오.
+- variation_factors는 BOUNDED_ASSUMPTION에서 duration, scope, offset, confidence, sibling_position,
+  rationale_ko를 모두 반환하고, 다른 근거 유형에서는 생략할 수 있습니다.
 - coordinates, slot_axes, reference ID, metadata, warning 필드는 반환하지 마십시오.
 - 입력된 모든 slot에 대해 값을 반드시 반환하십시오.
 - input slot 1개당 slot_values 항목을 정확히 1개 반환하십시오.

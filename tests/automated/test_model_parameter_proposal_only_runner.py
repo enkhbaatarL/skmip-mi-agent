@@ -87,6 +87,7 @@ def _options(
     *scenario_ids: int,
     execute: bool = True,
     scenario_group_id: int | None = None,
+    replay_covered: bool = False,
 ) -> runner.ProposalOnlyOptions:
     return runner.ProposalOnlyOptions(
         execute=execute,
@@ -94,6 +95,7 @@ def _options(
         scenario_group_id=scenario_group_id,
         capability_release=runner.BASELINE_CAPABILITY_RELEASE,
         evidence_path=tmp_path / "proposal-only.json",
+        replay_covered=replay_covered,
     )
 
 
@@ -157,7 +159,10 @@ def test_required_mi_base_fallback_mode_blocks_before_resource_or_scenario_work(
     monkeypatch.setattr(
         runner,
         "get_settings",
-        lambda: SimpleNamespace(model_parameter_mi_base_fallback=fallback_policy),
+        lambda: SimpleNamespace(
+            model_parameter_mi_base_fallback=fallback_policy,
+            model_dump=lambda **_kwargs: {},
+        ),
     )
     options = runner.ProposalOnlyOptions(
         execute=True,
@@ -195,6 +200,20 @@ def test_evidence_path_is_reserved_exclusively(tmp_path: Path) -> None:
     with pytest.raises(FileExistsError):
         runner._reserve_evidence_path(path, {"status": "SHOULD_NOT_OVERWRITE"})  # noqa: SLF001
     assert json.loads(path.read_text(encoding="utf-8"))["status"] == "RESERVED"
+
+
+def test_config_snapshot_captures_local_neuro_and_runtime_without_secrets() -> None:
+    snapshot = runner._model_parameter_config_snapshot()  # noqa: SLF001
+
+    assert snapshot["top_level_key_parity"] is True
+    for section in ("local_declared", "neuro_declared", "runtime_effective"):
+        values = snapshot[section]
+        assert values["model_parameter_proposal_flow_release"] == "v4.1.5"
+        assert values["model_parameter_variation_profile_enabled"] is True
+        assert values["model_parameter_grounded_slot_recovery_enabled"] is True
+        storage = values["model_parameter_resource_storage"]
+        assert storage["access_key_id"] == "<redacted>"
+        assert storage["secret_access_key"] == "<redacted>"
 
 
 @pytest.mark.parametrize(
@@ -261,6 +280,32 @@ def test_uncovered_guard_hard_stops_identity_mismatch() -> None:
     assert result["decision"] == "HARD_STOP"
     assert result["reason_code"] == "PROPOSAL_GUARD_IDENTITY_MISMATCH"
     assert result["hard_stop"] is True
+
+
+def test_release_replay_allows_proposed_but_not_confirmed_or_processing() -> None:
+    proposed = runner._classify_uncovered_guard(  # noqa: SLF001
+        scenario_id=101,
+        scenario_group_id=1_101,
+        rows=(_proposal_row(101, 1, status="PROPOSED"),),
+        replay_covered=True,
+    )
+    confirmed = runner._classify_uncovered_guard(  # noqa: SLF001
+        scenario_id=101,
+        scenario_group_id=1_101,
+        rows=(_proposal_row(101, 2, status="CONFIRMED"),),
+        replay_covered=True,
+    )
+    processing = runner._classify_uncovered_guard(  # noqa: SLF001
+        scenario_id=101,
+        scenario_group_id=1_101,
+        rows=(_proposal_row(101, 3, status="PROCESSING"),),
+        replay_covered=True,
+    )
+
+    assert proposed["reason_code"] == "PROPOSED_RELEASE_REPLAY"
+    assert proposed["eligible"] is True
+    assert confirmed["eligible"] is False
+    assert processing["hard_stop"] is True
 
 
 def test_read_only_default_discovers_without_evaluating_or_writing(tmp_path: Path) -> None:
@@ -1088,6 +1133,8 @@ def test_successful_scenarios_execute_once_sequentially_and_update_sanitized_evi
         ("evaluate", 102),
         ("fetch", 102),
         ("snapshot", 102),
+        ("fetch", 101),
+        ("fetch", 102),
     ]
     assert write_attempt_counts[-3:] == [1, 2, 2]
     serialized = _options(tmp_path, 101, 102).evidence_path.read_text(encoding="utf-8")
@@ -1106,6 +1153,8 @@ def test_successful_scenarios_execute_once_sequentially_and_update_sanitized_evi
         "sequential": True,
         "single_worker_best_effort": True,
         "uncovered_only": True,
+        "append_only_release_replay": False,
+        "existing_proposal_rows_preserved": True,
     }
 
 
@@ -1298,6 +1347,53 @@ def test_second_campaign_skips_proposed_row_created_by_first_campaign(tmp_path: 
     assert second["selection"]["covered_scenario_ids"] == [101]
     assert second["attempts"] == []
     assert evaluated == [101]
+
+
+def test_release_replay_appends_one_new_row_and_pins_final_campaign_readback(
+    tmp_path: Path,
+) -> None:
+    history = [_proposal_row(101, 700)]
+
+    async def evaluate(scenario_id: int) -> dict[str, object]:
+        history.append(_proposal_row(scenario_id, 701))
+        return {
+            "final_response": {
+                "status": "success",
+                "message": "done",
+                "data": {
+                    "modelParamProposalId": 701,
+                    "scenarioId": scenario_id,
+                    "scenarioGroupId": scenario_id + 1_000,
+                    "eventId": None,
+                    "proposalParameters": [{"parameterName": "GDP"}],
+                },
+            },
+        }
+
+    dependencies = runner.RunnerDependencies(
+        load_context=_context,
+        snapshot_proposal_rows=lambda _group_id, _scenario_ids: tuple(history),
+        evaluate_scenario=evaluate,
+        fetch_proposal=lambda proposal_id: next(
+            dict(row) for row in history if row["model_param_proposal_id"] == proposal_id
+        ),
+        failure_trace=lambda _exc: {},
+    )
+
+    evidence = asyncio.run(
+        runner.run_campaign(
+            _options(tmp_path, 101, replay_covered=True),
+            dependencies=dependencies,
+        ),
+    )
+
+    assert evidence["status"] == "PASS"
+    assert [row["model_param_proposal_id"] for row in history] == [700, 701]
+    assert evidence["manifest"]["execution_policy_version"] == "release-replay-v1"
+    assert evidence["safety"]["append_only_release_replay"] is True
+    assert evidence["selection"]["preexisting_proposal_scenario_ids"] == [101]
+    assert evidence["selection"]["campaign_proposal_ids_by_scenario"] == {"101": 701}
+    assert [row["model_param_proposal_id"] for row in evidence["final_campaign_readback"]] == [701]
 
 
 def test_success_integrity_rejects_empty_or_mismatched_persisted_payload() -> None:

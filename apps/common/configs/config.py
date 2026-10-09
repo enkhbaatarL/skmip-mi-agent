@@ -224,7 +224,7 @@ class Settings(BaseSettings):
     llm_structured_output_strict: bool = Field(default=False)
 
     # Model parameter proposal
-    model_parameter_proposal_flow_release: str = Field(default="v4.1.3", min_length=1)
+    model_parameter_proposal_flow_release: str = Field(default="v4.1.5", min_length=1)
     model_parameter_transient_retry_max_attempts: int = Field(default=2, ge=1, le=5)
     model_parameter_transient_retry_base_delay_seconds: float = Field(default=0.5, ge=0.0, le=30.0)
     model_parameter_transient_retry_max_jitter_seconds: float = Field(default=0.25, ge=0.0, le=30.0)
@@ -254,7 +254,8 @@ class Settings(BaseSettings):
         "balanced",
         "exploratory",
     ] = "balanced"
-    model_parameter_semantic_repair_max_attempts: int = Field(default=2, ge=0, le=2)
+    model_parameter_variation_profile_enabled: bool = Field(default=True)
+    model_parameter_grounded_slot_recovery_enabled: bool = Field(default=True)
     model_parameter_resource_storage: ModelParameterResourceStorageConfig = Field(
         default_factory=ModelParameterResourceStorageConfig,
     )

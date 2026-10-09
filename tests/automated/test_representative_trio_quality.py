@@ -84,12 +84,10 @@ def test_existing_read_only_report_exposes_proposed_value_kpi_without_fabricatin
         "object_storage_or_mi_base_bootstrapped": False,
         "application_data_mutated": False,
     }
-    assert "실제 Proposal 품질이나 성공을 뜻하지 않음" in report["read_only_kpi_interpretation"][
-        "pass_meaning"
-    ]
-    assert "실제 제안 Parameter 종류와 Scenario별 제안값 차이" in report[
-        "read_only_kpi_interpretation"
-    ]["not_evaluated"]
+    assert "실제 Proposal 품질이나 성공을 뜻하지 않음" in report["read_only_kpi_interpretation"]["pass_meaning"]
+    assert (
+        "실제 제안 Parameter 종류와 Scenario별 제안값 차이" in report["read_only_kpi_interpretation"]["not_evaluated"]
+    )
     assert kpis["same_types_with_any_different_values_status"] == "NOT_MEASURED_READ_ONLY"
     assert kpis["same_types_with_any_different_values_group_count"] is None
     assert kpis["same_types_with_any_different_values_applicable_group_count"] is None
@@ -103,7 +101,6 @@ def test_existing_read_only_report_exposes_proposed_value_kpi_without_fabricatin
     assert "Proposal/LLM 실행" in markdown
     assert "Read-only KPI 의미 및 해석 방법" in markdown
     assert "실제 Proposal 성공이나 제안값 품질 통과를 의미하지 않습니다" in markdown
-
 
 
 def _row(
@@ -254,7 +251,7 @@ def test_existing_pool_plan_gates_actual_preflight_release_identity() -> None:
                 "catalog_version": "v4.1",
                 "catalog_checksum": EXPECTED_CATALOG_CHECKSUM,
             },
-            "resource": {"proposal_flow_release": "v4.1.3"},
+            "resource": {"proposal_flow_release": "v4.1.5"},
         },
         "safety": {"confirmation_invoked": False, "callback_invoked": False},
         "selection": {"counts": {"discovered": 3, "preflight_fail": 0, "hard_stop": 0}},
@@ -367,7 +364,7 @@ def test_selection_plan_gates_actual_read_only_release_and_scope(tmp_path: Path)
                 "catalog_checksum": EXPECTED_CATALOG_CHECKSUM,
             },
             "resource": {
-                "proposal_flow_release": "v4.1.3",
+                "proposal_flow_release": "v4.1.5",
                 "proposal_capability_release_id": "extend16-v8",
             },
         },
@@ -529,7 +526,7 @@ def _full_plan_and_execution() -> tuple[dict[str, Any], dict[str, Any]]:
                 "catalog_version": "v4.1",
                 "catalog_checksum": EXPECTED_CATALOG_CHECKSUM,
             },
-            "resource": {"proposal_flow_release": "v4.1.3"},
+            "resource": {"proposal_flow_release": "v4.1.5"},
         },
         "safety": {
             "confirmation_invoked": False,
@@ -582,7 +579,7 @@ def test_evaluate_execution_distinguishes_type_and_exact_slot_value_variation() 
                 "catalog_version": "v4.1",
                 "catalog_checksum": EXPECTED_CATALOG_CHECKSUM,
             },
-            "resource": {"proposal_flow_release": "v4.1.3"},
+            "resource": {"proposal_flow_release": "v4.1.5"},
         },
         "safety": {
             "confirmation_invoked": False,
@@ -642,7 +639,7 @@ def test_value_differentiation_ignores_value_cell_order_only_changes() -> None:
                 "catalog_version": "v4.1",
                 "catalog_checksum": EXPECTED_CATALOG_CHECKSUM,
             },
-            "resource": {"proposal_flow_release": "v4.1.3"},
+            "resource": {"proposal_flow_release": "v4.1.5"},
         },
         "safety": {
             "confirmation_invoked": False,
@@ -692,7 +689,7 @@ def test_main_scenario_value_kpi_requires_all_three_signatures_to_differ() -> No
                 "catalog_version": "v4.1",
                 "catalog_checksum": EXPECTED_CATALOG_CHECKSUM,
             },
-            "resource": {"proposal_flow_release": "v4.1.3"},
+            "resource": {"proposal_flow_release": "v4.1.5"},
         },
         "safety": {
             "confirmation_invoked": False,
@@ -720,7 +717,7 @@ def test_merge_execution_evidence_combines_non_overlapping_release_matched_attem
             "release_id": "new-bc-v7",
             "contract_sha256": "contract",
             "proposal_capability_sha256": "capability",
-            "proposal_flow_release": "v4.1.3",
+            "proposal_flow_release": "v4.1.5",
         },
     }
     left = {
@@ -758,7 +755,7 @@ def test_merge_execution_evidence_rejects_duplicate_scenario_attempt() -> None:
                 "catalog_version": "v4.1",
                 "catalog_checksum": EXPECTED_CATALOG_CHECKSUM,
             },
-            "resource": {"proposal_flow_release": "v4.1.3"},
+            "resource": {"proposal_flow_release": "v4.1.5"},
         },
         "attempts": [{"scenario_id": 1, "status": "PASS"}],
     }
@@ -778,7 +775,7 @@ def test_post_fix_evidence_explicitly_replaces_attempt_and_keeps_audit() -> None
             "release_id": "new-bc-v7",
             "contract_sha256": "contract",
             "proposal_capability_sha256": "capability",
-            "proposal_flow_release": "v4.1.3",
+            "proposal_flow_release": "v4.1.5",
         },
     }
     baseline = {
@@ -864,7 +861,7 @@ def test_post_fix_evidence_requires_reason() -> None:
                 "catalog_version": "v4.1",
                 "catalog_checksum": EXPECTED_CATALOG_CHECKSUM,
             },
-            "resource": {"proposal_flow_release": "v4.1.3"},
+            "resource": {"proposal_flow_release": "v4.1.5"},
         },
         "attempts": [{"scenario_id": 1, "status": "ABSTAINED"}],
     }
@@ -980,7 +977,7 @@ def test_authorized_mi_base_trace_backfill_is_audited_and_not_reported_as_direct
                 "catalog_version": "v4.1",
                 "catalog_checksum": EXPECTED_CATALOG_CHECKSUM,
             },
-            "resource": {"proposal_flow_release": "v4.1.3"},
+            "resource": {"proposal_flow_release": "v4.1.5"},
             "required_mi_base_fallback_mode": "configured_fallback",
             "mi_base_fallback_policy": {
                 "active_case_unavailable_mode": "configured_fallback",
@@ -1151,8 +1148,7 @@ def test_regenerated_event_pool_testset_freezes_dynamic_40_group_identity() -> N
                 "event_id": event_id,
                 "event_title": f"Event {event_id}",
                 "selected_scenarios": [
-                    {"scenario_id": 10_000 + index * 10 + offset, "title": f"Scenario {offset}"}
-                    for offset in range(3)
+                    {"scenario_id": 10_000 + index * 10 + offset, "title": f"Scenario {offset}"} for offset in range(3)
                 ],
             },
         )
@@ -1178,9 +1174,7 @@ def test_regenerated_event_pool_testset_freezes_dynamic_40_group_identity() -> N
         sha256="sha",
     )
 
-    assert dataset["dataset_id"] == (
-        "model-parameter-v4.1.2-existing-event-pool-regenerated-40-groups-20261007"
-    )
+    assert dataset["dataset_id"] == ("model-parameter-v4.1.2-existing-event-pool-regenerated-40-groups-20261007")
     assert dataset["cohort_identity"]["event_pool_reused_exactly"] is True
     assert result["pass"] is True
 
@@ -1214,7 +1208,7 @@ def test_semantic_empty_retry_prohibition_is_not_counted_as_integrity_error() ->
                 "catalog_version": "v4.1",
                 "catalog_checksum": EXPECTED_CATALOG_CHECKSUM,
             },
-            "resource": {"proposal_flow_release": "v4.1.3"},
+            "resource": {"proposal_flow_release": "v4.1.5"},
         },
         "safety": {
             "confirmation_invoked": False,
@@ -1401,9 +1395,7 @@ def test_reusable_representative_trio_fixture_has_exact_frozen_cohort() -> None:
     groups = payload["groups"]
     scenario_ids = [scenario["scenario_id"] for group in groups for scenario in group["scenarios"]]
 
-    assert payload["dataset_id"] == (
-        "model-parameter-v4.1.2-expanded-event-cohort-20-groups-20261007"
-    )
+    assert payload["dataset_id"] == ("model-parameter-v4.1.2-expanded-event-cohort-20-groups-20261007")
     assert contract == {
         "api_version": "v4",
         "generation_strategy": "multi_event_model_lever_dimensions",
@@ -1433,9 +1425,7 @@ def test_existing_latest_representative_trio_fixture_has_frozen_40_group_cohort(
     scenario_ids = [scenario["scenario_id"] for group in groups for scenario in group["scenarios"]]
     event_signatures = [tuple(group["event_signature"]) for group in groups]
 
-    assert payload["dataset_id"] == (
-        "model-parameter-v4.1.2-existing-latest-distinct-40-groups-20261007"
-    )
+    assert payload["dataset_id"] == ("model-parameter-v4.1.2-existing-latest-distinct-40-groups-20261007")
     assert contract["selection_policy"] == SELECTION_POLICY
     assert contract["recency_policy"] == RECENCY_POLICY
     assert contract["source_mutation_policy"] == "read-only-existing-scenarios"
@@ -1506,7 +1496,8 @@ def test_immutable_testset_matches_plan_by_ordered_group_event_and_scenario_ids(
 def _explicit_slot_rationale() -> str:
     return (
         "대상·기간: Korea 2027; 근거 유형: BOUNDED_ASSUMPTION; 인과 경로: event→demand; "
-        "기준값: 1; 적용 정책: bounded; 계산: base x factor; 제안값: 2; 근거: test; "
+        "기준값: 1; 적용 정책: bounded; 변형 요인: duration=medium; "
+        "계산: base x factor; 제안값: 2; 근거: test; "
         "주요 가정: test assumption; 판단 설명: test judgment; 불확실성: review required"
     )
 
@@ -1521,8 +1512,7 @@ def _final_cohort_fixture_and_history() -> tuple[dict[str, Any], dict[str, Any]]
                 "event_signature": [100 + group_index],
                 "event_type_codes": [f"type_{group_index}"],
                 "scenarios": [
-                    {"scenario_id": scenario_id, "title": f"Scenario {scenario_id}"}
-                    for scenario_id in scenario_ids
+                    {"scenario_id": scenario_id, "title": f"Scenario {scenario_id}"} for scenario_id in scenario_ids
                 ],
             }
             for group_index, (group_id, scenario_ids) in enumerate(
@@ -1566,7 +1556,7 @@ def _final_cohort_fixture_and_history() -> tuple[dict[str, Any], dict[str, Any]]
                 "catalog_version": "v4.1",
                 "catalog_checksum": EXPECTED_CATALOG_CHECKSUM,
             },
-            "resource": {"proposal_flow_release": "v4.1.3"},
+            "resource": {"proposal_flow_release": "v4.1.5"},
         },
         "selection": {
             "counts": {
@@ -1587,11 +1577,7 @@ def _final_cohort_fixture_and_history() -> tuple[dict[str, Any], dict[str, Any]]
                 "uncovered_guard": {
                     "decision": "SKIP" if scenario_id in covered_ids else "ELIGIBLE",
                     "eligible": scenario_id not in covered_ids,
-                    "history": (
-                        [proposal_row(scenario_id, group_id)]
-                        if scenario_id in covered_ids
-                        else []
-                    ),
+                    "history": ([proposal_row(scenario_id, group_id)] if scenario_id in covered_ids else []),
                 },
             }
             for scenario_id, group_id in scenario_to_group.items()
@@ -1607,13 +1593,89 @@ def test_final_cohort_analysis_uses_all_scenarios_and_compares_only_full_trios()
 
     assert analysis["pass"] is True
     assert analysis["verdict"] == "PASS"
+
+
+def test_final_cohort_release_replay_uses_only_new_campaign_rows_and_renders_config() -> None:
+    testset, history = _final_cohort_fixture_and_history()
+    scenario_to_group = {1: 10, 2: 10, 3: 10, 4: 20, 5: 20, 6: 20}
+    campaign_rows = []
+    attempts = []
+    for scenario_id in (1, 2, 3, 4, 5):
+        old_row = history["preflight"][scenario_id - 1]["uncovered_guard"]["history"][0]
+        campaign_row = {
+            **old_row,
+            "model_param_proposal_id": 2000 + scenario_id,
+        }
+        campaign_rows.append(campaign_row)
+        attempts.append(
+            {
+                "scenario_id": scenario_id,
+                "scenario_group_id": scenario_to_group[scenario_id],
+                "status": "PASS",
+                "new_proposal_ids": [2000 + scenario_id],
+            },
+        )
+        history["preflight"][scenario_id - 1]["uncovered_guard"]["history"].append(
+            {
+                **old_row,
+                "model_param_proposal_id": 1500 + scenario_id,
+            },
+        )
+    history.update(
+        {
+            "schema_version": 6,
+            "status": "PASS",
+            "attempts": attempts,
+            "final_campaign_readback": campaign_rows,
+        },
+    )
+    history["manifest"].update(
+        {
+            "execution_policy_version": "release-replay-v1",
+            "model_parameter_config": {
+                "local_config_path": "envs/config.yaml",
+                "local_config_sha256": "a" * 64,
+                "neuro_config_path": "devops/k8s/configmap.yaml",
+                "neuro_config_sha256": "b" * 64,
+                "local_declared": {
+                    "model_parameter_proposal_flow_release": "v4.1.5",
+                },
+                "neuro_declared": {
+                    "model_parameter_proposal_flow_release": "v4.1.5",
+                },
+                "runtime_effective": {
+                    "model_parameter_proposal_flow_release": "v4.1.5",
+                },
+                "local_vs_neuro_differences": [],
+                "top_level_key_parity": True,
+            },
+        },
+    )
+    history["selection"].update(
+        {
+            "covered_scenario_ids": [],
+            "lifecycle_or_capability_skipped_scenario_ids": [6],
+            "campaign_proposal_ids_by_scenario": {
+                str(scenario_id): 2000 + scenario_id for scenario_id in (1, 2, 3, 4, 5)
+            },
+        },
+    )
+    history["preflight"][5]["status"] = "SKIP"
+
+    analysis = build_final_cohort_trio_analysis(testset, history)
+    rendered = render_final_cohort_trio_report(analysis)
+
+    assert analysis["pass"] is True
+    assert analysis["kpis"]["proposal_success_count"] == 5
+    assert analysis["final_history"]["proposal_source"] == "campaign-only append readback"
+    assert analysis["multiple_blocking_proposal_ids"] == {}
+    assert "실행·배포 Model Parameter Config" in rendered
+    assert '"model_parameter_proposal_flow_release": "v4.1.5"' in rendered
     assert analysis["kpis"]["proposal_success_count"] == 5
     assert analysis["kpis"]["scenario_count"] == 6
     assert analysis["kpis"]["triple_success_group_count"] == 1
     assert analysis["kpis"]["identical_parameter_type_group_count"] == 1
-    assert analysis["kpis"][
-        "same_types_with_all_three_scenario_values_distinct_group_count"
-    ] == 1
+    assert analysis["kpis"]["same_types_with_all_three_scenario_values_distinct_group_count"] == 1
     assert analysis["kpis"]["exact_common_slot_count"] == 1
     assert analysis["kpis"]["exact_common_slots_with_different_values"] == 1
     assert analysis["kpis"]["exact_common_slots_with_all_three_values_distinct_rate_percent"] == 100.0
@@ -1625,6 +1687,46 @@ def test_final_cohort_analysis_uses_all_scenarios_and_compares_only_full_trios()
     assert "5 / 6 (83.3%)" in markdown
     assert "1 / 1 (100.0%)" in markdown
     assert "| 2 | 20 | 4, 5, 6 | 2/3 | N/A | N/A | N/A | N/A |" in markdown
+
+
+def test_final_cohort_report_automatically_explains_proposal_gap_hotspots() -> None:
+    testset, history = _final_cohort_fixture_and_history()
+    history["attempts"] = [
+        {
+            "scenario_id": 6,
+            "scenario_group_id": 20,
+            "status": "ABSTAINED",
+            "elapsed_seconds": 12.5,
+            "failed_stage": "semantic abstention: step2",
+            "semantic_empty": {
+                "stage": "step2",
+                "reason_code": "ABSTAINED_INSUFFICIENT_EVIDENCE",
+                "message": "Plant와 Train을 exact slot에 연결할 근거가 부족합니다.",
+            },
+            "failure_trace": {
+                "semantic_stage_evidence": {
+                    "parameter_names": ["LiqUtilAdjustment"],
+                    "candidates": [{"parameter_name": "LiqUtilAdjustment"}],
+                    "selected_slots": [],
+                },
+            },
+        },
+    ]
+
+    analysis = build_final_cohort_trio_analysis(testset, history)
+    rendered = render_final_cohort_trio_report(analysis)
+    gaps = analysis["proposal_gap_analysis"]
+
+    assert gaps["semantic_abstention_count"] == 1
+    assert gaps["technical_failure_count"] == 0
+    assert gaps["parameter_frequency"] == {"LiqUtilAdjustment": 1}
+    assert gaps["stage_frequency"] == {"step2": 1}
+    assert gaps["scenario_group_frequency"] == {"20": 1}
+    assert gaps["recommendations"][0]["recommendation_id"] == "liq_exact_asset_grounding"
+    assert "미제안·실패 Hotspot과 개선 방향" in rendered
+    assert "| 6 | Scenario 6 | 20 |" in rendered
+    assert "LiqUtil/LiqProd Step 2 exact slot" in rendered
+    assert "Plant와 Train을 모두 식별하지 못하거나" in rendered
 
 
 def test_final_cohort_analysis_fails_closed_when_proposal_payload_is_missing() -> None:
@@ -1666,9 +1768,7 @@ def test_main_markdown_automatically_renders_attached_final_cohort_section() -> 
             for group in plan["groups"]
         ],
     }
-    attempts_by_scenario = {
-        int(attempt["scenario_id"]): attempt for attempt in execution["attempts"]
-    }
+    attempts_by_scenario = {int(attempt["scenario_id"]): attempt for attempt in execution["attempts"]}
     history = {
         "status": "PASS",
         "manifest": execution["manifest"],

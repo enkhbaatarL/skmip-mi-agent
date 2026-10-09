@@ -12,7 +12,8 @@ The evaluator separates three concepts that are easy to conflate:
 * different values on the exact same model slot coordinates.
 
 No proposal is created by this module. Proposal writes remain the responsibility
-of ``run_proposal_only.py`` and its uncovered-only safety contract.
+of ``run_proposal_only.py`` and its uncovered-only or explicit append-only
+release-replay safety contract.
 """
 
 from __future__ import annotations
@@ -34,7 +35,7 @@ EXPECTED_API_VERSION = "v4"
 EXPECTED_GENERATION_STRATEGY = "multi_event_model_lever_dimensions"
 EXPECTED_CATALOG_VERSION = "v4.1"
 EXPECTED_CATALOG_CHECKSUM = "7f4ef0b7aa60efb550b9175654fd82350f0c293debf880a9180e7e935db54d69"
-EXPECTED_PROPOSAL_FLOW_RELEASE = "v4.1.3"
+EXPECTED_PROPOSAL_FLOW_RELEASE = "v4.1.5"
 FIXED_TESTSET_SOURCE_FLOW_RELEASE = "v4.1.2"
 EXPANDED_EVENT_SELECTION_POLICY = "expanded_event_cohort/add-only"
 REGENERATED_EVENT_POOL_SELECTION_POLICY = "existing_event_pool/add-only-regenerated-scenarios"
@@ -62,6 +63,7 @@ EXPLICIT_SLOT_RATIONALE_SECTIONS = (
     "인과 경로:",
     "기준값:",
     "적용 정책:",
+    "변형 요인:",
     "계산:",
     "제안값:",
     "근거:",
@@ -92,7 +94,7 @@ READ_ONLY_KPI_COLUMN_DEFINITIONS = (
     ),
     (
         "Release 고정",
-        "Scenario Lever v4.1과 Proposal Flow v4.1.3이 실제 preflight 증적에 함께 기록됐는지",
+        "Scenario Lever v4.1과 Proposal Flow v4.1.5가 실제 preflight 증적에 함께 기록됐는지",
     ),
     (
         "Runtime-capable / coverage limit",
@@ -345,11 +347,7 @@ def select_representative_trio(
         for row in rows
         if (preflight := preflight_by_id.get(_row_id(row))) is not None and _runtime_capable(preflight)
     ]
-    current_write_eligible = [
-        row
-        for row in runtime_capable
-        if _current_write_eligible(preflight_by_id[_row_id(row)])
-    ]
+    current_write_eligible = [row for row in runtime_capable if _current_write_eligible(preflight_by_id[_row_id(row)])]
     eligible = [
         row
         for row in runtime_capable
@@ -473,9 +471,7 @@ def regenerated_event_pool_checks(
     hard_gates = hard_gates if isinstance(hard_gates, Mapping) else {}
     return {
         "regenerated_event_pool_policy": selection_policy == REGENERATED_EVENT_POOL_SELECTION_POLICY,
-        "regenerated_event_pool_has_40_unique_events": len(current_event_ids)
-        == len(set(current_event_ids))
-        == 40,
+        "regenerated_event_pool_has_40_unique_events": len(current_event_ids) == len(set(current_event_ids)) == 40,
         "source_event_pool_reused_exactly": list(current_event_ids) == list(source_event_ids),
         "new_group_ids_disjoint_from_original": bool(original_group_ids)
         and set(current_group_ids).isdisjoint(original_group_ids),
@@ -555,18 +551,10 @@ def build_selection_plan(
         baseline_event_ids = [int(item) for item in scenario_summary.get("source_event_ids") or []]
     summary_event_ids = [
         int(item)
-        for item in (
-            scenario_summary.get("expanded_event_ids")
-            or scenario_summary.get("source_event_ids")
-            or []
-        )
+        for item in (scenario_summary.get("expanded_event_ids") or scenario_summary.get("source_event_ids") or [])
     ]
     selected_ids = [scenario["scenario_id"] for group in selected_groups for scenario in group["selected_scenarios"]]
-    campaign_scenario_ids = {
-        _row_id(row)
-        for group in groups
-        for row in group["rows"]
-    }
+    campaign_scenario_ids = {_row_id(row) for group in groups for row in group["rows"]}
     preflight_scenario_id_rows = [
         int(item["scenario_id"])
         for item in preflight.get("preflight") or []
@@ -584,19 +572,14 @@ def build_selection_plan(
     preflight_selection = preflight.get("selection")
     preflight_selection = preflight_selection if isinstance(preflight_selection, Mapping) else {}
     preflight_selection_counts = preflight_selection.get("counts")
-    preflight_selection_counts = (
-        preflight_selection_counts if isinstance(preflight_selection_counts, Mapping) else {}
-    )
+    preflight_selection_counts = preflight_selection_counts if isinstance(preflight_selection_counts, Mapping) else {}
     summary_counts = scenario_summary.get("counts")
     summary_counts = summary_counts if isinstance(summary_counts, Mapping) else {}
-    explicit_retries = [
-        item for item in scenario_summary.get("explicit_retries") or [] if isinstance(item, Mapping)
-    ]
+    explicit_retries = [item for item in scenario_summary.get("explicit_retries") or [] if isinstance(item, Mapping)]
     incomplete_attempt_group_ids = [
         int(item["superseded_group_id"])
         for item in explicit_retries
-        if item.get("superseded_group_id") is not None
-        and item.get("superseded_group_id") != item.get("retry_group_id")
+        if item.get("superseded_group_id") is not None and item.get("superseded_group_id") != item.get("retry_group_id")
     ]
     expected_group_count = int(summary_counts.get("requested_group_count") or len(scenario_summary.get("cases") or []))
     structural_checks = {
@@ -615,12 +598,9 @@ def build_selection_plan(
         "preflight_read_only_passed": preflight.get("mode") == "read-only"
         and preflight.get("status") == "PASS"
         and not (preflight.get("attempts") or []),
-        "preflight_scope_matches_all_generated_scenarios": preflight_scenario_ids
-        == campaign_scenario_ids,
-        "preflight_scenario_ids_unique": len(preflight_scenario_id_rows)
-        == len(preflight_scenario_ids),
-        "preflight_count_matches_rows": preflight_selection_counts.get("discovered")
-        == len(preflight_scenario_id_rows),
+        "preflight_scope_matches_all_generated_scenarios": preflight_scenario_ids == campaign_scenario_ids,
+        "preflight_scenario_ids_unique": len(preflight_scenario_id_rows) == len(preflight_scenario_ids),
+        "preflight_count_matches_rows": preflight_selection_counts.get("discovered") == len(preflight_scenario_id_rows),
         "preflight_has_no_fail_or_hard_stop": preflight_selection_counts.get("preflight_fail") == 0
         and preflight_selection_counts.get("hard_stop") == 0,
         "preflight_scenario_lever_release_exact": preflight_capability.get("catalog_version")
@@ -629,8 +609,7 @@ def build_selection_plan(
         == EXPECTED_CATALOG_CHECKSUM,
         "preflight_proposal_flow_release_exact": preflight_resource.get("proposal_flow_release")
         == EXPECTED_PROPOSAL_FLOW_RELEASE,
-        "preflight_capability_release_exact": preflight_resource.get("proposal_capability_release_id")
-        == "extend16-v8",
+        "preflight_capability_release_exact": preflight_resource.get("proposal_capability_release_id") == "extend16-v8",
         "preflight_write_paths_not_invoked": preflight_safety.get("confirmation_invoked") is False
         and preflight_safety.get("callback_invoked") is False,
     }
@@ -680,8 +659,7 @@ def build_selection_plan(
         },
     )
     groups_with_three_write_eligible = sum(
-        item["selection_diagnostics"]["current_write_eligible_scenario_count"] >= 3
-        for item in selected_groups
+        item["selection_diagnostics"]["current_write_eligible_scenario_count"] >= 3 for item in selected_groups
     )
     return {
         "schema_version": 1,
@@ -809,6 +787,45 @@ def _exact_slot_values(parameters: Sequence[Mapping[str, Any]]) -> dict[str, obj
     return values
 
 
+def _exact_slot_parameter_name(slot_key: str) -> str:
+    try:
+        payload = json.loads(slot_key)
+    except (TypeError, ValueError):
+        return ""
+    return str(payload.get("parameter_name") or "") if isinstance(payload, Mapping) else ""
+
+
+def _power_mix_atomic_vectors(
+    parameters: Sequence[Mapping[str, Any]],
+) -> dict[str, str]:
+    vectors: dict[str, dict[str, object]] = {}
+    for parameter in parameters:
+        if _parameter_name(parameter) != "PowerMix":
+            continue
+        for cell in parameter.get("values") or []:
+            if not isinstance(cell, Mapping):
+                continue
+            coordinates = {key: value for key, value in cell.items() if key not in NON_SLOT_KEYS}
+            member = str(coordinates.pop("Energy Source", "") or "").strip()
+            if not member:
+                continue
+            group_key = json.dumps(
+                {"parameter_name": "PowerMix", "coordinates": coordinates},
+                ensure_ascii=False,
+                sort_keys=True,
+                default=str,
+            )
+            vectors.setdefault(group_key, {})[member] = _proposed_value(cell)
+    return {
+        group_key: json.dumps(
+            sorted(members.items()),
+            ensure_ascii=False,
+            default=str,
+        )
+        for group_key, members in vectors.items()
+    }
+
+
 def _percent(numerator: int, denominator: int) -> float:
     return round(100 * numerator / denominator, 1) if denominator else 0.0
 
@@ -822,10 +839,12 @@ def _group_scenarios(group: Mapping[str, Any]) -> list[Mapping[str, Any]]:
 
 def _slot_rationale_audit(
     parameters: Sequence[Mapping[str, Any]],
-) -> tuple[int, int, int, list[dict[str, Any]]]:
+) -> tuple[int, int, int, int, int, list[dict[str, Any]]]:
     total = 0
     nonempty = 0
     explicit = 0
+    legacy_explainable = 0
+    missing = 0
     incomplete: list[dict[str, Any]] = []
     for parameter in parameters:
         parameter_name = _parameter_name(parameter)
@@ -836,22 +855,279 @@ def _slot_rationale_audit(
             rationale = str(cell.get("rationale") or "").strip()
             if rationale:
                 nonempty += 1
-            missing_sections = [
-                section for section in EXPLICIT_SLOT_RATIONALE_SECTIONS if section not in rationale
-            ]
+            missing_sections = [section for section in EXPLICIT_SLOT_RATIONALE_SECTIONS if section not in rationale]
             if rationale and not missing_sections:
                 explicit += 1
                 continue
+            if rationale:
+                legacy_explainable += 1
+                classification = "legacy_explainable"
+            else:
+                missing += 1
+                classification = "missing"
             coordinates = {key: value for key, value in cell.items() if key not in NON_SLOT_KEYS}
             incomplete.append(
                 {
                     "parameter_name": parameter_name,
                     "coordinates": coordinates,
                     "rationale_nonempty": bool(rationale),
+                    "classification": classification,
                     "missing_sections": missing_sections,
                 },
             )
-    return total, nonempty, explicit, incomplete
+    return total, nonempty, explicit, legacy_explainable, missing, incomplete
+
+
+def _attempt_failure_parameter_names(attempt: Mapping[str, Any]) -> list[str]:
+    failure_trace = attempt.get("failure_trace")
+    failure_trace = failure_trace if isinstance(failure_trace, Mapping) else {}
+    evidence = failure_trace.get("semantic_stage_evidence")
+    evidence = evidence if isinstance(evidence, Mapping) else {}
+    names: set[str] = set()
+    for value in evidence.get("parameter_names") or []:
+        if str(value or "").strip():
+            names.add(str(value).strip())
+    for field in ("candidates", "selected_slots", "adjustments"):
+        for item in evidence.get(field) or []:
+            if not isinstance(item, Mapping):
+                continue
+            name = str(item.get("parameter_name") or "").strip()
+            if name:
+                names.add(name)
+    if names:
+        return sorted(names)
+    semantic = attempt.get("semantic_empty")
+    semantic = semantic if isinstance(semantic, Mapping) else {}
+    if semantic.get("stage") == "step1_5":
+        return ["<Step1.5 미결정 routing>"]
+    return ["<미확인>"]
+
+
+def _proposal_gap_recommendations(cases: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    stage_parameter_counts: Counter[tuple[str, str]] = Counter()
+    reason_counts: Counter[str] = Counter()
+    status_counts: Counter[str] = Counter()
+    for case in cases:
+        status = str(case.get("status") or "UNKNOWN")
+        stage = str(case.get("stage") or "unknown")
+        status_counts[status] += 1
+        reason_counts[str(case.get("reason_code") or "UNKNOWN")] += 1
+        for parameter_name in case.get("parameter_names") or ["<미확인>"]:
+            stage_parameter_counts[(stage, str(parameter_name))] += 1
+
+    recommendations: list[dict[str, Any]] = []
+
+    def add(
+        recommendation_id: str,
+        *,
+        count: int,
+        target: str,
+        action: str,
+        safety_boundary: str,
+    ) -> None:
+        if count <= 0:
+            return
+        recommendations.append(
+            {
+                "recommendation_id": recommendation_id,
+                "observed_case_count": count,
+                "target": target,
+                "action": action,
+                "safety_boundary": safety_boundary,
+            },
+        )
+
+    unresolved_routing_count = stage_parameter_counts[("step1_5", "<Step1.5 미결정 routing>")]
+    add(
+        "step1_5_grounded_candidate_narrowing",
+        count=unresolved_routing_count,
+        target="Step 1.5 미결정 routing",
+        action=(
+            "선택 Lever의 causal axis와 Event/Scenario의 명시 대상·기간을 이용해 후보를 먼저 좁히고, "
+            "후보별 선택/배제 근거를 구조화해 관측한다. 반복 hotspot은 parameter별 eligibility policy로 승격한다."
+        ),
+        safety_boundary=(
+            "후보 축소는 catalog binding 안에서만 수행하고, 근거가 한 후보로 수렴하지 않으면 계속 기권한다."
+        ),
+    )
+    liq_step2_count = sum(
+        count
+        for (stage, parameter_name), count in stage_parameter_counts.items()
+        if stage == "step2" and parameter_name in {"LiqUtilAdjustment", "LiqProdAdjustment"}
+    )
+    add(
+        "liq_exact_asset_grounding",
+        count=liq_step2_count,
+        target="LiqUtil/LiqProd Step 2 exact slot",
+        action=(
+            "Event·Scenario의 프로젝트/설비 표기를 canonical Plant·Train alias 사전과 대조하고, "
+            "고유하게 일치할 때만 해당 기간의 catalog slot을 복구한다."
+        ),
+        safety_boundary=(
+            "Plant와 Train을 모두 식별하지 못하거나 복수 target이면 임의의 대표 설비를 선택하지 않는다."
+        ),
+    )
+    pipeline_step2_count = stage_parameter_counts[("step2", "PipelineAdjustment")]
+    add(
+        "pipeline_route_alias_grounding",
+        count=pipeline_step2_count,
+        target="PipelineAdjustment Step 2 exact slot",
+        action=(
+            "파이프라인 고유명과 From·To 조합의 alias/방향 정규화를 추가하고 catalog의 유일 경로로 해소되는지 "
+            "사전 검사한다."
+        ),
+        safety_boundary="고유명 또는 From·To가 유일한 catalog target으로 수렴하지 않으면 제안하지 않는다.",
+    )
+    no_change_count = reason_counts["ABSTAINED_NO_CHANGE"]
+    add(
+        "step3_no_change_policy_review",
+        count=no_change_count,
+        target="Step 3 no-change",
+        action=(
+            "unchanged가 선택 branch의 실제 중립 결론인지, rounding/기준값 재사용 때문인지 분리 진단하고 "
+            "허용된 parameter policy에 한해 최소 유효 변화폭과 bounded-assumption 적용 여부를 검토한다."
+        ),
+        safety_boundary="가시적 차이를 만들 목적만으로 방향이나 값을 강제하지 않으며 정당한 no-change는 유지한다.",
+    )
+    technical_failure_count = sum(status_counts[name] for name in ("FAIL", "BLOCKED"))
+    add(
+        "technical_failure_resilience",
+        count=technical_failure_count,
+        target="기술 실패",
+        action=(
+            "실패 단계·prompt bytes·latency를 기준으로 입력 축약, timeout, 내부 단일 재시도 정책을 조정하고 "
+            "DB write 전후 무결성 검사를 유지한다."
+        ),
+        safety_boundary="외부 runner 자동 재실행과 중복 Proposal write는 허용하지 않는다.",
+    )
+    capability_limit_count = status_counts["COVERAGE_LIMIT"]
+    add(
+        "capability_limit_separation",
+        count=capability_limit_count,
+        target="Capability limit",
+        action="현 release 범위 밖 사례로 별도 집계하고, 향후 master 확대 의사결정의 입력으로만 사용한다.",
+        safety_boundary="이번 개선 범위에서는 비활성 Parameter를 런타임 후보로 우회 활성화하지 않는다.",
+    )
+    return recommendations
+
+
+def _proposal_gap_analysis(
+    groups: Sequence[Mapping[str, Any]],
+    attempts: Sequence[Mapping[str, Any]],
+    preflight_by_scenario: Mapping[int, Sequence[Mapping[str, Any]]],
+) -> dict[str, Any]:
+    scenario_context: dict[int, dict[str, Any]] = {}
+    for group in groups:
+        event_ids = [int(value) for value in group.get("event_signature") or []]
+        event_titles = [
+            str(item.get("title") or "").strip()
+            for item in group.get("events") or []
+            if isinstance(item, Mapping) and str(item.get("title") or "").strip()
+        ]
+        event_type_codes = [str(value) for value in group.get("event_type_codes") or []]
+        for scenario in _group_scenarios(group):
+            scenario_id = int(scenario.get("scenario_id") or 0)
+            if scenario_id <= 0:
+                continue
+            scenario_context[scenario_id] = {
+                "scenario_group_id": int(group.get("scenario_group_id") or 0),
+                "group_title": str(group.get("group_title") or ""),
+                "scenario_title": str(scenario.get("title") or ""),
+                "event_ids": event_ids,
+                "event_titles": event_titles,
+                "event_type_codes": event_type_codes,
+            }
+
+    cases: list[dict[str, Any]] = []
+    attempted_ids: set[int] = set()
+    for attempt in attempts:
+        scenario_id = int(attempt.get("scenario_id") or 0)
+        if scenario_id <= 0:
+            continue
+        attempted_ids.add(scenario_id)
+        status = str(attempt.get("status") or "UNKNOWN")
+        if status == "PASS":
+            continue
+        semantic = attempt.get("semantic_empty")
+        semantic = semantic if isinstance(semantic, Mapping) else {}
+        context = scenario_context.get(scenario_id, {})
+        cases.append(
+            {
+                "scenario_id": scenario_id,
+                "scenario_group_id": int(
+                    attempt.get("scenario_group_id") or context.get("scenario_group_id") or 0,
+                ),
+                "scenario_title": context.get("scenario_title"),
+                "group_title": context.get("group_title"),
+                "event_ids": context.get("event_ids") or [],
+                "event_titles": context.get("event_titles") or [],
+                "event_type_codes": context.get("event_type_codes") or [],
+                "status": status,
+                "stage": str(semantic.get("stage") or attempt.get("failed_stage") or "unknown"),
+                "reason_code": str(semantic.get("reason_code") or status),
+                "parameter_names": _attempt_failure_parameter_names(attempt),
+                "message": str(semantic.get("message") or attempt.get("error") or "").strip(),
+                "elapsed_seconds": attempt.get("elapsed_seconds"),
+            },
+        )
+
+    for scenario_id, rows in preflight_by_scenario.items():
+        if scenario_id in attempted_ids or len(rows) != 1:
+            continue
+        preflight = rows[0]
+        if preflight.get("status") != "SKIP":
+            continue
+        context = scenario_context.get(scenario_id, {})
+        skip_reasons = [str(value) for value in preflight.get("skip_reasons") or []]
+        cases.append(
+            {
+                "scenario_id": scenario_id,
+                "scenario_group_id": int(
+                    preflight.get("scenario_group_id") or context.get("scenario_group_id") or 0,
+                ),
+                "scenario_title": context.get("scenario_title"),
+                "group_title": context.get("group_title"),
+                "event_ids": context.get("event_ids") or [],
+                "event_titles": context.get("event_titles") or [],
+                "event_type_codes": context.get("event_type_codes") or [],
+                "status": "COVERAGE_LIMIT",
+                "stage": "preflight",
+                "reason_code": "NO_RUNTIME_ALLOWED_PARAMETER",
+                "parameter_names": ["<Capability limit>"],
+                "message": "; ".join(skip_reasons) or "no runtime-allowed parameter candidate",
+                "elapsed_seconds": None,
+            },
+        )
+
+    status_frequency: Counter[str] = Counter()
+    stage_frequency: Counter[str] = Counter()
+    reason_frequency: Counter[str] = Counter()
+    parameter_frequency: Counter[str] = Counter()
+    scenario_group_frequency: Counter[str] = Counter()
+    for case in cases:
+        status_frequency[str(case["status"])] += 1
+        stage_frequency[str(case["stage"])] += 1
+        reason_frequency[str(case["reason_code"])] += 1
+        scenario_group_frequency[str(case["scenario_group_id"])] += 1
+        parameter_frequency.update(str(value) for value in case.get("parameter_names") or [])
+
+    def ordered(counter: Counter[str]) -> dict[str, int]:
+        return dict(sorted(counter.items(), key=lambda item: (-item[1], item[0])))
+
+    cases.sort(key=lambda item: (int(item["scenario_group_id"]), int(item["scenario_id"])))
+    return {
+        "case_count": len(cases),
+        "semantic_abstention_count": status_frequency["ABSTAINED"],
+        "technical_failure_count": sum(status_frequency[name] for name in ("FAIL", "BLOCKED")),
+        "coverage_limit_count": status_frequency["COVERAGE_LIMIT"],
+        "status_frequency": ordered(status_frequency),
+        "stage_frequency": ordered(stage_frequency),
+        "reason_frequency": ordered(reason_frequency),
+        "parameter_frequency": ordered(parameter_frequency),
+        "scenario_group_frequency": ordered(scenario_group_frequency),
+        "cases": cases,
+        "recommendations": _proposal_gap_recommendations(cases),
+    }
 
 
 def build_final_cohort_trio_analysis(
@@ -891,6 +1167,30 @@ def build_final_cohort_trio_analysis(
             expected_group_by_scenario[scenario_id] = group_id
             expected_scenario_ids.append(scenario_id)
 
+    manifest = history.get("manifest")
+    manifest = manifest if isinstance(manifest, Mapping) else {}
+    execution_policy_version = str(manifest.get("execution_policy_version") or "")
+    release_replay = execution_policy_version == "release-replay-v1"
+    raw_campaign_readback = history.get("final_campaign_readback")
+    campaign_readback = (
+        [row for row in raw_campaign_readback or [] if isinstance(row, Mapping)]
+        if isinstance(raw_campaign_readback, list)
+        else []
+    )
+    attempts = [item for item in history.get("attempts") or [] if isinstance(item, Mapping)]
+    passed_attempts = [item for item in attempts if item.get("status") == "PASS"]
+    passed_attempt_ids_by_scenario: dict[int, int] = {}
+    campaign_attempt_errors: list[str] = []
+    for attempt in passed_attempts:
+        scenario_id = int(attempt.get("scenario_id") or 0)
+        new_ids = [int(value) for value in attempt.get("new_proposal_ids") or [] if str(value).isdigit()]
+        if scenario_id <= 0 or len(new_ids) != 1:
+            campaign_attempt_errors.append(
+                f"PASS attempt must have one new Proposal ID: scenario_id={scenario_id}, ids={new_ids}",
+            )
+            continue
+        passed_attempt_ids_by_scenario[scenario_id] = new_ids[0]
+
     preflight_by_scenario: dict[int, list[Mapping[str, Any]]] = {}
     history_identity_errors: list[str] = []
     for item in history.get("preflight") or []:
@@ -907,8 +1207,7 @@ def build_final_cohort_trio_analysis(
             history_identity_errors.append(f"out-of-scope scenario_id={scenario_id}")
         elif item.get("scenario_group_id") != expected_group_id:
             history_identity_errors.append(
-                f"scenario_id={scenario_id}: group={item.get('scenario_group_id')!r}, "
-                f"expected={expected_group_id!r}",
+                f"scenario_id={scenario_id}: group={item.get('scenario_group_id')!r}, expected={expected_group_id!r}",
             )
 
     duplicate_preflight_ids = sorted(
@@ -916,23 +1215,31 @@ def build_final_cohort_trio_analysis(
     )
     missing_preflight_ids = sorted(set(expected_scenario_ids) - set(preflight_by_scenario))
     out_of_scope_preflight_ids = sorted(set(preflight_by_scenario) - set(expected_scenario_ids))
+    proposal_gap_analysis = _proposal_gap_analysis(groups, attempts, preflight_by_scenario)
     multiple_blocking_proposal_ids: dict[int, list[int]] = {}
     payload_missing_scenario_ids: list[int] = []
     empty_value_cell_scenario_ids: list[int] = []
     selected_proposal_rows: dict[int, Mapping[str, Any]] = {}
 
-    for scenario_id, items in preflight_by_scenario.items():
-        if len(items) != 1:
-            continue
-        item = items[0]
-        guard = item.get("uncovered_guard")
-        guard = guard if isinstance(guard, Mapping) else {}
-        blocking_rows = [
-            row
-            for row in guard.get("history") or []
-            if isinstance(row, Mapping)
-            and str(row.get("status") or "") in FINAL_COHORT_PROPOSAL_STATUSES
-        ]
+    if release_replay:
+        rows_by_scenario: dict[int, list[Mapping[str, Any]]] = {}
+        for row in campaign_readback:
+            scenario_id = int(row.get("scenario_id") or 0)
+            rows_by_scenario.setdefault(scenario_id, []).append(row)
+    else:
+        rows_by_scenario = {}
+        for scenario_id, items in preflight_by_scenario.items():
+            if len(items) != 1:
+                continue
+            guard = items[0].get("uncovered_guard")
+            guard = guard if isinstance(guard, Mapping) else {}
+            rows_by_scenario[scenario_id] = [
+                row
+                for row in guard.get("history") or []
+                if isinstance(row, Mapping) and str(row.get("status") or "") in FINAL_COHORT_PROPOSAL_STATUSES
+            ]
+
+    for scenario_id, blocking_rows in rows_by_scenario.items():
         blocking_rows.sort(key=lambda row: int(row.get("model_param_proposal_id") or -1))
         if len(blocking_rows) > 1:
             multiple_blocking_proposal_ids[scenario_id] = [
@@ -943,21 +1250,24 @@ def build_final_cohort_trio_analysis(
         selected = blocking_rows[-1]
         selected_proposal_rows[scenario_id] = selected
         expected_group_id = expected_group_by_scenario.get(scenario_id)
+        if release_replay and str(selected.get("status") or "").upper() != "PROPOSED":
+            history_identity_errors.append(
+                f"proposal_id={selected.get('model_param_proposal_id')}: "
+                "campaign-only read-back status must be PROPOSED",
+            )
         if selected.get("scenario_id") != scenario_id or selected.get("scenario_group_id") != expected_group_id:
             history_identity_errors.append(
                 f"proposal_id={selected.get('model_param_proposal_id')}: Scenario/Group identity mismatch",
             )
         raw_parameters = selected.get("proposal_parameters")
-        parameters = [
-            parameter for parameter in raw_parameters or [] if isinstance(parameter, Mapping)
-        ] if isinstance(raw_parameters, list) else []
+        parameters = (
+            [parameter for parameter in raw_parameters or [] if isinstance(parameter, Mapping)]
+            if isinstance(raw_parameters, list)
+            else []
+        )
         if not parameters:
             payload_missing_scenario_ids.append(scenario_id)
-        elif not any(
-            isinstance(cell, Mapping)
-            for parameter in parameters
-            for cell in parameter.get("values") or []
-        ):
+        elif not any(isinstance(cell, Mapping) for parameter in parameters for cell in parameter.get("values") or []):
             empty_value_cell_scenario_ids.append(scenario_id)
 
     group_results: list[dict[str, Any]] = []
@@ -965,6 +1275,8 @@ def build_final_cohort_trio_analysis(
     rationale_total = 0
     rationale_nonempty = 0
     rationale_explicit = 0
+    rationale_legacy_explainable = 0
+    rationale_missing = 0
     rationale_incomplete_by_scenario: dict[int, list[dict[str, Any]]] = {}
     proposal_success_ids: set[int] = set()
     coverage_limit_ids: set[int] = set()
@@ -974,14 +1286,11 @@ def build_final_cohort_trio_analysis(
             continue
         group_id = int(group["scenario_group_id"])
         fixture_scenarios = _group_scenarios(group)
-        selected_ids = [
-            int(item["scenario_id"])
-            for item in fixture_scenarios
-            if item.get("scenario_id") is not None
-        ]
+        selected_ids = [int(item["scenario_id"]) for item in fixture_scenarios if item.get("scenario_id") is not None]
         parameter_sets: list[frozenset[str]] = []
         value_signatures: list[dict[str, str]] = []
         exact_slots: list[dict[str, object]] = []
+        power_mix_vectors: list[dict[str, str]] = []
         scenario_results: list[dict[str, Any]] = []
         payload_complete_count = 0
         for scenario in fixture_scenarios:
@@ -990,14 +1299,12 @@ def build_final_cohort_trio_analysis(
             preflight = preflight_rows[0] if len(preflight_rows) == 1 else {}
             proposal_row = selected_proposal_rows.get(scenario_id)
             raw_parameters = proposal_row.get("proposal_parameters") if proposal_row else None
-            parameters = [
-                dict(item) for item in raw_parameters or [] if isinstance(item, Mapping)
-            ] if isinstance(raw_parameters, list) else []
-            names = frozenset(
-                _parameter_name(parameter)
-                for parameter in parameters
-                if _parameter_name(parameter)
+            parameters = (
+                [dict(item) for item in raw_parameters or [] if isinstance(item, Mapping)]
+                if isinstance(raw_parameters, list)
+                else []
             )
+            names = frozenset(_parameter_name(parameter) for parameter in parameters if _parameter_name(parameter))
             value_cell_count = sum(
                 len([cell for cell in parameter.get("values") or [] if isinstance(cell, Mapping)])
                 for parameter in parameters
@@ -1011,11 +1318,21 @@ def build_final_cohort_trio_analysis(
                 parameter_sets.append(names)
                 value_signatures.append(_parameter_value_signatures(parameters))
                 exact_slots.append(_exact_slot_values(parameters))
+                power_mix_vectors.append(_power_mix_atomic_vectors(parameters))
                 parameter_frequency.update(names)
-            slot_total, slot_nonempty, slot_explicit, incomplete = _slot_rationale_audit(parameters)
+            (
+                slot_total,
+                slot_nonempty,
+                slot_explicit,
+                slot_legacy_explainable,
+                slot_missing,
+                incomplete,
+            ) = _slot_rationale_audit(parameters)
             rationale_total += slot_total
             rationale_nonempty += slot_nonempty
             rationale_explicit += slot_explicit
+            rationale_legacy_explainable += slot_legacy_explainable
+            rationale_missing += slot_missing
             if incomplete:
                 rationale_incomplete_by_scenario[scenario_id] = incomplete
             scenario_results.append(
@@ -1024,16 +1341,18 @@ def build_final_cohort_trio_analysis(
                     "status": (
                         "PASS"
                         if proposal_row is not None
-                        else "COVERAGE_LIMIT" if preflight.get("status") == "SKIP" else "UNPROPOSED"
+                        else "COVERAGE_LIMIT"
+                        if preflight.get("status") == "SKIP"
+                        else "UNPROPOSED"
                     ),
-                    "proposal_id": (
-                        proposal_row.get("model_param_proposal_id") if proposal_row else None
-                    ),
+                    "proposal_id": (proposal_row.get("model_param_proposal_id") if proposal_row else None),
                     "proposal_status": proposal_row.get("status") if proposal_row else None,
                     "actual_parameter_names": sorted(names),
                     "value_cell_count": value_cell_count,
                     "slot_rationale_nonempty_count": slot_nonempty,
                     "slot_rationale_explicit_count": slot_explicit,
+                    "slot_rationale_legacy_explainable_count": slot_legacy_explainable,
+                    "slot_rationale_missing_count": slot_missing,
                 },
             )
 
@@ -1056,22 +1375,36 @@ def build_final_cohort_trio_analysis(
                 if len(signatures) == 3:
                     all_three_distinct_parameters.append(name)
         scenario_value_signatures = [
-            json.dumps(item, ensure_ascii=False, sort_keys=True, default=str)
-            for item in value_signatures
+            json.dumps(item, ensure_ascii=False, sort_keys=True, default=str) for item in value_signatures
         ]
-        all_three_values_distinct = (
-            trio_payload_comparable and len(set(scenario_value_signatures)) == 3
-        )
-        common_slot_keys = (
-            set.intersection(*(set(item) for item in exact_slots))
-            if trio_payload_comparable
+        all_three_values_distinct = trio_payload_comparable and len(set(scenario_value_signatures)) == 3
+        common_slot_keys = set.intersection(*(set(item) for item in exact_slots)) if trio_payload_comparable else set()
+        different_common_slots = [key for key in common_slot_keys if len({item[key] for item in exact_slots}) > 1]
+        all_three_distinct_slots = [key for key in common_slot_keys if len({item[key] for item in exact_slots}) == 3]
+        scalar_common_slot_keys = {key for key in common_slot_keys if _exact_slot_parameter_name(key) != "PowerMix"}
+        power_mix_common_slot_keys = common_slot_keys - scalar_common_slot_keys
+        scalar_different_common_slots = [
+            key for key in scalar_common_slot_keys if len({item[key] for item in exact_slots}) > 1
+        ]
+        scalar_all_three_distinct_slots = [
+            key for key in scalar_common_slot_keys if len({item[key] for item in exact_slots}) == 3
+        ]
+        power_mix_different_common_slots = [
+            key for key in power_mix_common_slot_keys if len({item[key] for item in exact_slots}) > 1
+        ]
+        power_mix_all_three_distinct_slots = [
+            key for key in power_mix_common_slot_keys if len({item[key] for item in exact_slots}) == 3
+        ]
+        common_power_mix_vector_keys = (
+            set.intersection(*(set(item) for item in power_mix_vectors))
+            if trio_payload_comparable and len(power_mix_vectors) == 3
             else set()
         )
-        different_common_slots = [
-            key for key in common_slot_keys if len({item[key] for item in exact_slots}) > 1
+        different_power_mix_vectors = [
+            key for key in common_power_mix_vector_keys if len({item[key] for item in power_mix_vectors}) > 1
         ]
-        all_three_distinct_slots = [
-            key for key in common_slot_keys if len({item[key] for item in exact_slots}) == 3
+        all_three_distinct_power_mix_vectors = [
+            key for key in common_power_mix_vector_keys if len({item[key] for item in power_mix_vectors}) == 3
         ]
         event_type_codes = group.get("event_type_codes")
         event_type_code = (
@@ -1103,6 +1436,26 @@ def build_final_cohort_trio_analysis(
                 "exact_common_slot_count": len(common_slot_keys),
                 "exact_common_slots_with_different_values": len(different_common_slots),
                 "exact_common_slots_with_all_three_values_distinct": len(all_three_distinct_slots),
+                "has_value_difference_on_exact_common_slot": bool(different_common_slots),
+                "scalar_exact_common_slot_count": len(scalar_common_slot_keys),
+                "scalar_exact_common_slots_with_different_values": len(scalar_different_common_slots),
+                "scalar_exact_common_slots_with_all_three_values_distinct": len(
+                    scalar_all_three_distinct_slots,
+                ),
+                "power_mix_exact_common_cell_count": len(power_mix_common_slot_keys),
+                "power_mix_exact_common_cells_with_different_values": len(
+                    power_mix_different_common_slots,
+                ),
+                "power_mix_exact_common_cells_with_all_three_values_distinct": len(
+                    power_mix_all_three_distinct_slots,
+                ),
+                "power_mix_common_vector_count": len(common_power_mix_vector_keys),
+                "power_mix_common_vectors_with_different_values": len(
+                    different_power_mix_vectors,
+                ),
+                "power_mix_common_vectors_with_all_three_values_distinct": len(
+                    all_three_distinct_power_mix_vectors,
+                ),
                 "ideal_same_types_different_values": identical_sets and all_three_values_distinct,
                 "scenarios": scenario_results,
             },
@@ -1110,17 +1463,37 @@ def build_final_cohort_trio_analysis(
 
     triple_success_groups = [item for item in group_results if item["triple_success"]]
     comparable_groups = [item for item in triple_success_groups if item["trio_payload_comparable"]]
-    identical_type_groups = [
-        item for item in comparable_groups if item["actual_parameter_sets_identical"]
-    ]
+    identical_type_groups = [item for item in comparable_groups if item["actual_parameter_sets_identical"]]
     ideal_groups = [item for item in identical_type_groups if item["ideal_same_types_different_values"]]
     exact_slot_groups = [item for item in comparable_groups if item["exact_common_slot_count"]]
     exact_common_slot_count = sum(item["exact_common_slot_count"] for item in exact_slot_groups)
-    exact_different_slot_count = sum(
-        item["exact_common_slots_with_different_values"] for item in exact_slot_groups
-    )
+    exact_different_slot_count = sum(item["exact_common_slots_with_different_values"] for item in exact_slot_groups)
     exact_all_three_distinct_slot_count = sum(
         item["exact_common_slots_with_all_three_values_distinct"] for item in exact_slot_groups
+    )
+    exact_groups_with_any_difference = sum(
+        item["has_value_difference_on_exact_common_slot"] for item in exact_slot_groups
+    )
+    scalar_exact_common_slot_count = sum(item["scalar_exact_common_slot_count"] for item in exact_slot_groups)
+    scalar_exact_different_slot_count = sum(
+        item["scalar_exact_common_slots_with_different_values"] for item in exact_slot_groups
+    )
+    scalar_exact_all_three_distinct_slot_count = sum(
+        item["scalar_exact_common_slots_with_all_three_values_distinct"] for item in exact_slot_groups
+    )
+    power_mix_exact_common_cell_count = sum(item["power_mix_exact_common_cell_count"] for item in exact_slot_groups)
+    power_mix_exact_different_cell_count = sum(
+        item["power_mix_exact_common_cells_with_different_values"] for item in exact_slot_groups
+    )
+    power_mix_exact_all_three_distinct_cell_count = sum(
+        item["power_mix_exact_common_cells_with_all_three_values_distinct"] for item in exact_slot_groups
+    )
+    power_mix_common_vector_count = sum(item["power_mix_common_vector_count"] for item in comparable_groups)
+    power_mix_different_vector_count = sum(
+        item["power_mix_common_vectors_with_different_values"] for item in comparable_groups
+    )
+    power_mix_all_three_distinct_vector_count = sum(
+        item["power_mix_common_vectors_with_all_three_values_distinct"] for item in comparable_groups
     )
     selection = history.get("selection")
     selection = selection if isinstance(selection, Mapping) else {}
@@ -1128,22 +1501,47 @@ def build_final_cohort_trio_analysis(
     selection_counts = selection_counts if isinstance(selection_counts, Mapping) else {}
     discovered_ids = [int(item) for item in selection.get("discovered_scenario_ids") or []]
     covered_ids = {int(item) for item in selection.get("covered_scenario_ids") or []}
-    capability_skip_ids = {
-        int(item) for item in selection.get("lifecycle_or_capability_skipped_scenario_ids") or []
-    }
-    manifest = history.get("manifest")
-    manifest = manifest if isinstance(manifest, Mapping) else {}
+    capability_skip_ids = {int(item) for item in selection.get("lifecycle_or_capability_skipped_scenario_ids") or []}
     capability = manifest.get("capability_contract")
     capability = capability if isinstance(capability, Mapping) else {}
     resource = manifest.get("resource")
     resource = resource if isinstance(resource, Mapping) else {}
+    model_parameter_config = manifest.get("model_parameter_config")
+    model_parameter_config = dict(model_parameter_config) if isinstance(model_parameter_config, Mapping) else {}
+    campaign_row_ids_by_scenario = {
+        scenario_id: int(row.get("model_param_proposal_id") or -1)
+        for scenario_id, row in selected_proposal_rows.items()
+    }
+    campaign_rows_match_passed_attempts = (
+        campaign_row_ids_by_scenario == passed_attempt_ids_by_scenario if release_replay else True
+    )
+    raw_campaign_selection = selection.get("campaign_proposal_ids_by_scenario")
+    campaign_selection = (
+        {int(scenario_id): int(proposal_id) for scenario_id, proposal_id in raw_campaign_selection.items()}
+        if isinstance(raw_campaign_selection, Mapping)
+        else {}
+    )
+    campaign_selection_matches_readback = campaign_selection == campaign_row_ids_by_scenario if release_replay else True
+    config_snapshot_complete = bool(model_parameter_config) and all(
+        isinstance(model_parameter_config.get(section), Mapping) and bool(model_parameter_config.get(section))
+        for section in ("local_declared", "neuro_declared", "runtime_effective")
+    )
+    if config_snapshot_complete:
+        config_snapshot_complete = (
+            isinstance(model_parameter_config.get("local_vs_neuro_differences"), list)
+            and isinstance(model_parameter_config.get("top_level_key_parity"), bool)
+            and bool(model_parameter_config.get("local_config_path"))
+            and bool(model_parameter_config.get("local_config_sha256"))
+            and bool(model_parameter_config.get("neuro_config_path"))
+            and bool(model_parameter_config.get("neuro_config_sha256"))
+        )
     checks = {
         "testset_has_groups": bool(groups),
-        "testset_has_exactly_three_scenarios_per_group": not any(
-            len(_group_scenarios(group)) != 3 for group in groups
-        ),
+        "testset_has_exactly_three_scenarios_per_group": not any(len(_group_scenarios(group)) != 3 for group in groups),
         "testset_scenario_ids_unique": len(expected_scenario_ids) == len(set(expected_scenario_ids)),
-        "history_status_pass": history.get("status") == "PASS",
+        "history_status_pass_or_review": (
+            history.get("status") in {"PASS", "REVIEW"} if release_replay else history.get("status") == "PASS"
+        ),
         "history_preflight_scope_exact": (
             not missing_preflight_ids
             and not out_of_scope_preflight_ids
@@ -1152,20 +1550,27 @@ def build_final_cohort_trio_analysis(
         ),
         "selection_discovered_scope_exact": discovered_ids == expected_scenario_ids,
         "history_scenario_group_identity": not history_identity_errors,
-        "at_most_one_blocking_proposal_per_scenario": not multiple_blocking_proposal_ids,
+        "at_most_one_selected_proposal_per_scenario": not multiple_blocking_proposal_ids,
         "blocking_proposal_payload_complete": not payload_missing_scenario_ids,
         "blocking_proposal_has_value_cells": not empty_value_cell_scenario_ids,
-        "covered_count_matches_proposal_rows": (
-            selection_counts.get("covered_skip") == len(proposal_success_ids)
+        "selected_count_matches_proposal_rows": (
+            campaign_rows_match_passed_attempts
+            if release_replay
+            else selection_counts.get("covered_skip") == len(proposal_success_ids)
         ),
-        "covered_scenario_ids_match_proposal_rows": covered_ids == proposal_success_ids,
+        "selected_scenario_ids_match_proposal_rows": (
+            campaign_rows_match_passed_attempts if release_replay else covered_ids == proposal_success_ids
+        ),
+        "campaign_attempts_have_exactly_one_new_proposal": (not campaign_attempt_errors if release_replay else True),
+        "campaign_selection_matches_final_readback": campaign_selection_matches_readback,
         "capability_skip_scenario_ids_match": capability_skip_ids == coverage_limit_ids,
         "scenario_lever_release_v4_1": capability.get("catalog_version") == EXPECTED_CATALOG_VERSION,
         "scenario_lever_checksum": capability.get("catalog_checksum") == EXPECTED_CATALOG_CHECKSUM,
-        "proposal_flow_release_v4_1_3": (
-            resource.get("proposal_flow_release") == EXPECTED_PROPOSAL_FLOW_RELEASE
-        ),
+        "proposal_flow_release_v4_1_x": (resource.get("proposal_flow_release") == EXPECTED_PROPOSAL_FLOW_RELEASE),
         "fixture_structure_valid": not fixture_errors,
+        "model_parameter_config_snapshot_complete": (
+            config_snapshot_complete if int(history.get("schema_version") or 0) >= 6 else True
+        ),
     }
     kpis = {
         "group_count": len(group_results),
@@ -1175,9 +1580,7 @@ def build_final_cohort_trio_analysis(
             len(proposal_success_ids),
             len(expected_scenario_ids),
         ),
-        "unproposed_scenario_count": (
-            len(expected_scenario_ids) - len(proposal_success_ids) - len(coverage_limit_ids)
-        ),
+        "unproposed_scenario_count": (len(expected_scenario_ids) - len(proposal_success_ids) - len(coverage_limit_ids)),
         "coverage_limit_scenario_count": len(coverage_limit_ids),
         "triple_success_group_count": len(triple_success_groups),
         "triple_success_group_rate_percent": _percent(len(triple_success_groups), len(group_results)),
@@ -1193,29 +1596,76 @@ def build_final_cohort_trio_analysis(
             len(identical_type_groups),
         ),
         "groups_with_exact_common_slots": len(exact_slot_groups),
+        "groups_with_any_difference_on_exact_common_slots": exact_groups_with_any_difference,
+        "groups_with_any_difference_on_exact_common_slots_rate_percent": _percent(
+            exact_groups_with_any_difference,
+            len(exact_slot_groups),
+        ),
         "exact_common_slot_count": exact_common_slot_count,
         "exact_common_slots_with_different_values": exact_different_slot_count,
         "exact_common_slots_with_different_values_rate_percent": _percent(
             exact_different_slot_count,
             exact_common_slot_count,
         ),
-        "exact_common_slots_with_all_three_values_distinct": (
-            exact_all_three_distinct_slot_count
-        ),
+        "exact_common_slots_with_all_three_values_distinct": (exact_all_three_distinct_slot_count),
         "exact_common_slots_with_all_three_values_distinct_rate_percent": _percent(
             exact_all_three_distinct_slot_count,
             exact_common_slot_count,
+        ),
+        "scalar_exact_common_slot_count": scalar_exact_common_slot_count,
+        "scalar_exact_common_slots_with_different_values": scalar_exact_different_slot_count,
+        "scalar_exact_common_slots_with_different_values_rate_percent": _percent(
+            scalar_exact_different_slot_count,
+            scalar_exact_common_slot_count,
+        ),
+        "scalar_exact_common_slots_with_all_three_values_distinct": (scalar_exact_all_three_distinct_slot_count),
+        "scalar_exact_common_slots_with_all_three_values_distinct_rate_percent": _percent(
+            scalar_exact_all_three_distinct_slot_count,
+            scalar_exact_common_slot_count,
+        ),
+        "power_mix_exact_common_cell_count": power_mix_exact_common_cell_count,
+        "power_mix_exact_common_cells_with_different_values": power_mix_exact_different_cell_count,
+        "power_mix_exact_common_cells_with_different_values_rate_percent": _percent(
+            power_mix_exact_different_cell_count,
+            power_mix_exact_common_cell_count,
+        ),
+        "power_mix_exact_common_cells_with_all_three_values_distinct": (power_mix_exact_all_three_distinct_cell_count),
+        "power_mix_exact_common_cells_with_all_three_values_distinct_rate_percent": _percent(
+            power_mix_exact_all_three_distinct_cell_count,
+            power_mix_exact_common_cell_count,
+        ),
+        "power_mix_common_vector_count": power_mix_common_vector_count,
+        "power_mix_common_vectors_with_different_values": power_mix_different_vector_count,
+        "power_mix_common_vectors_with_different_values_rate_percent": _percent(
+            power_mix_different_vector_count,
+            power_mix_common_vector_count,
+        ),
+        "power_mix_common_vectors_with_all_three_values_distinct": (power_mix_all_three_distinct_vector_count),
+        "power_mix_common_vectors_with_all_three_values_distinct_rate_percent": _percent(
+            power_mix_all_three_distinct_vector_count,
+            power_mix_common_vector_count,
         ),
         "value_cell_count": rationale_total,
         "slot_rationale_nonempty_count": rationale_nonempty,
         "slot_rationale_nonempty_rate_percent": _percent(rationale_nonempty, rationale_total),
         "slot_rationale_explicit_count": rationale_explicit,
         "slot_rationale_explicit_rate_percent": _percent(rationale_explicit, rationale_total),
+        "slot_rationale_legacy_explainable_count": rationale_legacy_explainable,
+        "slot_rationale_legacy_explainable_rate_percent": _percent(
+            rationale_legacy_explainable,
+            rationale_total,
+        ),
+        "slot_rationale_missing_count": rationale_missing,
+        "slot_rationale_missing_rate_percent": _percent(rationale_missing, rationale_total),
     }
     quality_review_reasons: list[str] = []
-    if rationale_explicit != rationale_total:
+    if rationale_missing:
         quality_review_reasons.append(
-            "모든 proposed-value slot의 근거가 필수 명시 섹션을 충족하지는 않음",
+            "근거 텍스트가 없는 proposed-value slot이 있음",
+        )
+    if rationale_legacy_explainable:
+        quality_review_reasons.append(
+            "legacy 근거는 비어 있지 않지만 v4.1.5 필수 명시 섹션을 모두 갖추지 않아 재구성 없이 별도 분류함",
         )
     if len(ideal_groups) != len(identical_type_groups):
         quality_review_reasons.append(
@@ -1236,20 +1686,27 @@ def build_final_cohort_trio_analysis(
         "final_history": {
             "source": history_source,
             "sha256": history_sha256,
+            "proposal_source": (
+                "campaign-only append readback" if release_replay else "preflight proposal-history readback"
+            ),
+            "execution_policy_version": execution_policy_version or None,
         },
         "release": {
             "scenario_lever_release": capability.get("catalog_version"),
             "scenario_lever_catalog_checksum": capability.get("catalog_checksum"),
             "proposal_flow_release": resource.get("proposal_flow_release"),
         },
+        "model_parameter_config": model_parameter_config,
         "kpis": kpis,
         "parameter_frequency": dict(sorted(parameter_frequency.items())),
+        "proposal_gap_analysis": proposal_gap_analysis,
         "payload_missing_scenario_ids": sorted(payload_missing_scenario_ids),
         "empty_value_cell_scenario_ids": sorted(empty_value_cell_scenario_ids),
         "multiple_blocking_proposal_ids": multiple_blocking_proposal_ids,
         "slot_rationale_incomplete_by_scenario": rationale_incomplete_by_scenario,
         "fixture_errors": fixture_errors,
         "history_identity_errors": history_identity_errors,
+        "campaign_attempt_errors": campaign_attempt_errors,
         "quality_review_reasons": quality_review_reasons,
         "checks": checks,
         "pass": evidence_pass,
@@ -1300,8 +1757,7 @@ def _qualitative_assessment(kpis: Mapping[str, Any]) -> list[dict[str, str]]:
                 comparable=int(kpis["identical_parameter_type_group_count"]) > 0,
             ),
             "basis": (
-                "type-consistent 분모 "
-                f"{kpis['same_types_with_all_three_scenario_values_distinct_rate_percent']}%"
+                f"type-consistent 분모 {kpis['same_types_with_all_three_scenario_values_distinct_rate_percent']}%"
             ),
         },
         {
@@ -1394,9 +1850,7 @@ def merge_execution_evidence(
     replacements: list[dict[str, Any]] = []
     replacement_ids: set[int] = set()
     baseline_attempts = [dict(attempt) for attempt in merged_attempts]
-    index_by_scenario = {
-        int(attempt["scenario_id"]): index for index, attempt in enumerate(merged_attempts)
-    }
+    index_by_scenario = {int(attempt["scenario_id"]): index for index, attempt in enumerate(merged_attempts)}
     for label, execution in post_fix_sources:
         attempts = [dict(item) for item in execution.get("attempts") or [] if isinstance(item, Mapping)]
         for replacement in attempts:
@@ -1578,17 +2032,13 @@ def _evaluate_mi_base_backfill_audit(
         "backfill_count_matches": int(counts.get("backfilled") or -1) == len(backfilled_rows),
         "backfill_scenario_ids_match": sorted(int(item) for item in scenario_ids.get("backfilled") or [])
         == backfilled_ids,
-        "attempt_scope_unchanged": int(counts.get("effective") or -1)
-        == int(counts.get("attempts") or -2),
+        "attempt_scope_unchanged": int(counts.get("effective") or -1) == int(counts.get("attempts") or -2),
         "original_evidence_preserved": audit.get("original_evidence_overwritten") is False,
         "proposal_not_reexecuted": audit.get("proposal_logic_reexecuted") is False,
         "application_data_not_mutated": audit.get("application_data_mutated") is False,
         "provenance_present_on_every_backfill": len(provenance_rows) == len(backfilled_rows),
         "provenance_source_hash_matches_audit": bool(source_evidence.get("sha256"))
-        and all(
-            item.get("source_evidence_sha256") == source_evidence.get("sha256")
-            for item in provenance_rows
-        ),
+        and all(item.get("source_evidence_sha256") == source_evidence.get("sha256") for item in provenance_rows),
     }
     return {
         "required": True,
@@ -1702,10 +2152,7 @@ def evaluate_execution(plan: Mapping[str, Any], execution: Mapping[str, Any]) ->
         for item in execution.get("attempts") or []
         if isinstance(item, Mapping) and item.get("scenario_id") is not None
     ]
-    attempts = {
-        int(item["scenario_id"]): item
-        for item in raw_attempts
-    }
+    attempts = {int(item["scenario_id"]): item for item in raw_attempts}
     all_selected_ids = {
         int(scenario["scenario_id"])
         for group in plan.get("groups") or []
@@ -1883,8 +2330,7 @@ def evaluate_execution(plan: Mapping[str, Any], execution: Mapping[str, Any]) ->
                 "exact_common_slot_count": len(common_slot_keys),
                 "exact_common_slots_with_different_values": len(different_common_slots),
                 "exact_common_slots_with_all_three_values_distinct": len(all_three_distinct_slots),
-                "ideal_same_types_different_values": identical_sets
-                and all_three_scenario_values_distinct,
+                "ideal_same_types_different_values": identical_sets and all_three_scenario_values_distinct,
                 "scenarios": scenario_results,
             },
         )
@@ -1902,11 +2348,7 @@ def evaluate_execution(plan: Mapping[str, Any], execution: Mapping[str, Any]) ->
     comparable_groups = [item for item in group_results if item["triple_success"]]
     identical_type_groups = [item for item in comparable_groups if item["actual_parameter_sets_identical"]]
     ideal_groups = [item for item in comparable_groups if item["ideal_same_types_different_values"]]
-    any_value_variation_groups = [
-        item
-        for item in identical_type_groups
-        if item["any_parameter_value_variation"]
-    ]
+    any_value_variation_groups = [item for item in identical_type_groups if item["any_parameter_value_variation"]]
     exact_slot_groups = [item for item in comparable_groups if item["exact_common_slot_count"] > 0]
     semantic_empty_count = failure_reason_frequency["semantic_empty"]
     resolved_no_change_count = semantic_reason_frequency["ABSTAINED_NO_CHANGE"]
@@ -1915,16 +2357,11 @@ def evaluate_execution(plan: Mapping[str, Any], execution: Mapping[str, Any]) ->
         0,
     )
     nonsemantic_failure_count = sum(
-        item.get("status") in {"FAIL", "BLOCKED"} and _semantic_empty_result(item) is None
-        for item in raw_attempts
+        item.get("status") in {"FAIL", "BLOCKED"} and _semantic_empty_result(item) is None for item in raw_attempts
     )
     missing_semantic_trace_count = semantic_empty_count - semantic_trace_complete_count
-    directly_observed_mi_base_rows = [
-        item for item in mi_base_trace_rows if not _is_authorized_inferred_trace(item)
-    ]
-    backfilled_mi_base_rows = [
-        item for item in mi_base_trace_rows if _is_authorized_inferred_trace(item)
-    ]
+    directly_observed_mi_base_rows = [item for item in mi_base_trace_rows if not _is_authorized_inferred_trace(item)]
+    backfilled_mi_base_rows = [item for item in mi_base_trace_rows if _is_authorized_inferred_trace(item)]
     mi_base_identity_signatures = {
         json.dumps(
             {
@@ -1950,9 +2387,7 @@ def evaluate_execution(plan: Mapping[str, Any], execution: Mapping[str, Any]) ->
         "directly_observed_trace_count": len(directly_observed_mi_base_rows),
         "authorized_backfilled_trace_count": len(backfilled_mi_base_rows),
         "effective_trace_count": len(mi_base_trace_rows),
-        "backfilled_scenario_ids": sorted(
-            int(item["scenario_id"]) for item in backfilled_mi_base_rows
-        ),
+        "backfilled_scenario_ids": sorted(int(item["scenario_id"]) for item in backfilled_mi_base_rows),
         "missing_trace_scenario_ids": sorted(
             actual_attempt_ids - effective_trace_ids,
         ),
@@ -1964,8 +2399,7 @@ def evaluate_execution(plan: Mapping[str, Any], execution: Mapping[str, Any]) ->
     }
     historical_evidence_backfilled = bool(backfilled_mi_base_rows)
     mi_base_trace_remediation = {
-        "required": bool(mi_base_trace_summary["missing_trace_scenario_ids"])
-        or historical_evidence_backfilled,
+        "required": bool(mi_base_trace_summary["missing_trace_scenario_ids"]) or historical_evidence_backfilled,
         "historical_evidence_backfilled": historical_evidence_backfilled,
         "proposal_rerun_performed": False,
         "interpretation": (
@@ -2132,14 +2566,10 @@ def evaluate_execution(plan: Mapping[str, Any], execution: Mapping[str, Any]) ->
         **release_checks,
     }
     if historical_evidence_backfilled:
-        operational_checks["mi_base_trace_backfill_audit_valid"] = (
-            mi_base_backfill_audit.get("pass") is True
-        )
+        operational_checks["mi_base_trace_backfill_audit_valid"] = mi_base_backfill_audit.get("pass") is True
     post_fix_comparison = execution.get("post_fix_comparison")
     if isinstance(post_fix_comparison, Mapping):
-        operational_checks["post_fix_attempt_scope_unchanged"] = (
-            post_fix_comparison.get("same_attempt_scope") is True
-        )
+        operational_checks["post_fix_attempt_scope_unchanged"] = post_fix_comparison.get("same_attempt_scope") is True
     if creation_summary["baseline_group_count"] or creation_summary["added_group_count"]:
         operational_checks.update(
             {
@@ -2163,8 +2593,7 @@ def evaluate_execution(plan: Mapping[str, Any], execution: Mapping[str, Any]) ->
                     == len(set(creation_summary["cohort_event_ids"]))
                     == 20,
                     "expanded_event_cohort_disjoint_from_baseline": not (
-                        set(creation_summary["baseline_event_ids"])
-                        & set(creation_summary["cohort_event_ids"])
+                        set(creation_summary["baseline_event_ids"]) & set(creation_summary["cohort_event_ids"])
                     ),
                 },
             )
@@ -2202,8 +2631,7 @@ def evaluate_execution(plan: Mapping[str, Any], execution: Mapping[str, Any]) ->
         review_reasons.append("실행 attempt 사이 MI Base case/run/workbook identity가 일치하지 않습니다.")
     if historical_evidence_backfilled:
         review_reasons.append(
-            "MI Base trace "
-            f"{len(backfilled_mi_base_rows)}건은 직접 관측이 아닌 명시적 승인 기반 소급 보정입니다.",
+            f"MI Base trace {len(backfilled_mi_base_rows)}건은 직접 관측이 아닌 명시적 승인 기반 소급 보정입니다.",
         )
     verdict = "FAIL" if not operational_pass else "REVIEW" if review_reasons else "PASS"
     return {
@@ -2303,8 +2731,7 @@ def evaluate_execution(plan: Mapping[str, Any], execution: Mapping[str, Any]) ->
             {"stage": stage, "count": count} for stage, count in sorted(semantic_stage_frequency.items())
         ],
         "semantic_abstention_by_reason_code": [
-            {"reason_code": reason, "count": count}
-            for reason, count in sorted(semantic_reason_frequency.items())
+            {"reason_code": reason, "count": count} for reason, count in sorted(semantic_reason_frequency.items())
         ],
         "parameter_frequency_by_successful_scenario": [
             {"parameter_name": name, "scenario_count": count} for name, count in sorted(parameter_frequency.items())
@@ -2434,12 +2861,8 @@ def build_reusable_testset(
             ),
         }
     else:
-        dataset_id = (
-            f"model-parameter-v4.1.2-existing-event-pool-regenerated-{group_count}-groups-20261007"
-        )
-        purpose = (
-            "Reusable representative-trio cohort regenerated add-only from the fixed existing Event pool"
-        )
+        dataset_id = f"model-parameter-v4.1.2-existing-event-pool-regenerated-{group_count}-groups-20261007"
+        purpose = "Reusable representative-trio cohort regenerated add-only from the fixed existing Event pool"
         source_event_ids = [int(item) for item in plan.get("source_event_ids") or []]
         cohort_event_ids = [int(item) for item in plan.get("cohort_event_ids") or []]
         cohort_identity = {
@@ -2515,9 +2938,7 @@ def validate_immutable_testset(
             "scenario_group_id": int(group["scenario_group_id"]),
             "event_type_id": int(group["event_type_id"]),
             "event_id": int(group["event_id"]),
-            "scenario_ids": [
-                int(item["scenario_id"]) for item in group.get("selected_scenarios") or []
-            ],
+            "scenario_ids": [int(item["scenario_id"]) for item in group.get("selected_scenarios") or []],
         }
 
     testset_identity = [identity_from_testset(group) for group in testset_groups if isinstance(group, Mapping)]
@@ -2536,13 +2957,9 @@ def validate_immutable_testset(
         "generation_strategy_fixed": contract.get("generation_strategy") == EXPECTED_GENERATION_STRATEGY,
         "scenario_lever_release_fixed": contract.get("scenario_lever_release") == EXPECTED_CATALOG_VERSION,
         "catalog_checksum_fixed": contract.get("scenario_lever_catalog_checksum") == EXPECTED_CATALOG_CHECKSUM,
-        "proposal_flow_release_fixed": contract.get("proposal_flow_release")
-        == FIXED_TESTSET_SOURCE_FLOW_RELEASE,
+        "proposal_flow_release_fixed": contract.get("proposal_flow_release") == FIXED_TESTSET_SOURCE_FLOW_RELEASE,
         "selection_policy_fixed": contract.get("selection_policy") == selection_policy,
-        "group_count_matches_plan": contract.get("group_count")
-        == len(testset_identity)
-        == expected_group_count
-        > 0,
+        "group_count_matches_plan": contract.get("group_count") == len(testset_identity) == expected_group_count > 0,
         "exactly_3_scenarios_per_group": contract.get("representative_scenarios_per_group") == 3
         and all(len(group["scenario_ids"]) == 3 for group in testset_identity),
         "scenario_count_matches_plan": contract.get("scenario_count") == expected_scenario_count
@@ -2738,9 +3155,15 @@ def render_final_cohort_trio_section(analysis: Mapping[str, Any]) -> str:
     kpis = kpis if isinstance(kpis, Mapping) else {}
     groups = [item for item in analysis.get("groups") or [] if isinstance(item, Mapping)]
     incomplete_by_scenario = analysis.get("slot_rationale_incomplete_by_scenario")
-    incomplete_by_scenario = (
-        incomplete_by_scenario if isinstance(incomplete_by_scenario, Mapping) else {}
-    )
+    incomplete_by_scenario = incomplete_by_scenario if isinstance(incomplete_by_scenario, Mapping) else {}
+    model_parameter_config = analysis.get("model_parameter_config")
+    model_parameter_config = model_parameter_config if isinstance(model_parameter_config, Mapping) else {}
+    gap_analysis = analysis.get("proposal_gap_analysis")
+    gap_analysis = gap_analysis if isinstance(gap_analysis, Mapping) else {}
+
+    def md_cell(value: object) -> str:
+        return str(value or "-").replace("|", "\\|").replace("\n", " ")
+
     lines = [
         "## 최종 DB 기준 Trio Parameter·값 변별",
         "",
@@ -2784,6 +3207,30 @@ def render_final_cohort_trio_section(analysis: Mapping[str, Any]) -> str:
             f"{kpis.get('exact_common_slot_count', 0)} "
             f"({kpis.get('exact_common_slots_with_all_three_values_distinct_rate_percent', 0)}%) |"
         ),
+        (
+            "| exact common slot 중 하나라도 값 차이인 Group | "
+            f"{kpis.get('groups_with_any_difference_on_exact_common_slots', 0)} / "
+            f"{kpis.get('groups_with_exact_common_slots', 0)} "
+            f"({kpis.get('groups_with_any_difference_on_exact_common_slots_rate_percent', 0)}%) |"
+        ),
+        (
+            "| Scalar exact common slot 값 차이 | "
+            f"{kpis.get('scalar_exact_common_slots_with_different_values', 0)} / "
+            f"{kpis.get('scalar_exact_common_slot_count', 0)} "
+            f"({kpis.get('scalar_exact_common_slots_with_different_values_rate_percent', 0)}%) |"
+        ),
+        (
+            "| Scalar exact common slot 세 값 모두 다름 | "
+            f"{kpis.get('scalar_exact_common_slots_with_all_three_values_distinct', 0)} / "
+            f"{kpis.get('scalar_exact_common_slot_count', 0)} "
+            f"({kpis.get('scalar_exact_common_slots_with_all_three_values_distinct_rate_percent', 0)}%) |"
+        ),
+        (
+            "| PowerMix atomic vector 값 차이 | "
+            f"{kpis.get('power_mix_common_vectors_with_different_values', 0)} / "
+            f"{kpis.get('power_mix_common_vector_count', 0)} "
+            f"({kpis.get('power_mix_common_vectors_with_different_values_rate_percent', 0)}%) |"
+        ),
         f"| Value cell | {kpis.get('value_cell_count', 0)} |",
         (
             "| Slot 근거 non-empty | "
@@ -2797,12 +3244,130 @@ def render_final_cohort_trio_section(analysis: Mapping[str, Any]) -> str:
             f"{kpis.get('value_cell_count', 0)} "
             f"({kpis.get('slot_rationale_explicit_rate_percent', 0)}%) |"
         ),
-        "",
-        "### Group별 최종 결과",
-        "",
-        "| # | Group | Scenario IDs | 성공 | 동일 종류 | 값 차이 | exact slot / 차이 slot | Parameter |",
-        "| ---: | ---: | --- | ---: | --- | --- | ---: | --- |",
+        (
+            "| Legacy 근거 설명 가능 (display-only 분류) | "
+            f"{kpis.get('slot_rationale_legacy_explainable_count', 0)} / "
+            f"{kpis.get('value_cell_count', 0)} "
+            f"({kpis.get('slot_rationale_legacy_explainable_rate_percent', 0)}%) |"
+        ),
+        (
+            "| Slot 근거 없음 | "
+            f"{kpis.get('slot_rationale_missing_count', 0)} / "
+            f"{kpis.get('value_cell_count', 0)} "
+            f"({kpis.get('slot_rationale_missing_rate_percent', 0)}%) |"
+        ),
     ]
+    lines.extend(
+        [
+            "",
+            "### 미제안·실패 Hotspot과 개선 방향",
+            "",
+            (
+                "- 기술 실패(`FAIL`/`BLOCKED`), 근거·좌표·값 판단에 따른 의미상 기권(`ABSTAINED`), "
+                "현 release 범위 밖(`COVERAGE_LIMIT`)을 분리했습니다."
+            ),
+            (
+                f"- 의미상 기권 {gap_analysis.get('semantic_abstention_count', 0)}건 / "
+                f"기술 실패 {gap_analysis.get('technical_failure_count', 0)}건 / "
+                f"Capability limit {gap_analysis.get('coverage_limit_count', 0)}건"
+            ),
+            "",
+            "| 구분 | 건수 분포 |",
+            "| --- | --- |",
+            "| 중단 단계 | "
+            + md_cell(
+                ", ".join(
+                    f"{name}={count}" for name, count in (gap_analysis.get("stage_frequency") or {}).items()
+                ),
+            )
+            + " |",
+            "| Reason | "
+            + md_cell(
+                ", ".join(
+                    f"{name}={count}" for name, count in (gap_analysis.get("reason_frequency") or {}).items()
+                ),
+            )
+            + " |",
+            "| Parameter/경계 | "
+            + md_cell(
+                ", ".join(
+                    f"{name}={count}"
+                    for name, count in (gap_analysis.get("parameter_frequency") or {}).items()
+                ),
+            )
+            + " |",
+            "| Scenario Group | "
+            + md_cell(
+                ", ".join(
+                    f"{name}={count}"
+                    for name, count in (gap_analysis.get("scenario_group_frequency") or {}).items()
+                ),
+            )
+            + " |",
+            "",
+            "| Scenario | Scenario title | Group | Group title | Event | 상태 | 단계 | Parameter | Reason |",
+            "| ---: | --- | ---: | --- | --- | --- | --- | --- | --- |",
+        ],
+    )
+    gap_cases = [item for item in gap_analysis.get("cases") or [] if isinstance(item, Mapping)]
+    if gap_cases:
+        lines.extend(
+            [
+                "| {scenario_id} | {scenario_title} | {group_id} | {group_title} | {events} | "
+                "{status} | {stage} | {parameters} | {reason} |".format(
+                    scenario_id=case.get("scenario_id"),
+                    scenario_title=md_cell(case.get("scenario_title")),
+                    group_id=case.get("scenario_group_id"),
+                    group_title=md_cell(case.get("group_title")),
+                    events=md_cell(
+                        ", ".join(str(value) for value in case.get("event_ids") or [])
+                        or ", ".join(str(value) for value in case.get("event_titles") or []),
+                    ),
+                    status=md_cell(case.get("status")),
+                    stage=md_cell(case.get("stage")),
+                    parameters=md_cell(", ".join(str(value) for value in case.get("parameter_names") or [])),
+                    reason=md_cell(case.get("reason_code")),
+                )
+                for case in gap_cases
+            ],
+        )
+    else:
+        lines.append("| - | - | - | - | - | - | - | - | 없음 |")
+    lines.extend(
+        [
+            "",
+            "#### Hotspot별 후속 개선안",
+            "",
+            "| 우선 대상 | 관측 | 개선안 | 안전 경계 |",
+            "| --- | ---: | --- | --- |",
+        ],
+    )
+    recommendations = [
+        item for item in gap_analysis.get("recommendations") or [] if isinstance(item, Mapping)
+    ]
+    if recommendations:
+        lines.extend(
+            [
+                "| {target} | {count} | {action} | {boundary} |".format(
+                    target=md_cell(recommendation.get("target")),
+                    count=recommendation.get("observed_case_count", 0),
+                    action=md_cell(recommendation.get("action")),
+                    boundary=md_cell(recommendation.get("safety_boundary")),
+                )
+                for recommendation in recommendations
+            ],
+        )
+    else:
+        lines.append("| 없음 | 0 | 추가 개선 hotspot 없음 | 현 안전 경계 유지 |")
+    lines.extend(
+        [
+            "",
+            "### Group별 최종 결과",
+            "",
+            "| # | Group | Scenario IDs | 성공 | 동일 종류 | 값 차이 | exact slot / 차이 slot | Parameter |",
+            "| ---: | ---: | --- | ---: | --- | --- | ---: | --- |",
+        ],
+    )
     for index, group in enumerate(groups, start=1):
         triple_success = group.get("triple_success") is True
         comparable = group.get("trio_payload_comparable") is True
@@ -2812,24 +3377,21 @@ def render_final_cohort_trio_section(analysis: Mapping[str, Any]) -> str:
             "{slots} | {parameters} |".format(
                 order=group.get("cohort_order") or index,
                 group_id=group.get("scenario_group_id"),
-                scenario_ids=", ".join(
-                    str(item) for item in group.get("selected_scenario_ids") or []
-                ),
+                scenario_ids=", ".join(str(item) for item in group.get("selected_scenario_ids") or []),
                 success=group.get("successful_count", 0),
                 same=("Y" if identical else "N") if comparable else "N/A",
-                different=(
-                    "Y" if group.get("all_three_scenario_value_signatures_distinct") else "N"
-                ) if comparable and identical else "N/A",
+                different=("Y" if group.get("all_three_scenario_value_signatures_distinct") else "N")
+                if comparable and identical
+                else "N/A",
                 slots=(
                     f"{group.get('exact_common_slot_count', 0)}/"
                     f"{group.get('exact_common_slots_with_different_values', 0)}"
                     if comparable
                     else "N/A"
                 ),
-                parameters=(
-                    ", ".join(str(item) for item in group.get("common_parameter_names") or [])
-                    or "-"
-                ) if triple_success else "N/A",
+                parameters=(", ".join(str(item) for item in group.get("common_parameter_names") or []) or "-")
+                if triple_success
+                else "N/A",
             ),
         )
     lines.extend(
@@ -2846,8 +3408,16 @@ def render_final_cohort_trio_section(analysis: Mapping[str, Any]) -> str:
                 "보조 지표입니다. 좌표 구성이 다르면 이 분모에 들어가지 않습니다."
             ),
             (
+                "- Scalar exact-slot과 PowerMix atomic-vector를 분리합니다. PowerMix의 10개 cell 중 "
+                "변하지 않은 원별 share가 전체 cell 비율을 낮추는 구조적 효과를 scalar 변별과 섞지 않습니다."
+            ),
+            (
                 "- Slot 근거 필수 섹션은 대상·기간, 근거 유형, 인과 경로, 기준값, 적용 정책, 계산, "
-                "제안값, 근거, 주요 가정, 판단 설명, 불확실성입니다."
+                "변형 요인, 제안값, 근거, 주요 가정, 판단 설명, 불확실성입니다."
+            ),
+            (
+                "- `legacy_explainable`은 기존 근거 문자열이 비어 있지 않다는 표시일 뿐, 누락된 표준 섹션을 "
+                "사후 생성하거나 당시 판단을 재구성했다는 뜻이 아닙니다."
             ),
             (
                 "- 필수 섹션 미완전 Scenario: "
@@ -2855,15 +3425,33 @@ def render_final_cohort_trio_section(analysis: Mapping[str, Any]) -> str:
             ),
             "",
             f"- 증적 정합성: `{'PASS' if analysis.get('pass') else 'FAIL'}`",
-            *[
-                f"- [{'x' if passed else ' '}] `{name}`"
-                for name, passed in (analysis.get("checks") or {}).items()
-            ],
+            *[f"- [{'x' if passed else ' '}] `{name}`" for name, passed in (analysis.get("checks") or {}).items()],
         ],
     )
     review_reasons = analysis.get("quality_review_reasons") or []
     if review_reasons:
         lines.extend(["", "### 품질 검토 필요", "", *[f"- {item}" for item in review_reasons]])
+    lines.extend(
+        [
+            "",
+            "### 실행·배포 Model Parameter Config",
+            "",
+            (
+                "아래 snapshot은 실행 시점의 전체 `model_parameter_*` 설정, 로컬/Neuro 선언값과 "
+                "차이를 포함합니다. secret 값은 저장하지 않습니다."
+            ),
+            "",
+            "```json",
+            json.dumps(
+                model_parameter_config,
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+                default=str,
+            ),
+            "```",
+        ],
+    )
     return "\n".join(lines)
 
 
@@ -2873,9 +3461,7 @@ def render_final_cohort_trio_report(analysis: Mapping[str, Any]) -> str:
     final_history = analysis.get("final_history")
     final_history = final_history if isinstance(final_history, Mapping) else {}
     verdict = analysis.get("verdict") or (
-        "FAIL"
-        if analysis.get("pass") is not True
-        else "REVIEW" if analysis.get("quality_review_reasons") else "PASS"
+        "FAIL" if analysis.get("pass") is not True else "REVIEW" if analysis.get("quality_review_reasons") else "PASS"
     )
     return "\n".join(
         [
@@ -2887,6 +3473,8 @@ def render_final_cohort_trio_report(analysis: Mapping[str, Any]) -> str:
             f"- 테스트셋 SHA-256: `{testset.get('sha256')}`",
             f"- 최종 DB read-back: `{final_history.get('source')}`",
             f"- read-back SHA-256: `{final_history.get('sha256')}`",
+            f"- Proposal payload source: `{final_history.get('proposal_source')}`",
+            f"- 실행 정책: `{final_history.get('execution_policy_version')}`",
             "",
             render_final_cohort_trio_section(analysis),
         ],
@@ -2989,18 +3577,13 @@ def attach_diagnostic_executions(
 ) -> dict[str, Any]:
     updated = dict(report)
     fallback_expectation = report.get("mi_base_fallback_expectation")
-    expected_mode = (
-        fallback_expectation.get("expected_mode")
-        if isinstance(fallback_expectation, Mapping)
-        else None
-    )
+    expected_mode = fallback_expectation.get("expected_mode") if isinstance(fallback_expectation, Mapping) else None
     diagnostics: list[dict[str, Any]] = []
     for label, execution in sources:
         attempts = [item for item in execution.get("attempts") or [] if isinstance(item, Mapping)]
         status_counts = Counter(str(item.get("status") or "UNKNOWN") for item in attempts)
         persisted_count = sum(
-            item.get("proposal_persisted") is True or bool(item.get("new_proposal_ids"))
-            for item in attempts
+            item.get("proposal_persisted") is True or bool(item.get("new_proposal_ids")) for item in attempts
         )
         manifest = execution.get("manifest") if isinstance(execution.get("manifest"), Mapping) else {}
         policy = (
@@ -3019,8 +3602,7 @@ def attach_diagnostic_executions(
                 "persisted_attempt_count": persisted_count,
                 "errors": errors,
                 "excluded_reason": (
-                    f"요구한 {expected_mode or 'fallback mode'}과 실제 실행 정책이 달라 "
-                    "MI Base 준비 단계에서 종료됨"
+                    f"요구한 {expected_mode or 'fallback mode'}과 실제 실행 정책이 달라 MI Base 준비 단계에서 종료됨"
                 ),
             },
         )
@@ -3045,13 +3627,9 @@ def render_markdown(report: Mapping[str, Any]) -> str:
     mi_base_trace = report.get("mi_base_trace_summary")
     mi_base_trace = mi_base_trace if isinstance(mi_base_trace, Mapping) else {}
     mi_base_backfill_audit = mi_base_trace.get("backfill_audit")
-    mi_base_backfill_audit = (
-        mi_base_backfill_audit if isinstance(mi_base_backfill_audit, Mapping) else {}
-    )
+    mi_base_backfill_audit = mi_base_backfill_audit if isinstance(mi_base_backfill_audit, Mapping) else {}
     mi_base_trace_remediation = report.get("mi_base_trace_remediation")
-    mi_base_trace_remediation = (
-        mi_base_trace_remediation if isinstance(mi_base_trace_remediation, Mapping) else {}
-    )
+    mi_base_trace_remediation = mi_base_trace_remediation if isinstance(mi_base_trace_remediation, Mapping) else {}
     creation = report.get("scenario_group_creation")
     creation = creation if isinstance(creation, Mapping) else {}
 
@@ -3072,13 +3650,12 @@ def render_markdown(report: Mapping[str, Any]) -> str:
     read_only_release = report.get("read_only_release_contract")
     read_only_release = read_only_release if isinstance(read_only_release, Mapping) else {}
     release_pin_passed = (
-        (read_only_release.get("scenario_lever_release") or report.get("scenario_lever_release"))
-        == EXPECTED_CATALOG_VERSION
-        and (read_only_release.get("proposal_flow_release") or report.get("proposal_flow_release"))
-        == EXPECTED_PROPOSAL_FLOW_RELEASE
-    )
+        read_only_release.get("scenario_lever_release") or report.get("scenario_lever_release")
+    ) == EXPECTED_CATALOG_VERSION and (
+        read_only_release.get("proposal_flow_release") or report.get("proposal_flow_release")
+    ) == EXPECTED_PROPOSAL_FLOW_RELEASE
     lines = [
-        "# v4.1 Scenario Lever / v4.1.3 Proposal Flow 대표 3개 품질 평가",
+        "# v4.1 Scenario Lever / v4.1.5 Proposal Flow 대표 3개 품질 평가",
         "",
         f"- 생성 시각(UTC): {report['generated_at']}",
         f"- Proposal 품질 실행 상태: `{report.get('execution_status')}`",
@@ -3135,16 +3712,15 @@ def render_markdown(report: Mapping[str, Any]) -> str:
                 (
                     "PASS"
                     if isinstance(fallback_expectation, Mapping) and fallback_expectation.get("pass")
-                    else "N/A" if not isinstance(fallback_expectation, Mapping) else "FAIL"
+                    else "N/A"
+                    if not isinstance(fallback_expectation, Mapping)
+                    else "FAIL"
                 ),
             )
         ),
         (
             "| MI Base 실제 trace source | `{}` |".format(
-                ", ".join(
-                    f"{source} {count}"
-                    for source, count in (mi_base_trace.get("sources") or {}).items()
-                )
+                ", ".join(f"{source} {count}" for source, count in (mi_base_trace.get("sources") or {}).items())
                 or "not-recorded",
             )
         ),
@@ -3157,8 +3733,7 @@ def render_markdown(report: Mapping[str, Any]) -> str:
         (
             "| MI Base 유효 trace 완전성 | {} |".format(
                 "PASS"
-                if isinstance(fallback_expectation, Mapping)
-                and fallback_expectation.get("effective_trace_complete")
+                if isinstance(fallback_expectation, Mapping) and fallback_expectation.get("effective_trace_complete")
                 else "FAIL",
             )
         ),
@@ -3166,7 +3741,9 @@ def render_markdown(report: Mapping[str, Any]) -> str:
             "| MI Base 소급 보정 audit | {} |".format(
                 "PASS"
                 if mi_base_backfill_audit.get("required") and mi_base_backfill_audit.get("pass")
-                else "FAIL" if mi_base_backfill_audit.get("required") else "N/A",
+                else "FAIL"
+                if mi_base_backfill_audit.get("required")
+                else "N/A",
             )
         ),
         f"| 유효 MI Base identity 일치 | {'PASS' if mi_base_trace.get('identity_consistent') else 'FAIL'} |",
@@ -3329,8 +3906,7 @@ def render_markdown(report: Mapping[str, Any]) -> str:
                 "| 지표 | 기존 | 개선 후 | 증감 |",
                 "| --- | ---: | ---: | ---: |",
                 *[
-                    f"| {label} | {baseline.get(key)} | {final.get(key)} | "
-                    f"{delta.get(key):+g}{unit} |"
+                    f"| {label} | {baseline.get(key)} | {final.get(key)} | {delta.get(key):+g}{unit} |"
                     for label, key, unit in comparison_rows
                 ],
                 "",
@@ -3350,8 +3926,7 @@ def render_markdown(report: Mapping[str, Any]) -> str:
                         status=item.get("status"),
                         attempts=item.get("attempt_count"),
                         results=", ".join(
-                            f"{status} {count}"
-                            for status, count in (item.get("status_counts") or {}).items()
+                            f"{status} {count}" for status, count in (item.get("status_counts") or {}).items()
                         ),
                         persisted=item.get("persisted_attempt_count"),
                         reason=item.get("excluded_reason"),
@@ -3382,8 +3957,7 @@ def render_markdown(report: Mapping[str, Any]) -> str:
                 "| 항목 | 내용 |",
                 "| --- | --- |",
                 (
-                    "| 영향 | Proposal KPI와 DB 대조는 변하지 않으며, 직접 관측과 추론 증적을 분리해 "
-                    "해석해야 함 |"
+                    "| 영향 | Proposal KPI와 DB 대조는 변하지 않으며, 직접 관측과 추론 증적을 분리해 해석해야 함 |"
                     if historical_backfill
                     else (
                         "| 영향 | Proposal KPI와 DB 대조는 유지되지만, 요구 fallback의 attempt별 관측 "
@@ -3393,9 +3967,7 @@ def render_markdown(report: Mapping[str, Any]) -> str:
                 (
                     "| 현재 증적 처리 | 승인된 소급 backfill 있음 / Proposal 재실행 없음 / 원본 증적 보존 |"
                     if historical_backfill
-                    else (
-                        "| 현재 증적 처리 | 소급 backfill 없음 / Proposal 재실행 없음 / 기존 FAIL 판정 유지 |"
-                    )
+                    else ("| 현재 증적 처리 | 소급 backfill 없음 / Proposal 재실행 없음 / 기존 FAIL 판정 유지 |")
                 ),
                 (
                     "| 직접 관측 / 추론 | {} / {}건 |".format(
@@ -3472,10 +4044,7 @@ def render_markdown(report: Mapping[str, Any]) -> str:
                 "",
                 "| 단계 | 건수 |",
                 "| --- | ---: |",
-                *[
-                    f"| {item['stage']} | {item['count']} |"
-                    for item in report["semantic_abstention_by_stage"]
-                ],
+                *[f"| {item['stage']} | {item['count']} |" for item in report["semantic_abstention_by_stage"]],
                 "",
                 "| reason_code | 건수 |",
                 "| --- | ---: |",
@@ -3493,10 +4062,7 @@ def render_markdown(report: Mapping[str, Any]) -> str:
                 "",
                 "| 개선 대상 | 성공률·품질을 높이는 방향 |",
                 "| --- | --- |",
-                *[
-                    f"| {item['target']} | {item['idea']} |"
-                    for item in report["existing_kpi_improvement_ideas"]
-                ],
+                *[f"| {item['target']} | {item['idea']} |" for item in report["existing_kpi_improvement_ideas"]],
             ],
         )
     lines.extend(
@@ -3518,12 +4084,10 @@ def render_markdown(report: Mapping[str, Any]) -> str:
             event=group.get("event_id") or "-",
             event_type=group["event_type_code"],
             success=group["successful_count"],
-            same=(
-                "Y" if group["actual_parameter_sets_identical"] else "N"
-            ) if group["triple_success"] else "N/A",
-            different=(
-                "Y" if group["all_three_scenario_value_signatures_distinct"] else "N"
-            ) if group["triple_success"] and group["actual_parameter_sets_identical"] else "N/A",
+            same=("Y" if group["actual_parameter_sets_identical"] else "N") if group["triple_success"] else "N/A",
+            different=("Y" if group["all_three_scenario_value_signatures_distinct"] else "N")
+            if group["triple_success"] and group["actual_parameter_sets_identical"]
+            else "N/A",
             slot_comparison=(
                 f"{group['exact_common_slot_count']}/{group['exact_common_slots_with_different_values']}"
                 if group["triple_success"]
@@ -3620,10 +4184,7 @@ def render_markdown(report: Mapping[str, Any]) -> str:
                 "",
                 "| 컬럼 | 의미 |",
                 "| --- | --- |",
-                *[
-                    f"| {column} | {meaning} |"
-                    for column, meaning in POST_FIX_COMPARISON_COLUMN_DEFINITIONS
-                ],
+                *[f"| {column} | {meaning} |" for column, meaning in POST_FIX_COMPARISON_COLUMN_DEFINITIONS],
             ],
         )
     if isinstance(diagnostic_executions, list) and diagnostic_executions:
@@ -3634,10 +4195,7 @@ def render_markdown(report: Mapping[str, Any]) -> str:
                 "",
                 "| 컬럼 | 의미 |",
                 "| --- | --- |",
-                *[
-                    f"| {column} | {meaning} |"
-                    for column, meaning in DIAGNOSTIC_EXECUTION_COLUMN_DEFINITIONS
-                ],
+                *[f"| {column} | {meaning} |" for column, meaning in DIAGNOSTIC_EXECUTION_COLUMN_DEFINITIONS],
             ],
         )
     return "\n".join(lines)
@@ -3756,9 +4314,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0 if analysis["pass"] else 1
     plan = _read_json(args.plan.resolve())
     execution_sources = [(str(path.resolve()), _read_json(path.resolve())) for path in args.execution_evidence]
-    post_fix_sources = [
-        (str(path.resolve()), _read_json(path.resolve())) for path in args.post_fix_execution_evidence
-    ]
+    post_fix_sources = [(str(path.resolve()), _read_json(path.resolve())) for path in args.post_fix_execution_evidence]
     execution = merge_execution_evidence(
         execution_sources,
         post_fix_sources=post_fix_sources,
@@ -3773,8 +4329,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
     if args.diagnostic_execution_evidence:
         diagnostic_sources = [
-            (str(path.resolve()), _read_json(path.resolve()))
-            for path in args.diagnostic_execution_evidence
+            (str(path.resolve()), _read_json(path.resolve())) for path in args.diagnostic_execution_evidence
         ]
         report = attach_diagnostic_executions(report, diagnostic_sources)
     testset: Mapping[str, Any] | None = None

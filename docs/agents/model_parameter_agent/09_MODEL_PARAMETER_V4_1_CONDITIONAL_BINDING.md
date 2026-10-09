@@ -54,10 +54,11 @@ workbook/LUT와 공개 API/DB schema를 그대로 둔다. 변경 범위는 propo
   active binding만 검토하며 다른 Lever나 legacy mapping을 scan하지 않는다.
 - Step2는 parent 전체 영향이 명시된 경우에만 child를 확장한다. 대상이 유일하고 기간만 모호하면 가장 이른 exact
   현재·미래 기간 한 건을 복구하며, 과거 월·PowerMix·LNG Plant/Train 증적 대상에는 적용하지 않는다.
-- Step2/Step3 누락 task만 request 전체 최대 2회의 targeted semantic repair를 허용한다. Scenario 전체 outer retry는 없다.
-- Step3은 active 16종별 `bounded-expert-v1` variation policy를 prompt와 서버 계산에 함께 적용하고, 모든 slot의
-  대상·기간·근거 유형·인과 경로·기준값·계산·가정·불확실성을 rationale에 명시한다. repair 후에도 구조화 근거가
-  없거나 선언 방향과 실제 값 방향이 모순인 cell은 저장하지 않는다.
+- Step2/Step3 schema·semantic·좌표 오류는 재호출하지 않는다. transient 오류만 호출 단위 retry 대상이며 Scenario
+  전체 outer retry는 없다.
+- Step3은 active 16종별 variation policy를 prompt와 서버 계산에 함께 적용하고, 모든 slot의 대상·기간·근거 유형·
+  인과 경로·기준값·계산·가정·불확실성을 rationale에 명시한다. 구조화 근거가 없거나 선언 방향과 실제 값 방향이
+  모순인 cell은 저장하지 않는다.
 - 같은 Group의 sibling Scenario는 동일 Parameter·slot·causal mechanism의 soft comparison에만 사용하며 현재
   Scenario 후보 또는 slot을 활성화하지 않는다.
 
@@ -68,6 +69,34 @@ DB/mgmt migration은 필수가 아니다. 최종 proposal은 기존 `proposal_pa
 trace는 request-local 실행 증적이며 공개 JSON이나 신규 컬럼으로 영속화하지 않는다. 향후 운영 화면에서 근거 유형,
 policy release, confidence를 구조화 검색해야 할 때만 mgmt 레포에서 별도 audit JSON 컬럼/테이블을 신규 버전으로
 검토하며, 이는 v4.1.3 실행의 선행 조건이 아니다.
+
+### v4.1.5 proposal Flow release
+
+`v4.1.5`는 v4.1.4의 Scenario Lever catalog `v4.1`, checksum, 21개 Lever·56개 binding, Parameter master,
+workbook/LUT 및 공개 API/DB schema를 그대로 유지한다. 변경 범위는 Proposal 성공률과 value cell coverage를
+높이는 내부 Step1.5/Step2/Step3 및 평가 증적이다.
+
+- Step1.5 complete all-N/A는 `route_disruption → ShippingCost`와 물리 cargo 배분·재정거래·운송 경로가 명시된
+  `regional_price_spread → ShippingCost`만 policy recovery한다. 가격 spread만으로는 복구하지 않고 다른
+  Parameter로 확장하지 않는다.
+- Step2가 현재 Scenario/Event/Lever 원문과 실제 slot catalog의 alias·기간을 대조해 대상이 하나로 확정될 때만
+  누락 slot을 복구하고, 이미 하나가 선택됐어도 명시 범위의 나머지 exact 기간을 확장한다. global time-only
+  Parameter도 명시 기간이 있으면 허용한다. Pipeline은 pipeline명 또는 From+To, 액화 설비는 Plant+Train이 모두
+  필요하며, ambiguous target·과거 기간·PowerMix는 복구하지 않는다.
+- Step3의 `bounded-expert-v3`는 기존 parameter별 weak/medium/strong cap을 유지하면서 duration, scope,
+  offset, confidence, sibling position을 severity band 내부 위치로 변환한다. 계산은 deterministic이고
+  `OBSERVED`/`DERIVED` 값에는 적용하지 않는다. sibling은 비교 정보일 뿐 후보·slot·방향의 근거가 될 수 없다.
+- 불완전 응답 또는 모든 slot의 `DERIVED` no-change에는 exact slot과 routing 방향이 모두 확정된 경우만 weak
+  deterministic fallback을 적용한다. PowerMix·unknown/unchanged·상충 방향은 실패를 유지한다. semantic 오류를
+  고치기 위한 LLM 추가 호출은 없다.
+- slot rationale에는 variation factor와 판단 이유, fallback 여부와 불확실성을 명시한다.
+- 동일 고정 cohort의 release 재평가는 기존 Proposal을 보존한 append-only `release-replay-v1`으로 수행하며,
+  새 Proposal ID만 최종 KPI에 사용한다.
+- 실행 evidence/report에는 secret을 제외한 전체 `model_parameter_*` 로컬·Neuro 선언값과 runtime effective
+  snapshot, 파일 SHA와 선언 차이를 포함한다.
+
+배포 식별자는 `model_parameter_proposal_flow_release=v4.1.5`이고 catalog version은 계속 `v4.1`이다.
+신규 테이블·컬럼 또는 mgmt migration은 필요하지 않다.
 
 ## 2. 확장 binding
 

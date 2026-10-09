@@ -467,7 +467,7 @@ def test_configmap_and_local_resource_manifests_match_canonical() -> None:
 
     assert local["model_parameter_proposal_flow_release"] == embedded[
         "model_parameter_proposal_flow_release"
-    ] == "v4.1.3"
+    ] == "v4.1.5"
     assert local["scenario_group_v4_impact_catalog_version"] == embedded[
         "scenario_group_v4_impact_catalog_version"
     ] == "v4.1"
@@ -481,13 +481,17 @@ def test_configmap_and_local_resource_manifests_match_canonical() -> None:
         "model_parameter_max_routing_candidates_per_dimension",
         "model_parameter_v4_max_routing_candidates_per_dimension",
         "model_parameter_max_conditional_parameters_per_scenario",
-        "model_parameter_semantic_repair_max_attempts",
     ):
         assert local[setting_name] == embedded[setting_name]
         assert local[setting_name] > 0
     assert local["model_parameter_variation_mode"] == embedded[
         "model_parameter_variation_mode"
     ] == "balanced"
+    for setting_name in (
+        "model_parameter_variation_profile_enabled",
+        "model_parameter_grounded_slot_recovery_enabled",
+    ):
+        assert local[setting_name] is embedded[setting_name] is True
 
 
 def test_canonical_mapping_workbook_and_archive_match_fixture() -> None:

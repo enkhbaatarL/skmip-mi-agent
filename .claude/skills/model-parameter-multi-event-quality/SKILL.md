@@ -109,7 +109,7 @@ v4 persistence의 authoritative link는 `scenario_group_id`이며 API `eventId=n
 
 CLI exit는 mandatory `FAIL`만 1이다. `PASS`, `REVIEW`, `COVERAGE LIMIT`는 0이다.
 
-### 5. Proposal-only uncovered campaign
+### 5. Proposal-only uncovered / release-replay campaign
 
 Confirmation 없이 proposal row만 제한 실행해야 하면 quality runner의 `--execute`를 사용하지 않고 별도
 uncovered-only runner를 사용한다. 기본은 read-only이며 capability release와 Group 또는 Scenario 범위를
@@ -129,7 +129,13 @@ proposal history를 다시 판정한다. `extend16-v8`은 v4.1 full checksum, �
 `new-bc-v7` contract SHA, semantic schema와 실제 resource content fingerprint를 묶은 고정 계약이다. 기존 v4.0
 Group 검증에는 명시적인 `extend16-v8-v4.0-compat` release를 사용한다. 각 write
 직전에는 현재 Scenario뿐 아니라 명시 cohort 전체의 in-flight 상태를 다시 확인한다. Confirmation, callback,
-outer retry와 uncovered guard 우회는 제공하지 않는다. 구조화된 `ModelParameterSemanticEmptyError`는 일반 오류가
+outer retry와 임의 uncovered guard 우회는 제공하지 않는다. 단, 사용자가 같은 고정 Scenario cohort에서 새
+Proposal Flow release의 결과를 전건 새로 생성하라고 명시하면 `--execute --replay-covered`를 사용할 수 있다.
+이 mode는 기존 행을 갱신·삭제하지 않고 이전 `PROPOSED`만 새 release 실행 대상으로 허용하는 append-only
+`release-replay-v1`이다. `CONFIRMED`는 해당 Scenario 실행을 막고 `PROCESSING`은 campaign을 hard-stop한다.
+Scenario당 새 Proposal ID는 정확히 하나여야 하며, 완료 뒤 그 ID만 다시 조회한 `final_campaign_readback`을
+KPI source of truth로 사용한다. 과거 blocking Proposal과 새 결과를 섞어 최신 행으로 추정하지 않는다.
+구조화된 `ModelParameterSemanticEmptyError`는 일반 오류가
 아닌 `ABSTAINED` attempt로 보존하고 campaign을 `REVIEW`로 판정한다. 일반 Scenario `FAIL`은 해당 Scenario에
 격리해 뒤의 eligible 후보를 계속 실행하지만, resource/context/catalog/input drift, in-flight row와 persistence
 integrity 위반으로 인한 `BLOCKED`는 campaign 전체를 즉시 중단한다. Step1.5/2/3 abstention은 full prompt 없이
@@ -172,7 +178,8 @@ Step1.5/2/3 semantic abstention도 MI Base 준비 뒤 종료되므로 예외의 
 - 표기 차이는 Step2 LLM의 구조화된 원문 Plant/Train 근거와 server-side span/exact-target 검증으로 완화할 수
   있지만 출력은 exact model coordinate다. 동일 evidence의 복수 target 승인을 거절하고 다중 slot은 slot별
   exact 기간 근거 또는 해당 slot을 직접 포함하는 명시 연월·분기·닫힌 범위를 요구한다.
-- After는 Before uncovered 후보만 Scenario별 1회 실행하고 DB 전체 read-back으로 KPI를 다시 계산한다.
+- 기본 After는 Before uncovered 후보만 Scenario별 1회 실행한다. 명시적으로 승인된 새 Flow 전건 replay는
+  append-only release-replay를 사용하고, 이번 campaign의 새 Proposal ID read-back만으로 KPI를 다시 계산한다.
 - 실패 원인은 error code/message 기준으로 집계하고 해결책을 연결한다. 운영 개선안은 원인 분석 뒤에 제시하며,
   Scenario별 실패 격리와 transient-only bounded retry를 semantic abstain 및 integrity fail-closed와 구분한다.
 - 비교에는 `scripts/compare_same_cohort.py`를 사용하고 전체 coverage와 후보 성공률을 분리해 보고한다.
@@ -223,11 +230,24 @@ Step1.5/2/3 semantic abstention도 MI Base 준비 뒤 종료되므로 예외의 
 - 실행 attempt Scenario ID 집합은 고정 testset의 proposal-eligible ID 집합과 정확히 같아야 하며 preflight skip ID를
   실행하면 `FAIL`이다. 최종 DB read-back도 건수뿐 아니라 covered/uncovered/skip Scenario ID 집합과 Group identity를
   exact 대조한다.
-- Live Proposal campaign의 최종 DB read-back은 blocking Proposal row의 `proposal_parameters`를 함께 스냅샷해야 한다.
+- Live Proposal campaign의 최종 DB read-back은 평가 대상 Proposal row의 `proposal_parameters`를 함께 스냅샷해야 한다.
+  release-replay에서는 `final_campaign_readback`의 신규 ID만 평가 대상으로 삼는다.
+  공식 KPI는 매 release마다 고정 cohort 전체를 새로 실행한 live clean campaign의 신규 ID만으로 계산한다.
+  이전 campaign의 Scenario별 성공/미제안 전이는 원인 분석용 관측값이며, 과거 성공 Scenario를 개별 복구하거나
+  같은 결과가 나오도록 강제하는 release gate로 사용하지 않는다. post-fix 부분 재실행은 명시 요청이 있을 때의
+  진단 증적일 뿐 공식 live clean KPI와 합치지 않는다.
   완료 시 `evaluate_representative_trios.py final-cohort`로 고정 testset 전체를 다시 평가해 (1) full-trio Parameter
-  type set, (2) 세 Scenario의 전체 proposed-value signature, (3) exact common slot 값 차이, (4) slot별 명시적
-  rationale 완전성을 Markdown/JSON에 자동 생성한다. Proposal payload 누락, 동일 Scenario의 blocking row 중복,
+  type set, (2) 세 Scenario의 전체 proposed-value signature, (3) scalar exact common slot 값 차이와 PowerMix
+  atomic-vector 차이, (4) slot별 명시적 rationale 완전성을 Markdown/JSON에 자동 생성한다. Proposal payload 누락,
+  동일 Scenario의 campaign row 중복,
   fixture/history scope·Group identity 불일치는 fail-closed다.
+- 같은 최종 Report는 미제안·실패를 Scenario Group/Event, 중단 단계, reason code, 확정 가능한 Parameter별로 자동
+  집계하고 hotspot별 개선안과 hallucination 방지 경계를 함께 기록한다. `ABSTAINED`, 기술 실패, capability limit은
+  서로 섞지 않으며 Step1.5에서 Parameter가 확정되지 않은 사례를 개별 후보 Parameter 실패로 과대 집계하지 않는다.
+- `full-trio success`는 고정 Group의 대표 Scenario 3개 모두가 해당 live clean campaign에서 신규 Proposal row를
+  저장하고, DB read-back payload에 하나 이상의 유효 value cell을 가진 상태다. 세 Scenario 중 하나라도 semantic
+  abstention, 기술 실패, capability limit 또는 payload 결손이면 해당 Group은 full-trio가 아니다. Parameter 종류
+  동일성과 값 변별은 full-trio 이후에 계산하는 별도 KPI다.
 - 공식 live campaign Report는 `최종 DB 기준 Trio Parameter·값 변별` 섹션이 없으면 미완료다. `evaluate`에
   `--testset-input`과 `--final-history-evidence`를 함께 주면 이 섹션을 본문에 자동 부착한다. 실행 증적이 여러 조각이거나
   기존 covered Proposal과 신규 Proposal이 섞인 campaign은 최종 DB read-back을 source of truth로 삼아 별도
@@ -236,6 +256,9 @@ Step1.5/2/3 semantic abstention도 MI Base 준비 뒤 종료되므로 예외의 
   7개 안팎으로 압축하고 `runtime-capable`, `current write eligible`, `covered`, `coverage limit`을 고정 설명한다.
   `Proposal 결과 KPI`, 그룹 표, post-fix 비교 표의 컬럼 정의도 고정 섹션으로 포함한다. KPI 개선안은 새 지표 제안이
   아니라 Proposal 성공률·triple-success·종류 동일성·Scenario별 값 변별 등 **기존 KPI를 높이는 실행 아이디어**로 쓴다.
+- evidence schema v6 이상인 공식 Report에는 실행 시점의 전체 `model_parameter_*` runtime effective 값,
+  로컬 `envs/config.yaml`, Neuro `devops/k8s/configmap.yaml` 선언값·SHA와 차이를 자동 포함한다. secret-valued
+  항목은 값과 key를 증적에서 제외하거나 마스킹한다. config snapshot이 빠진 Report는 완료로 처리하지 않는다.
 - v4.1.2 proposal-only frozen-context 검사는 persisted Scenario/Event/Group drift를 fail-closed로 유지하되,
   graph 실행 중 최상위에 추가되는 request-local `mi_base_case_id` pin은 Scenario mutation으로 분류하지 않는다.
   다른 context 차이는 persistence 전에 계속 차단한다.

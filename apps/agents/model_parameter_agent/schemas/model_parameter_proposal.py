@@ -71,11 +71,7 @@ class ParameterValueCell(ApiModel):
             return value
         value_selection = str(value.get("value_selection_rationale_ko") or "").strip()
         proposed_value = str(value.get("proposed_value_rationale_ko") or "").strip()
-        rationale = " ".join(
-            item
-            for item in (value_selection, proposed_value)
-            if item
-        )
+        rationale = " ".join(item for item in (value_selection, proposed_value) if item)
         return {
             **value,
             "rationale_ko": rationale or "값 선택 및 제안 근거가 제공되지 않았습니다.",
@@ -103,6 +99,15 @@ class ParameterAdjustment(ApiModel):
         return value or []
 
 
+class LLMVariationFactors(ApiModel):
+    duration: Literal["short", "medium", "long"]
+    scope: Literal["narrow", "medium", "broad"]
+    offset: Literal["none", "partial", "strong"]
+    confidence: Literal["low", "medium", "high"]
+    sibling_position: Literal["lower", "middle", "upper", "standalone"]
+    rationale_ko: str = Field(min_length=1, max_length=600)
+
+
 class LLMValueCell(ApiModel):
     # Optional only at the receive boundary so a malformed item can be dropped
     # without retrying the entire LLM call. The prompt still requires every key.
@@ -115,17 +120,21 @@ class LLMValueCell(ApiModel):
     )
     proposed_value: str | int | float | None
     rationale_ko: str
-    evidence_basis: Literal[
-        "OBSERVED",
-        "DERIVED",
-        "BOUNDED_ASSUMPTION",
-        "NEUTRAL",
-    ] | None = None
+    evidence_basis: (
+        Literal[
+            "OBSERVED",
+            "DERIVED",
+            "BOUNDED_ASSUMPTION",
+            "NEUTRAL",
+        ]
+        | None
+    ) = None
     direction: Literal["increase", "decrease", "unchanged"] | None = None
     severity: Literal["weak", "medium", "strong"] | None = None
     evidence_ko: str | None = Field(default=None, max_length=600)
     calculation_ko: str | None = Field(default=None, max_length=600)
     assumption_ko: str | None = Field(default=None, max_length=600)
+    variation_factors: LLMVariationFactors | None = None
 
 
 class LLMValueAdjustment(ApiModel):

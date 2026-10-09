@@ -1,14 +1,17 @@
 # Copyright (c) 2026 SK Innovation E&S.
 # ruff: noqa: ANN401, C901, E402
 
-"""Discover uncovered v4 scenarios and optionally run proposals once.
+"""Discover eligible v4 scenarios and optionally run proposals once.
 
 The default mode is DB read-only. ``--execute`` is intentionally narrower than
 the API/background workflows: it calls ``_evaluate_scenario`` directly, never
 calls confirmation or callback code, and never retries a write-producing
 attempt. A Scenario-level proposal failure is isolated so later eligible
 Scenarios still receive their one attempt; integrity or scope drift remains a
-campaign-wide hard stop. The uncovered-only guard cannot be bypassed.
+campaign-wide hard stop. The default uncovered-only guard cannot be bypassed.
+The explicit ``--replay-covered`` release-evaluation mode remains append-only:
+it permits a new Proposal when only prior ``PROPOSED`` rows exist, while
+``PROCESSING`` and ``CONFIRMED`` rows still block that Scenario.
 """
 
 from __future__ import annotations
@@ -27,6 +30,8 @@ import re
 import sys
 import time
 from typing import Any
+
+import yaml
 
 
 ROOT_DIR = Path(__file__).resolve().parents[3]
@@ -87,10 +92,11 @@ from tests.manual.model_parameter_agent.runner_common import (
 
 V4_API_VERSION = "v4"
 V4_STRATEGY = "multi_event_model_lever_dimensions"
-EVIDENCE_SCHEMA_VERSION = 5
+EVIDENCE_SCHEMA_VERSION = 6
 UNCOVERED_POLICY_VERSION = "uncovered-only-v1"
+RELEASE_REPLAY_POLICY_VERSION = "release-replay-v1"
 BASELINE_CAPABILITY_RELEASE = "extend16-v8"
-PROPOSAL_FLOW_RELEASE = "v4.1.3"
+PROPOSAL_FLOW_RELEASE = "v4.1.5"
 EXPECTED_V4_0_CATALOG_CHECKSUM = "416017351f2b9539370963a3ca413914876da55a1db3f41e3dacd34bd466c763"
 EXPECTED_V4_1_CATALOG_CHECKSUM = "7f4ef0b7aa60efb550b9175654fd82350f0c293debf880a9180e7e935db54d69"
 EXPECTED_NEW_BC_V7_CONTRACT_SHA256 = "e8bea11883e7e796938a994f6415aa0c294a8eccbb9181981a213fcdb0aec7bb"
@@ -151,6 +157,7 @@ CAPABILITY_RELEASES: dict[str, dict[str, Any]] = {
     },
 }
 DEFAULT_EVIDENCE_DIR = ROOT_DIR / "tests" / "reports" / "model_parameter_agent"
+KUBERNETES_CONFIG_PATH = ROOT_DIR / "devops" / "k8s" / "configmap.yaml"
 ELIGIBLE_SCENARIO_STATUSES = frozenset({"created", "realized"})
 ELIGIBLE_GROUP_STATUSES = frozenset({"created", "realized"})
 ELIGIBLE_GROUP_STAGE = "completed"
@@ -213,6 +220,7 @@ class ProposalOnlyOptions:
     capability_release: str
     evidence_path: Path
     required_mi_base_fallback_mode: str | None = None
+    replay_covered: bool = False
 
 
 @dataclass(frozen=True)
@@ -257,6 +265,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="Write one proposal for each eligible uncovered scenario; omitted means read-only discovery.",
     )
     parser.add_argument(
+        "--replay-covered",
+        action="store_true",
+        help=(
+            "Append one new Proposal Flow release result even when a PROPOSED row exists. "
+            "Existing rows are preserved; PROCESSING and CONFIRMED still block execution."
+        ),
+    )
+    parser.add_argument(
         "--capability-release",
         required=True,
         choices=tuple(sorted(CAPABILITY_RELEASES)),
@@ -265,10 +281,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--require-mi-base-fallback-mode",
         choices=("fail", "verified_cache", "configured_fallback"),
-        help=(
-            "Fail before Scenario execution unless the loaded active-case MI Base fallback mode "
-            "matches this value."
-        ),
+        help=("Fail before Scenario execution unless the loaded active-case MI Base fallback mode matches this value."),
     )
     parser.add_argument("--evidence-path", type=Path)
     return parser
@@ -288,6 +301,7 @@ def _options_from_args(args: argparse.Namespace, started_at: datetime) -> Propos
         capability_release=str(args.capability_release or "").strip(),
         evidence_path=raw_path.expanduser().resolve(),
         required_mi_base_fallback_mode=args.require_mi_base_fallback_mode,
+        replay_covered=bool(args.replay_covered),
     )
 
 
@@ -305,10 +319,7 @@ def _validate_options(options: ProposalOnlyOptions) -> None:
         options.required_mi_base_fallback_mode is not None
         and options.required_mi_base_fallback_mode not in allowed_fallback_modes
     ):
-        message = (
-            "unsupported --require-mi-base-fallback-mode: "
-            f"{options.required_mi_base_fallback_mode!r}"
-        )
+        message = f"unsupported --require-mi-base-fallback-mode: {options.required_mi_base_fallback_mode!r}"
         raise ValueError(message)
     invalid_ids = [scenario_id for scenario_id in options.scenario_ids if scenario_id <= 0]
     if invalid_ids:
@@ -316,6 +327,9 @@ def _validate_options(options: ProposalOnlyOptions) -> None:
         raise ValueError(message)
     if options.scenario_group_id is not None and options.scenario_group_id <= 0:
         message = f"--scenario-group-id must be positive: {options.scenario_group_id}"
+        raise ValueError(message)
+    if options.replay_covered and not options.execute:
+        message = "--replay-covered requires --execute"
         raise ValueError(message)
     duplicate_ids = sorted(
         {scenario_id for scenario_id in options.scenario_ids if options.scenario_ids.count(scenario_id) > 1},
@@ -352,6 +366,98 @@ def _sanitize_json(value: Any) -> Any:
     if isinstance(safe, str):
         return _redact_text(safe)
     return safe
+
+
+def _model_parameter_config_values(payload: Mapping[str, Any]) -> dict[str, Any]:
+    return {str(key): value for key, value in payload.items() if str(key).startswith("model_parameter_")}
+
+
+def _redact_config_values(value: object) -> object:
+    if isinstance(value, Mapping):
+        redacted: dict[str, object] = {}
+        for raw_key, nested in value.items():
+            key = str(raw_key)
+            normalized_key = key.casefold().replace("-", "_")
+            if any(token in normalized_key for token in ("password", "secret", "access_key", "token")):
+                redacted[key] = "<redacted>"
+            else:
+                redacted[key] = _redact_config_values(nested)
+        return redacted
+    if isinstance(value, list | tuple):
+        return [_redact_config_values(item) for item in value]
+    return value
+
+
+def _flatten_config(
+    value: object,
+    *,
+    prefix: str = "",
+) -> dict[str, object]:
+    if isinstance(value, Mapping):
+        flattened: dict[str, object] = {}
+        for key, nested in value.items():
+            path = f"{prefix}.{key}" if prefix else str(key)
+            flattened.update(_flatten_config(nested, prefix=path))
+        return flattened
+    return {prefix: value}
+
+
+def _display_config_path(path: Path) -> str:
+    try:
+        return str(path.relative_to(ROOT_DIR))
+    except ValueError:
+        return str(path)
+
+
+def _model_parameter_config_snapshot() -> dict[str, Any]:
+    local_payload = yaml.safe_load(CONFIG_FILE_PATH.read_text(encoding="utf-8")) or {}
+    kubernetes_document = (
+        yaml.safe_load(
+            KUBERNETES_CONFIG_PATH.read_text(encoding="utf-8"),
+        )
+        or {}
+    )
+    kubernetes_config_text = str(
+        ((kubernetes_document.get("data") or {}).get("config.yaml") or ""),
+    )
+    kubernetes_payload = yaml.safe_load(kubernetes_config_text) or {}
+    runtime_payload = get_settings().model_dump(mode="json")
+    local_values = _redact_config_values(
+        _model_parameter_config_values(local_payload),
+    )
+    kubernetes_values = _redact_config_values(
+        _model_parameter_config_values(kubernetes_payload),
+    )
+    runtime_values = _redact_config_values(
+        _model_parameter_config_values(runtime_payload),
+    )
+    if not all(isinstance(item, dict) for item in (local_values, kubernetes_values, runtime_values)):
+        message = "model parameter config snapshot must be a mapping"
+        raise TypeError(message)
+    local_flat = _flatten_config(local_values)
+    kubernetes_flat = _flatten_config(kubernetes_values)
+    all_paths = sorted(set(local_flat) | set(kubernetes_flat))
+    differences = [
+        {
+            "path": path,
+            "local": local_flat.get(path),
+            "neuro": kubernetes_flat.get(path),
+        }
+        for path in all_paths
+        if local_flat.get(path) != kubernetes_flat.get(path)
+    ]
+    return {
+        "scope": "all model_parameter_* settings; secret-valued fields are omitted from persisted evidence",
+        "local_config_path": _display_config_path(CONFIG_FILE_PATH),
+        "local_config_sha256": hashlib.sha256(CONFIG_FILE_PATH.read_bytes()).hexdigest(),
+        "neuro_config_path": _display_config_path(KUBERNETES_CONFIG_PATH),
+        "neuro_config_sha256": hashlib.sha256(KUBERNETES_CONFIG_PATH.read_bytes()).hexdigest(),
+        "local_declared": local_values,
+        "neuro_declared": kubernetes_values,
+        "runtime_effective": runtime_values,
+        "local_vs_neuro_differences": differences,
+        "top_level_key_parity": sorted(local_values) == sorted(kubernetes_values),
+    }
 
 
 def _reserve_evidence_path(path: Path, initial_evidence: Mapping[str, Any]) -> None:
@@ -843,6 +949,7 @@ def _classify_uncovered_guard(
     scenario_id: int,
     scenario_group_id: int,
     rows: Sequence[Mapping[str, Any]],
+    replay_covered: bool = False,
 ) -> dict[str, Any]:
     history = [_proposal_row_evidence(row) for row in rows]
     identity_errors = [
@@ -901,9 +1008,14 @@ def _classify_uncovered_guard(
         reason_code = "CONFIRMED_EXISTS"
         eligible = False
     elif "PROPOSED" in statuses:
-        decision = "SKIP"
-        reason_code = "PROPOSED_EXISTS"
-        eligible = False
+        if replay_covered:
+            decision = "ELIGIBLE"
+            reason_code = "PROPOSED_RELEASE_REPLAY"
+            eligible = True
+        else:
+            decision = "SKIP"
+            reason_code = "PROPOSED_EXISTS"
+            eligible = False
     elif statuses and set(statuses) == {"FAILED"}:
         decision = "ELIGIBLE"
         reason_code = "FAILED_ONLY"
@@ -935,6 +1047,8 @@ def _classify_uncovered_guard(
 def _snapshot_campaign_guards(
     preflight: Sequence[Mapping[str, Any]],
     dependencies: RunnerDependencies,
+    *,
+    replay_covered: bool = False,
 ) -> tuple[dict[int, dict[str, Any]], list[str]]:
     errors: list[str] = []
     guards: dict[int, dict[str, Any]] = {}
@@ -979,6 +1093,7 @@ def _snapshot_campaign_guards(
                 scenario_id=scenario_id,
                 scenario_group_id=scenario_group_id,
                 rows=rows_by_scenario[scenario_id],
+                replay_covered=replay_covered,
             )
     return guards, errors
 
@@ -1325,6 +1440,7 @@ async def _execute_once(
     resource_manifest: Mapping[str, Any],
     campaign_preflight: Sequence[Mapping[str, Any]],
     initially_eligible_ids: Sequence[int],
+    replay_covered: bool,
 ) -> dict[str, Any]:
     started_at = datetime.now(UTC)
     started = time.perf_counter()
@@ -1416,6 +1532,7 @@ async def _execute_once(
     campaign_guards, campaign_guard_errors = _snapshot_campaign_guards(
         campaign_preflight,
         dependencies,
+        replay_covered=replay_covered,
     )
     attempt["campaign_guard_before_write"] = {
         str(target_scenario_id): guard for target_scenario_id, guard in sorted(campaign_guards.items())
@@ -1462,6 +1579,7 @@ async def _execute_once(
         scenario_id=scenario_id,
         scenario_group_id=scenario_group_id,
         rows=before_rows,
+        replay_covered=replay_covered,
     )
     attempt["uncovered_guard_before_write"] = guard
     if not guard["eligible"]:
@@ -1618,6 +1736,9 @@ async def run_campaign(
             "scenario_ids": list(options.scenario_ids),
         },
         "manifest": {
+            "execution_policy_version": (
+                RELEASE_REPLAY_POLICY_VERSION if options.replay_covered else UNCOVERED_POLICY_VERSION
+            ),
             "capability_release": options.capability_release,
             "capability_contract": {
                 "catalog_version": _capability_contract(options.capability_release)["catalog_version"],
@@ -1642,18 +1763,19 @@ async def run_campaign(
             "runtime_allowlist": sorted(RUNTIME_PROPOSAL_CAPABILITY_NAMES),
             "uncovered_policy_version": UNCOVERED_POLICY_VERSION,
             "resource": resource_manifest,
+            "model_parameter_config": _model_parameter_config_snapshot(),
             "mi_base_fallback_policy": mi_base_fallback_policy,
             "required_mi_base_fallback_mode": options.required_mi_base_fallback_mode,
         },
         "safety": {
-            "uncovered_only": True,
+            "uncovered_only": not options.replay_covered,
+            "append_only_release_replay": options.replay_covered,
+            "existing_proposal_rows_preserved": True,
             "sequential": True,
             "single_worker_best_effort": True,
             "max_attempts_per_scenario": 1,
             "automatic_retry": False,
-            "scenario_failure_policy": (
-                "isolate ABSTAINED/FAIL and continue; BLOCKED hard-stops the campaign"
-            ),
+            "scenario_failure_policy": ("isolate ABSTAINED/FAIL and continue; BLOCKED hard-stops the campaign"),
             "confirmation_invoked": False,
             "callback_invoked": False,
             "required_api_version": V4_API_VERSION,
@@ -1840,7 +1962,11 @@ async def run_campaign(
         return evidence
 
     eligible_preflight = [item for item in preflight if item.get("status") == "PASS"]
-    guards, guard_errors = _snapshot_campaign_guards(preflight, dependencies)
+    guards, guard_errors = _snapshot_campaign_guards(
+        preflight,
+        dependencies,
+        replay_covered=options.replay_covered,
+    )
     for item in preflight:
         scenario_id = int(item["scenario_id"])
         if scenario_id in guards:
@@ -1854,10 +1980,14 @@ async def run_campaign(
     ]
     lifecycle_skipped_ids = [int(item["scenario_id"]) for item in preflight if item.get("status") == "SKIP"]
     covered_ids = sorted(scenario_id for scenario_id, guard in guards.items() if guard["decision"] == "SKIP")
+    preexisting_proposal_ids = sorted(
+        scenario_id for scenario_id, guard in guards.items() if "PROPOSED" in set(guard.get("statuses") or [])
+    )
     evidence["selection"].update(
         {
             "eligible_scenario_ids": eligible_ids,
             "covered_scenario_ids": covered_ids,
+            "preexisting_proposal_scenario_ids": preexisting_proposal_ids,
             "lifecycle_or_capability_skipped_scenario_ids": lifecycle_skipped_ids,
             "hard_stop_scenario_ids": hard_stop_ids,
             "errors": guard_errors,
@@ -1868,6 +1998,8 @@ async def run_campaign(
                 "preflight_fail": 0,
                 "guarded": len(guards),
                 "eligible_uncovered": len(eligible_ids),
+                "eligible_for_execution": len(eligible_ids),
+                "eligible_release_replay": (len(preexisting_proposal_ids) if options.replay_covered else 0),
                 "covered_skip": len(covered_ids),
                 "lifecycle_or_capability_skip": len(lifecycle_skipped_ids),
                 "hard_stop": len(hard_stop_ids),
@@ -1902,15 +2034,69 @@ async def run_campaign(
             resource_manifest=resource_manifest,
             campaign_preflight=preflight,
             initially_eligible_ids=eligible_ids[scenario_index:],
+            replay_covered=options.replay_covered,
         )
         evidence["attempts"].append(attempt)
         _write_evidence(options.evidence_path, evidence)
         if attempt.get("status") == "BLOCKED":
             break
 
+    final_campaign_readback: list[dict[str, Any]] = []
+    campaign_proposal_ids_by_scenario: dict[str, int] = {}
+    campaign_readback_errors: list[str] = []
+    for attempt in evidence["attempts"]:
+        if attempt.get("status") != "PASS":
+            continue
+        scenario_id = int(attempt["scenario_id"])
+        scenario_group_id = _int_or_none(attempt.get("scenario_group_id"))
+        new_ids = [
+            proposal_id
+            for value in attempt.get("new_proposal_ids") or []
+            if (proposal_id := _int_or_none(value)) is not None
+        ]
+        if len(new_ids) != 1:
+            campaign_readback_errors.append(
+                f"scenario_id={scenario_id}: expected one campaign Proposal ID, got {new_ids}",
+            )
+            continue
+        proposal_id_value = new_ids[0]
+        row, readback_error = _safe_fetch_proposal(
+            proposal_id_value,
+            dependencies.fetch_proposal,
+        )
+        if readback_error:
+            campaign_readback_errors.append(
+                f"scenario_id={scenario_id}: final campaign read-back failed: {readback_error}",
+            )
+            continue
+        row_errors: list[str] = []
+        if _int_or_none(row.get("model_param_proposal_id")) != proposal_id_value:
+            row_errors.append("Proposal ID mismatch")
+        if _int_or_none(row.get("scenario_id")) != scenario_id:
+            row_errors.append("Scenario ID mismatch")
+        if _int_or_none(row.get("scenario_group_id")) != scenario_group_id:
+            row_errors.append("Scenario Group ID mismatch")
+        if str(row.get("status") or "").upper() != "PROPOSED":
+            row_errors.append(f"unexpected status={row.get('status')!r}")
+        if not isinstance(row.get("proposal_parameters"), list) or not row.get(
+            "proposal_parameters",
+        ):
+            row_errors.append("proposal_parameters is empty")
+        if row_errors:
+            campaign_readback_errors.append(
+                f"scenario_id={scenario_id}, proposal_id={proposal_id_value}: " + "; ".join(row_errors),
+            )
+            continue
+        campaign_proposal_ids_by_scenario[str(scenario_id)] = proposal_id_value
+        final_campaign_readback.append(row)
+
+    evidence["final_campaign_readback"] = final_campaign_readback
+    evidence["selection"]["campaign_proposal_ids_by_scenario"] = campaign_proposal_ids_by_scenario
+    evidence["campaign_readback_errors"] = campaign_readback_errors
+
     if any(attempt.get("status") == "BLOCKED" for attempt in evidence["attempts"]):
         evidence["status"] = "BLOCKED"
-    elif len(evidence["attempts"]) != len(eligible_ids) or any(
+    elif campaign_readback_errors or len(evidence["attempts"]) != len(eligible_ids) or any(
         attempt.get("status") == "FAIL" for attempt in evidence["attempts"]
     ):
         evidence["status"] = "FAIL"
@@ -1925,9 +2111,7 @@ async def run_campaign(
     evidence["selection"]["counts"]["abstained"] = sum(
         attempt.get("status") == "ABSTAINED" for attempt in evidence["attempts"]
     )
-    evidence["selection"]["counts"]["failed"] = sum(
-        attempt.get("status") == "FAIL" for attempt in evidence["attempts"]
-    )
+    evidence["selection"]["counts"]["failed"] = sum(attempt.get("status") == "FAIL" for attempt in evidence["attempts"])
     evidence["finished_at"] = datetime.now(UTC).isoformat()
     _write_evidence(options.evidence_path, evidence)
     return evidence

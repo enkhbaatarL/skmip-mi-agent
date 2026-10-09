@@ -203,12 +203,13 @@ def test_prompt_and_request_limit_settings_have_safe_defaults() -> None:
     assert Settings.model_fields["model_parameter_max_total_selected_slots"].default == 300
     assert Settings.model_fields["model_parameter_max_step2_prompt_bytes"].default == 262_144
     assert Settings.model_fields["model_parameter_max_step3_prompt_bytes"].default == 262_144
-    assert Settings.model_fields["model_parameter_proposal_flow_release"].default == "v4.1.3"
+    assert Settings.model_fields["model_parameter_proposal_flow_release"].default == "v4.1.5"
     assert Settings.model_fields["model_parameter_max_routing_candidates_per_dimension"].default == 2
     assert Settings.model_fields["model_parameter_v4_max_routing_candidates_per_dimension"].default == 3
     assert Settings.model_fields["model_parameter_max_conditional_parameters_per_scenario"].default == 4
     assert Settings.model_fields["model_parameter_variation_mode"].default == "balanced"
-    assert Settings.model_fields["model_parameter_semantic_repair_max_attempts"].default == 2
+    assert Settings.model_fields["model_parameter_variation_profile_enabled"].default is True
+    assert Settings.model_fields["model_parameter_grounded_slot_recovery_enabled"].default is True
     assert Settings.model_fields["model_parameter_transient_retry_max_attempts"].default == 2
     assert Settings.model_fields["model_parameter_transient_retry_base_delay_seconds"].default == 0.5
     assert Settings.model_fields["model_parameter_transient_retry_max_jitter_seconds"].default == 0.25

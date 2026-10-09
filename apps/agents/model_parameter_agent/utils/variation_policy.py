@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+import math
 from types import MappingProxyType
 from typing import Literal
 
@@ -11,11 +12,16 @@ from apps.common.exceptions.custom import MIBaseError
 from apps.common.values.error_codes import ErrorCode
 
 
-VARIATION_POLICY_RELEASE = "bounded-expert-v1"
+VARIATION_POLICY_RELEASE = "bounded-expert-v3"
 
 VariationMode = Literal["strict", "balanced", "exploratory"]
 VariationDirection = Literal["increase", "decrease", "unchanged"]
 VariationSeverity = Literal["weak", "medium", "strong"]
+VariationDuration = Literal["short", "medium", "long"]
+VariationScope = Literal["narrow", "medium", "broad"]
+VariationOffset = Literal["none", "partial", "strong"]
+VariationConfidence = Literal["low", "medium", "high"]
+VariationSiblingPosition = Literal["lower", "middle", "upper", "standalone"]
 VariationMethod = Literal[
     "relative",
     "additive",
@@ -50,6 +56,47 @@ class VariationCalculation:
     applied_severity: VariationSeverity
     calculation_ko: str
     clipped: bool = False
+    applied_magnitude: float = 0.0
+    profile_position: float | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class VariationFactors:
+    """Reviewable qualitative factors used only inside a severity guardrail.
+
+    These factors cannot activate a Parameter or slot and never change the
+    requested direction.  They only position a bounded assumption between the
+    lower edge and cap of its already-approved severity band.
+    """
+
+    duration: VariationDuration
+    scope: VariationScope
+    offset: VariationOffset
+    confidence: VariationConfidence
+    sibling_position: VariationSiblingPosition
+    rationale_ko: str
+
+
+_DURATION_SCORE: Mapping[VariationDuration, float] = MappingProxyType(
+    {"short": 0.0, "medium": 0.5, "long": 1.0},
+)
+_SCOPE_SCORE: Mapping[VariationScope, float] = MappingProxyType(
+    {"narrow": 0.0, "medium": 0.5, "broad": 1.0},
+)
+_OFFSET_SCORE: Mapping[VariationOffset, float] = MappingProxyType(
+    {"strong": 0.0, "partial": 0.5, "none": 1.0},
+)
+_CONFIDENCE_SCORE: Mapping[VariationConfidence, float] = MappingProxyType(
+    {"low": 0.0, "medium": 0.5, "high": 1.0},
+)
+_SIBLING_POSITION_ADJUSTMENT: Mapping[VariationSiblingPosition, float] = MappingProxyType(
+    {
+        "lower": -0.15,
+        "middle": 0.0,
+        "upper": 0.15,
+        "standalone": 0.0,
+    },
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -61,6 +108,9 @@ class ConditionalRoutingPolicy:
     allow_policy_recovery: bool
     required_context_terms: tuple[str, ...]
     direction_map: Mapping[str, VariationDirection]
+    increase_mechanism_ko: str
+    decrease_mechanism_ko: str
+    target_scope_ko: str
     eligibility_note_ko: str
     exclusion_note_ko: str
 
@@ -274,6 +324,15 @@ _ROUTE_DIRECTION_MAP: Mapping[str, VariationDirection] = MappingProxyType(
     },
 )
 
+_REGIONAL_SPREAD_SHIPPING_DIRECTION_MAP: Mapping[str, VariationDirection] = MappingProxyType(
+    {
+        "increase": "increase",
+        "recover": "increase",
+        "disrupt": "increase",
+        "decrease": "decrease",
+    },
+)
+
 # These policies govern whether a qualitative Scenario branch may be projected to
 # an existing model input.  They never create a parameter, slot, or numeric value.
 # Only ShippingCost currently permits deterministic recovery after an all-N/A LLM
@@ -307,14 +366,15 @@ _CONDITIONAL_ROUTING_POLICIES = {
             "port",
         ),
         direction_map=_ROUTE_DIRECTION_MAP,
+        increase_mechanism_ko="항차 시간·선복 수요 증가 또는 가용 선복 축소",
+        decrease_mechanism_ko="항차 시간·선복 수요 정상화 또는 가용 선복 회복",
+        target_scope_ko="Year별 전역 LNG charter rate",
         eligibility_note_ko=(
             "선택 branch에 LNG 물리 통항·우회·지연·대기·병목 또는 그 회복과 "
             "direction/scope/time_window가 있으면, 관측 운임 수치가 없어도 항차 시간과 "
             "선복 가용성 경로를 통해 Year별 전역 LNG charter rate에 bounded assumption을 허용"
         ),
-        exclusion_note_ko=(
-            "가격 전망만 있거나 물리 운송 경로·방향·범위·기간 중 하나라도 없으면 제외"
-        ),
+        exclusion_note_ko=("가격 전망만 있거나 물리 운송 경로·방향·범위·기간 중 하나라도 없으면 제외"),
     ),
     ("route_disruption", "ShippingFuelCost"): ConditionalRoutingPolicy(
         lever_code="route_disruption",
@@ -328,12 +388,11 @@ _CONDITIONAL_ROUTING_POLICIES = {
             "bunker cost",
         ),
         direction_map=_ROUTE_DIRECTION_MAP,
-        eligibility_note_ko=(
-            "Year별 LNG 선박 IFO380 또는 bunker 가격·비용 방향이 직접 제시된 경우만 검토"
-        ),
-        exclusion_note_ko=(
-            "우회 거리·통항 차질만으로 연료가격을 대신 추론하지 않으며 정책 복구도 하지 않음"
-        ),
+        increase_mechanism_ko="Year별 LNG 선박 IFO380 가격 또는 비용 상승",
+        decrease_mechanism_ko="Year별 LNG 선박 IFO380 가격 또는 비용 하락",
+        target_scope_ko="Year별 LNG 선박 IFO380 연료비",
+        eligibility_note_ko=("Year별 LNG 선박 IFO380 또는 bunker 가격·비용 방향이 직접 제시된 경우만 검토"),
+        exclusion_note_ko=("우회 거리·통항 차질만으로 연료가격을 대신 추론하지 않으며 정책 복구도 하지 않음"),
     ),
     ("route_disruption", "CanalToll"): ConditionalRoutingPolicy(
         lever_code="route_disruption",
@@ -347,11 +406,47 @@ _CONDITIONAL_ROUTING_POLICIES = {
             "canal toll",
         ),
         direction_map=_ROUTE_DIRECTION_MAP,
+        increase_mechanism_ko="Suez 또는 Panama 통항료 상승",
+        decrease_mechanism_ko="Suez 또는 Panama 통항료 하락",
+        target_scope_ko="Suez 또는 Panama·Year별 통항료",
+        eligibility_note_ko=("Suez 또는 Panama와 Year별 통항료 방향이 직접 제시된 경우만 검토"),
+        exclusion_note_ko=("해협·항만·일반 운하 차질을 Suez/Panama 통항료로 치환하지 않으며 정책 복구도 하지 않음"),
+    ),
+    ("regional_price_spread", "ShippingCost"): ConditionalRoutingPolicy(
+        lever_code="regional_price_spread",
+        parameter_name="ShippingCost",
+        allow_policy_recovery=True,
+        required_context_terms=(
+            "카고",
+            "화물",
+            "선적",
+            "항로",
+            "운송비",
+            "보험비",
+            "재정거래",
+            "유럽향",
+            "아시아행",
+            "배분",
+            "cargo",
+            "vessel",
+            "shipping",
+            "freight",
+            "charter",
+            "arbitrage",
+            "reroute",
+            "allocation",
+        ),
+        direction_map=_REGIONAL_SPREAD_SHIPPING_DIRECTION_MAP,
+        increase_mechanism_ko="장거리 cargo 전환·재정거래 재개 또는 운송 불확실성 확대로 선복 수요 증가",
+        decrease_mechanism_ko="장거리 cargo 전환·재정거래 축소 또는 운송 불확실성 완화로 선복 수요 감소",
+        target_scope_ko="Year별 전역 LNG charter rate",
         eligibility_note_ko=(
-            "Suez 또는 Panama와 Year별 통항료 방향이 직접 제시된 경우만 검토"
+            "가격 spread 자체가 아니라 LNG cargo의 지역 간 배분·재정거래·운송 경로 변화가 명시되고 "
+            "direction/scope/time_window가 있을 때만 전역 charter rate bounded assumption을 허용"
         ),
         exclusion_note_ko=(
-            "해협·항만·일반 운하 차질을 Suez/Panama 통항료로 치환하지 않으며 정책 복구도 하지 않음"
+            "가격·프리미엄 방향만 있거나 물리 cargo 배분·운송 경로가 없으면 제외하며, "
+            "선박 연료가격·운하 통행료·설비·공급량으로 확장하지 않음"
         ),
     ),
 }
@@ -420,6 +515,17 @@ def policy_prompt_payload(parameter_name: str) -> dict[str, object]:
             "medium": policy.zero_reference_medium,
             "strong": policy.zero_reference_strong,
         },
+        "profile_contract": {
+            "duration": ["short", "medium", "long"],
+            "scope": ["narrow", "medium", "broad"],
+            "offset": ["none", "partial", "strong"],
+            "confidence": ["low", "medium", "high"],
+            "sibling_position": ["lower", "middle", "upper", "standalone"],
+            "rule": (
+                "The server positions a bounded assumption inside the selected severity band. "
+                "Sibling position is comparison-only and cannot activate a parameter or slot."
+            ),
+        },
         "policy_note_ko": policy.policy_note_ko,
     }
 
@@ -452,6 +558,59 @@ def _bounded_severity(
     return allowed[-1], True
 
 
+def _variation_profile_position(factors: VariationFactors) -> float:
+    evidence_score = (
+        _DURATION_SCORE[factors.duration]
+        + _SCOPE_SCORE[factors.scope]
+        + _OFFSET_SCORE[factors.offset]
+        + _CONFIDENCE_SCORE[factors.confidence]
+    ) / 4.0
+    return min(
+        1.0,
+        max(
+            0.0,
+            evidence_score + _SIBLING_POSITION_ADJUSTMENT[factors.sibling_position],
+        ),
+    )
+
+
+def _severity_band(
+    policy: ParameterVariationPolicy,
+    severity: VariationSeverity,
+    *,
+    zero_reference: bool,
+) -> tuple[float, float]:
+    magnitude = policy.zero_reference_magnitude if zero_reference else policy.magnitude
+    upper = magnitude(severity)
+    if severity == "weak":
+        lower = upper * 0.5
+    elif severity == "medium":
+        lower = magnitude("weak")
+    else:
+        lower = magnitude("medium")
+    return min(lower, upper), max(lower, upper)
+
+
+def _profiled_magnitude(
+    policy: ParameterVariationPolicy,
+    severity: VariationSeverity,
+    factors: VariationFactors | None,
+    *,
+    zero_reference: bool,
+    profile_enabled: bool,
+) -> tuple[float, float | None]:
+    if not profile_enabled or factors is None:
+        magnitude = policy.zero_reference_magnitude(severity) if zero_reference else policy.magnitude(severity)
+        return magnitude, None
+    lower, upper = _severity_band(
+        policy,
+        severity,
+        zero_reference=zero_reference,
+    )
+    position = _variation_profile_position(factors)
+    return lower + ((upper - lower) * position), position
+
+
 def calculate_bounded_assumption(
     *,
     parameter_name: str,
@@ -459,6 +618,8 @@ def calculate_bounded_assumption(
     direction: VariationDirection,
     severity: VariationSeverity,
     mode: VariationMode,
+    variation_factors: VariationFactors | None = None,
+    profile_enabled: bool = True,
 ) -> VariationCalculation:
     policy = get_parameter_variation_policy(parameter_name)
     applied_severity, clipped = _bounded_severity(severity, mode)
@@ -468,33 +629,68 @@ def calculate_bounded_assumption(
             applied_severity=applied_severity,
             calculation_ko="방향을 중립으로 판단해 기준값을 유지",
             clipped=clipped,
+            applied_magnitude=0.0,
+            profile_position=(
+                _variation_profile_position(variation_factors)
+                if profile_enabled and variation_factors is not None
+                else None
+            ),
         )
     sign = 1.0 if direction == "increase" else -1.0
-    magnitude = policy.magnitude(applied_severity)
     if policy.method == "atomic_share":
         raise MIBaseError(
             ErrorCode.INVALID_REQUEST,
             detail="PowerMix bounded assumptions must be validated as one atomic vector",
         )
     if policy.method == "additive":
+        magnitude, profile_position = _profiled_magnitude(
+            policy,
+            applied_severity,
+            variation_factors,
+            zero_reference=False,
+            profile_enabled=profile_enabled,
+        )
         delta = magnitude
         calculation = f"기준값 {reference_value:g}에 {applied_severity} 절대 변화 {sign * delta:g} 적용"
     elif policy.method == "integer_step":
-        delta = magnitude
+        magnitude, profile_position = _profiled_magnitude(
+            policy,
+            applied_severity,
+            variation_factors,
+            zero_reference=False,
+            profile_enabled=profile_enabled,
+        )
+        delta = max(1.0, float(math.floor(magnitude + 0.5)))
+        magnitude = delta
         calculation = f"기준 단계 {reference_value:g}에 {applied_severity} 단계 변화 {sign * delta:g} 적용"
     else:
         if abs(reference_value) > 1e-12:
+            magnitude, profile_position = _profiled_magnitude(
+                policy,
+                applied_severity,
+                variation_factors,
+                zero_reference=False,
+                profile_enabled=profile_enabled,
+            )
             delta = abs(reference_value) * magnitude
-            calculation = (
-                f"기준값 {reference_value:g}에 {applied_severity} 상대 변화 "
-                f"{sign * magnitude * 100:g}% 적용"
-            )
+            calculation = f"기준값 {reference_value:g}에 {applied_severity} 상대 변화 {sign * magnitude * 100:g}% 적용"
         else:
-            delta = policy.zero_reference_magnitude(applied_severity)
-            calculation = (
-                f"기준값이 0이므로 {applied_severity} zero-reference 변화 "
-                f"{sign * delta:g} 적용"
+            delta, profile_position = _profiled_magnitude(
+                policy,
+                applied_severity,
+                variation_factors,
+                zero_reference=True,
+                profile_enabled=profile_enabled,
             )
+            magnitude = delta
+            calculation = f"기준값이 0이므로 {applied_severity} zero-reference 변화 {sign * delta:g} 적용"
+    if profile_position is not None and variation_factors is not None:
+        calculation = (
+            f"{calculation}; 근거 profile 위치 {profile_position:.3f} "
+            f"(지속={variation_factors.duration}, 범위={variation_factors.scope}, "
+            f"상쇄={variation_factors.offset}, 신뢰도={variation_factors.confidence}, "
+            f"trio위치={variation_factors.sibling_position})"
+        )
     proposed = reference_value + (sign * delta)
     if policy.method == "integer_step":
         proposed = float(round(proposed))
@@ -503,6 +699,8 @@ def calculate_bounded_assumption(
         applied_severity=applied_severity,
         calculation_ko=calculation,
         clipped=clipped,
+        applied_magnitude=magnitude,
+        profile_position=profile_position,
     )
 
 

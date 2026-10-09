@@ -734,28 +734,40 @@ request-local `trace_evidence`를 싣는다. trace에는 종료 단계까지의 
 기존 `ABSTAINED_*` 계약은 바뀌지 않으며, 품질 runner는 이 증적을 일반 실행 오류와 분리해 `ABSTAINED`/`REVIEW`로
 집계한다.
 
-v4.1.3은 transient retry와 별도로 불완전한 Step2/Step3 응답의 누락 task만 최대 2회까지 targeted semantic
-repair한다. 정상 응답에는 추가 호출이 없고, repair 실패는 첫 응답의 유효 부분과 deterministic 복구를 버리지 않는다.
-Step2에서 대상 branch가 하나뿐이고 기간만 넓거나 모호한 경우에는 catalog의 가장 이른 exact 기간 한 건만
-보수적으로 복구한다. 현재보다 과거인 월, 여러 대상, PowerMix atomic vector, LNG Plant/Train 증적 대상은 이
-규칙으로 추정하지 않는다.
+v4.1.5는 schema/semantic/좌표 오류를 LLM에 재질의하지 않는다. Step2는 첫 응답을 sanitize한 뒤 현재
+Scenario/Event/Lever 원문에 실제 catalog target alias와 명시 기간이 있고 target이 하나로만 확정될 때
+evidence-grounded 방식으로 누락 slot을 복구하거나 기존 선택 slot을 확장한다. global time-only Parameter도
+명시 기간이 있으면 허용하고, 닫힌 연·월 범위·분기·반기·N개월에 포함되는 모든 exact 기간을 선택한다.
+Pipeline은 pipeline명 또는 From+To가, LNG 설비는 Plant+Train이 모두 일치해야 하며 ambiguous target·과거 기간·
+PowerMix는 복구하지 않는다. 명시 기간이 없고 catalog 대상만 하나인 기존 보수 규칙은 가장 이른 exact 기간 한 건만
+선택한다.
 
-Step3은 16개 Parameter별 `bounded-expert-v1` policy를 사용한다. slot을 `OBSERVED`, `DERIVED`,
+Step1.5 complete all-N/A에는 conditional policy가 승인한 후보만 복구한다. `route_disruption → ShippingCost`와
+물리 cargo 배분·재정거래·운송 경로가 명시된 `regional_price_spread → ShippingCost`만 허용하며, 가격 spread
+방향만으로는 복구하지 않는다. ShippingFuelCost·CanalToll·설비·공급량 등 다른 Parameter로 확장하지 않는다.
+
+Step3은 16개 Parameter별 `bounded-expert-v3` policy를 사용한다. slot을 `OBSERVED`, `DERIVED`,
 `BOUNDED_ASSUMPTION`, `NEUTRAL`로 구분하고, bounded assumption만 서버가 reference와 Parameter별
-weak/medium/strong 폭으로 다시 계산한다. 최종 slot rationale은 대상·기간, 근거 유형, 인과 경로, 기준값,
-정책/계산, 제안값, 주요 가정과 불확실성을 고정 템플릿으로 명시한다. targeted repair 후에도 근거 유형별 필수
-설명이나 값 방향이 누락·모순이면 해당 cell을 제외한다. 공개 API와 DB JSON shape는 유지한다.
+weak/medium/strong 폭으로 다시 계산한다. 같은 severity 안에서는 지속기간·대상 범위·상쇄 정도·근거 신뢰도와
+동일 mechanism trio의 상대 위치를 이용해 결정론적으로 band 내부값을 정한다. 이 factor는 후보·slot·방향을
+활성화하지 않으며 direct `OBSERVED`/`DERIVED` 값에는 적용하지 않는다. 최종 slot rationale은 대상·기간, 근거 유형,
+인과 경로, 기준값, 정책/계산, 변형 요인, 제안값, 주요 가정과 불확실성을 고정 템플릿으로 명시한다. 응답이
+불완전하거나 모든 slot이 `DERIVED` 기준값 유지인 경우에도 catalog-pinned exact slot과 모든 routing lineage의
+Parameter 방향이 하나로 일치할 때만 non-strict mode에서 `weak` deterministic fallback을 적용한다. PowerMix,
+unchanged/unknown, 방향 상충, 안전한 Lever→Parameter 부호 규칙이 없는 경우는 추정하지 않는다. 공개 API와 DB JSON
+shape는 유지한다.
 
 로컬 `envs/config.yaml`과 내부 Neuro 배포 ConfigMap은 다음 값을 동일하게 유지한다.
 
-| 설정 | v4.1.3 기본값 | 의미 |
+| 설정 | v4.1.5 기본값 | 의미 |
 | --- | --- | --- |
-| `model_parameter_proposal_flow_release` | `v4.1.3` | Proposal 로직 release 식별자 |
+| `model_parameter_proposal_flow_release` | `v4.1.5` | Proposal 로직 release 식별자 |
 | `model_parameter_max_routing_candidates_per_dimension` | `2` | legacy Step1.5 dimension별 기존 후보 상한 |
 | `model_parameter_v4_max_routing_candidates_per_dimension` | `3` | v4 Step1.5 dimension별 후보 상한 |
 | `model_parameter_max_conditional_parameters_per_scenario` | `4` | Scenario 전체 conditional Parameter 상한 |
 | `model_parameter_variation_mode` | `balanced` | `strict\|balanced\|exploratory` 생성 경계 |
-| `model_parameter_semantic_repair_max_attempts` | `2` | request 전체 targeted repair 추가 호출 상한 |
+| `model_parameter_variation_profile_enabled` | `true` | bounded assumption severity band 내부의 근거 기반 variation 활성화 |
+| `model_parameter_grounded_slot_recovery_enabled` | `true` | unique catalog target·명시 기간의 Step2 누락 복구·확장 활성화 |
 
 ### 3.5 `uncovered_only` proposal-only campaign
 
@@ -780,7 +792,7 @@ python tests/manual/model_parameter_agent/run_proposal_only.py \
 초기 `uncovered-only-v1` 정책은 우회 옵션을 제공하지 않는다.
 
 - Group 또는 Scenario ID 중 한 종류의 명시 범위가 필수다.
-- runner의 `proposal_flow_release=v4.1.3`은 로직 release이며 Impact Lever catalog version이 아니다.
+- runner의 `proposal_flow_release=v4.1.5`은 로직 release이며 Impact Lever catalog version이 아니다.
   `extend16-v8`는 임의 label이 아니라 catalog `v4.1` / checksum
   `7f4ef0b7aa60efb550b9175654fd82350f0c293debf880a9180e7e935db54d69`, extend16 capability와
   `new-bc-v7` contract SHA, resource semantic schema와 실제 Basecase/LUT content fingerprint를 묶은 고정
@@ -807,6 +819,13 @@ python tests/manual/model_parameter_agent/run_proposal_only.py \
   검증한다. DB payload의 `lutValue` 저장은 실패로 판정한다.
 - evidence JSON에는 capability release, 실제 코드 allow-list, catalog pin, resource contract/fingerprint,
   `uncovered-only-v1`, Scenario input fingerprint, 기존 proposal 상태와 skip/hard-stop 사유를 기록한다.
+
+동일 고정 cohort에서 새 Proposal Flow release 결과를 전건 새로 생성하도록 명시 승인된 경우에만
+`--execute --replay-covered`를 사용한다. `release-replay-v1`은 기존 `PROPOSED` 행을 삭제·갱신하지 않고 새 행을
+append하며, `CONFIRMED`는 해당 Scenario를 제외하고 `PROCESSING`은 전체를 중단한다. 성공 Scenario마다 신규 ID
+정확히 한 건을 요구하고 캠페인 종료 시 그 ID만 다시 조회한 `final_campaign_readback`을 KPI 입력으로 사용한다.
+schema v6 evidence에는 secret을 제외한 전체 `model_parameter_*` 로컬·Neuro 선언값, runtime effective 값,
+파일 SHA와 선언 차이를 포함한다.
 
 이 가드는 단일 worker pilot의 best-effort 안전장치다. DB unique claim이나 logical run이 없으므로 여러 process가
 동시에 같은 Scenario를 실행하는 exactly-once 보장은 하지 않는다. multi-worker 확대 전에는 logical-run

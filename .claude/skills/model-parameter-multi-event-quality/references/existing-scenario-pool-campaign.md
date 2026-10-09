@@ -118,8 +118,14 @@ Markdown은 후보군 압축, read-only KPI, Group별 trio, KPI 개선안, 고�
 읽을 수 있는 범위와 실제 Proposal을 실행하지 않아 읽을 수 없는 범위, `Covered`/`coverage limit` 해석, 동일 fixture
 identity·release·context fingerprint에서만 회귀 비교한다는 조건을 명시한다.
 
-Live Proposal campaign 뒤에는 최종 DB read-back의 blocking Proposal row에 `proposal_parameters`가 포함되어야 한다.
-기존 covered Proposal과 이번 신규 Proposal을 합친 최종 고정 cohort 품질은 다음 명령으로 별도 산출한다.
+Live Proposal campaign 뒤에는 최종 평가 대상 Proposal row에 `proposal_parameters`가 포함되어야 한다. 새 Proposal
+Flow release를 같은 고정 cohort에 전건 재실행하도록 승인받은 경우 `run_proposal_only.py --execute
+--replay-covered`를 사용한다. 이는 기존 행을 보존하는 append-only 실행이며 `CONFIRMED`/`PROCESSING`을 우회하지
+않는다. 이때 최종 품질은 과거 covered 행이 아니라 `final_campaign_readback`의 신규 Proposal ID만 사용한다.
+공식 비교는 매번 같은 고정 cohort의 live clean 전건 replay로 수행하며, 과거 campaign에서 성공했던 개별 Scenario의
+재현 여부는 진단용 transition으로만 남긴다. 과거 성공 건을 골라 재실행·복구하거나 이전 결과와 같게 만들도록
+강제하지 않는다. 부분 post-fix 결과는 공식 live clean KPI에 합산하지 않는다.
+최종 고정 cohort 품질은 다음 명령으로 별도 산출한다.
 
 ```bash
 python tests/manual/model_parameter_agent/evaluate_representative_trios.py final-cohort \
@@ -130,10 +136,17 @@ python tests/manual/model_parameter_agent/evaluate_representative_trios.py final
 ```
 
 이 Report의 `최종 DB 기준 Trio Parameter·값 변별` 섹션은 전체 고정 Scenario 성공률, full-trio, 동일 Parameter
-종류, 세 Scenario의 전체 proposed-value signature 변별, exact common slot 변별, slot rationale 명시 완전성을 항상
-포함한다. triple-success가 아닌 Group은 type/value/exact-slot을 `N/A`로 남긴다. 이 섹션이나 payload snapshot이
+종류, 세 Scenario의 전체 proposed-value signature 변별, scalar exact common slot 변별, PowerMix atomic-vector
+변별, slot rationale 명시 완전성을 항상 포함한다. evidence schema v6 이상은 secret을 제외한 전체
+`model_parameter_*` 로컬·Neuro 선언 및 runtime effective config snapshot과 선언 차이도 포함한다.
+또한 미제안·실패를 Group/Event, Step1.5·Step2·Step3, reason code, 확정 가능한 Parameter별로 자동 집계하고
+관측 건수 기반 개선안과 fail-closed 안전 경계를 함께 표시한다. semantic abstention, 기술 실패, capability limit은
+분리하며 Step1.5 미결정 routing을 모든 후보 Parameter의 실패로 중복 계산하지 않는다.
+triple-success가 아닌 Group은 type/value/exact-slot을 `N/A`로 남긴다. 이 섹션이나 payload/config snapshot이
 없으면 live campaign Report는 완료로 처리하지 않는다. 일반 `evaluate` 명령에서도 `--testset-input`과
 `--final-history-evidence`를 함께 지정하면 동일 섹션이 자동 부착된다.
+여기서 full-trio는 대표 Scenario 3개가 모두 이번 campaign의 신규 Proposal과 하나 이상의 유효 value cell을
+DB read-back에서 가진 Group이다. Parameter 종류 동일·값 변별은 이 성공 조건에 포함하지 않고 후속 KPI로 분리한다.
 
 ## 7. 기존 Event 풀로 Scenario부터 재생성
 
