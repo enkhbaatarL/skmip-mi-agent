@@ -24,6 +24,7 @@ from tests.manual.model_parameter_agent.collect_existing_representative_trios im
 )
 from tests.manual.model_parameter_agent.evaluate_representative_trios import (
     EXPECTED_CATALOG_CHECKSUM,
+    _slot_rationale_audit,
     attach_diagnostic_executions,
     attach_final_cohort_trio_analysis,
     build_final_cohort_trio_analysis,
@@ -251,7 +252,7 @@ def test_existing_pool_plan_gates_actual_preflight_release_identity() -> None:
                 "catalog_version": "v4.1",
                 "catalog_checksum": EXPECTED_CATALOG_CHECKSUM,
             },
-            "resource": {"proposal_flow_release": "v4.1.5"},
+            "resource": {"proposal_flow_release": "v4.1.7"},
         },
         "safety": {"confirmation_invoked": False, "callback_invoked": False},
         "selection": {"counts": {"discovered": 3, "preflight_fail": 0, "hard_stop": 0}},
@@ -364,7 +365,7 @@ def test_selection_plan_gates_actual_read_only_release_and_scope(tmp_path: Path)
                 "catalog_checksum": EXPECTED_CATALOG_CHECKSUM,
             },
             "resource": {
-                "proposal_flow_release": "v4.1.5",
+                "proposal_flow_release": "v4.1.7",
                 "proposal_capability_release_id": "extend16-v8",
             },
         },
@@ -526,7 +527,7 @@ def _full_plan_and_execution() -> tuple[dict[str, Any], dict[str, Any]]:
                 "catalog_version": "v4.1",
                 "catalog_checksum": EXPECTED_CATALOG_CHECKSUM,
             },
-            "resource": {"proposal_flow_release": "v4.1.5"},
+            "resource": {"proposal_flow_release": "v4.1.7"},
         },
         "safety": {
             "confirmation_invoked": False,
@@ -579,7 +580,7 @@ def test_evaluate_execution_distinguishes_type_and_exact_slot_value_variation() 
                 "catalog_version": "v4.1",
                 "catalog_checksum": EXPECTED_CATALOG_CHECKSUM,
             },
-            "resource": {"proposal_flow_release": "v4.1.5"},
+            "resource": {"proposal_flow_release": "v4.1.7"},
         },
         "safety": {
             "confirmation_invoked": False,
@@ -639,7 +640,7 @@ def test_value_differentiation_ignores_value_cell_order_only_changes() -> None:
                 "catalog_version": "v4.1",
                 "catalog_checksum": EXPECTED_CATALOG_CHECKSUM,
             },
-            "resource": {"proposal_flow_release": "v4.1.5"},
+            "resource": {"proposal_flow_release": "v4.1.7"},
         },
         "safety": {
             "confirmation_invoked": False,
@@ -689,7 +690,7 @@ def test_main_scenario_value_kpi_requires_all_three_signatures_to_differ() -> No
                 "catalog_version": "v4.1",
                 "catalog_checksum": EXPECTED_CATALOG_CHECKSUM,
             },
-            "resource": {"proposal_flow_release": "v4.1.5"},
+            "resource": {"proposal_flow_release": "v4.1.7"},
         },
         "safety": {
             "confirmation_invoked": False,
@@ -717,7 +718,7 @@ def test_merge_execution_evidence_combines_non_overlapping_release_matched_attem
             "release_id": "new-bc-v7",
             "contract_sha256": "contract",
             "proposal_capability_sha256": "capability",
-            "proposal_flow_release": "v4.1.5",
+            "proposal_flow_release": "v4.1.7",
         },
     }
     left = {
@@ -755,7 +756,7 @@ def test_merge_execution_evidence_rejects_duplicate_scenario_attempt() -> None:
                 "catalog_version": "v4.1",
                 "catalog_checksum": EXPECTED_CATALOG_CHECKSUM,
             },
-            "resource": {"proposal_flow_release": "v4.1.5"},
+            "resource": {"proposal_flow_release": "v4.1.7"},
         },
         "attempts": [{"scenario_id": 1, "status": "PASS"}],
     }
@@ -775,7 +776,7 @@ def test_post_fix_evidence_explicitly_replaces_attempt_and_keeps_audit() -> None
             "release_id": "new-bc-v7",
             "contract_sha256": "contract",
             "proposal_capability_sha256": "capability",
-            "proposal_flow_release": "v4.1.5",
+            "proposal_flow_release": "v4.1.7",
         },
     }
     baseline = {
@@ -861,7 +862,7 @@ def test_post_fix_evidence_requires_reason() -> None:
                 "catalog_version": "v4.1",
                 "catalog_checksum": EXPECTED_CATALOG_CHECKSUM,
             },
-            "resource": {"proposal_flow_release": "v4.1.5"},
+            "resource": {"proposal_flow_release": "v4.1.7"},
         },
         "attempts": [{"scenario_id": 1, "status": "ABSTAINED"}],
     }
@@ -977,7 +978,7 @@ def test_authorized_mi_base_trace_backfill_is_audited_and_not_reported_as_direct
                 "catalog_version": "v4.1",
                 "catalog_checksum": EXPECTED_CATALOG_CHECKSUM,
             },
-            "resource": {"proposal_flow_release": "v4.1.5"},
+            "resource": {"proposal_flow_release": "v4.1.7"},
             "required_mi_base_fallback_mode": "configured_fallback",
             "mi_base_fallback_policy": {
                 "active_case_unavailable_mode": "configured_fallback",
@@ -1208,7 +1209,7 @@ def test_semantic_empty_retry_prohibition_is_not_counted_as_integrity_error() ->
                 "catalog_version": "v4.1",
                 "catalog_checksum": EXPECTED_CATALOG_CHECKSUM,
             },
-            "resource": {"proposal_flow_release": "v4.1.5"},
+            "resource": {"proposal_flow_release": "v4.1.7"},
         },
         "safety": {
             "confirmation_invoked": False,
@@ -1495,11 +1496,38 @@ def test_immutable_testset_matches_plan_by_ordered_group_event_and_scenario_ids(
 
 def _explicit_slot_rationale() -> str:
     return (
-        "대상·기간: Korea 2027; 근거 유형: BOUNDED_ASSUMPTION; 인과 경로: event→demand; "
-        "기준값: 1; 적용 정책: bounded; 변형 요인: duration=medium; "
-        "계산: base x factor; 제안값: 2; 근거: test; "
-        "주요 가정: test assumption; 판단 설명: test judgment; 불확실성: review required"
+        "적용 대상: 국가 Korea, 연도 2027. 시나리오 영향: 수요 증가. "
+        "조정 내용: 현재 모델값 1에서 제안값 2로 조정했습니다. "
+        "산정 근거: 시나리오 근거로 계산한 값. 계산 방법: 현재 모델값에서 1 높였습니다. "
+        "주요 가정: 수요 영향이 해당 기간에 적용됩니다. 확인 필요: 실제 전망과 함께 검토해 주세요."
     )
+
+
+def test_slot_rationale_audit_keeps_internal_diagnostics_out_of_user_text() -> None:
+    rationale = f"{_explicit_slot_rationale()} 내부 계산은 bounded-expert-v3 balanced routing입니다."
+
+    total, nonempty, explicit, legacy, missing, incomplete = _slot_rationale_audit(
+        [{"parameterName": "Temperature", "values": [{"Year": 2027, "rationale": rationale}]}],
+    )
+
+    assert (total, nonempty, explicit, legacy, missing) == (1, 1, 0, 1, 0)
+    assert incomplete[0]["classification"] == "internal_jargon"
+    assert incomplete[0]["leaked_internal_terms"] == ["bounded-expert", "routing", "balanced"]
+
+
+def test_slot_rationale_audit_flags_excessive_length_and_plain_endings() -> None:
+    rationale = f"{_explicit_slot_rationale()} {'가' * 1200} 보았다."
+
+    total, nonempty, explicit, legacy, missing, incomplete = _slot_rationale_audit(
+        [{"parameterName": "Temperature", "values": [{"Year": 2027, "rationale": rationale}]}],
+    )
+
+    assert (total, nonempty, explicit, legacy, missing) == (1, 1, 0, 1, 0)
+    assert incomplete[0]["classification"] == "user_presentation"
+    assert incomplete[0]["presentation_issues"] == [
+        f"length={len(rationale)}>1200",
+        "plain_endings=보았다",
+    ]
 
 
 def _final_cohort_fixture_and_history() -> tuple[dict[str, Any], dict[str, Any]]:
@@ -1556,7 +1584,7 @@ def _final_cohort_fixture_and_history() -> tuple[dict[str, Any], dict[str, Any]]
                 "catalog_version": "v4.1",
                 "catalog_checksum": EXPECTED_CATALOG_CHECKSUM,
             },
-            "resource": {"proposal_flow_release": "v4.1.5"},
+            "resource": {"proposal_flow_release": "v4.1.7"},
         },
         "selection": {
             "counts": {
@@ -1638,13 +1666,13 @@ def test_final_cohort_release_replay_uses_only_new_campaign_rows_and_renders_con
                 "neuro_config_path": "devops/k8s/configmap.yaml",
                 "neuro_config_sha256": "b" * 64,
                 "local_declared": {
-                    "model_parameter_proposal_flow_release": "v4.1.5",
+                    "model_parameter_proposal_flow_release": "v4.1.7",
                 },
                 "neuro_declared": {
-                    "model_parameter_proposal_flow_release": "v4.1.5",
+                    "model_parameter_proposal_flow_release": "v4.1.7",
                 },
                 "runtime_effective": {
-                    "model_parameter_proposal_flow_release": "v4.1.5",
+                    "model_parameter_proposal_flow_release": "v4.1.7",
                 },
                 "local_vs_neuro_differences": [],
                 "top_level_key_parity": True,
@@ -1670,7 +1698,7 @@ def test_final_cohort_release_replay_uses_only_new_campaign_rows_and_renders_con
     assert analysis["final_history"]["proposal_source"] == "campaign-only append readback"
     assert analysis["multiple_blocking_proposal_ids"] == {}
     assert "실행·배포 Model Parameter Config" in rendered
-    assert '"model_parameter_proposal_flow_release": "v4.1.5"' in rendered
+    assert '"model_parameter_proposal_flow_release": "v4.1.7"' in rendered
     assert analysis["kpis"]["proposal_success_count"] == 5
     assert analysis["kpis"]["scenario_count"] == 6
     assert analysis["kpis"]["triple_success_group_count"] == 1
@@ -1680,10 +1708,13 @@ def test_final_cohort_release_replay_uses_only_new_campaign_rows_and_renders_con
     assert analysis["kpis"]["exact_common_slots_with_different_values"] == 1
     assert analysis["kpis"]["exact_common_slots_with_all_three_values_distinct_rate_percent"] == 100.0
     assert analysis["kpis"]["slot_rationale_explicit_count"] == 5
+    assert analysis["kpis"]["slot_rationale_internal_term_leak_count"] == 0
+    assert analysis["kpis"]["slot_rationale_presentation_issue_count"] == 0
     assert analysis["groups"][1]["actual_parameter_sets_identical"] is False
 
     markdown = render_final_cohort_trio_report(analysis)
     assert "최종 DB 기준 Trio Parameter·값 변별" in markdown
+    assert "| 사용자 설명 내부 용어 노출 | 0 / 5 (0.0%) |" in markdown
     assert "5 / 6 (83.3%)" in markdown
     assert "1 / 1 (100.0%)" in markdown
     assert "| 2 | 20 | 4, 5, 6 | 2/3 | N/A | N/A | N/A | N/A |" in markdown

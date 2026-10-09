@@ -192,7 +192,7 @@ type/value 지표에 Proposal 실패나 semantic abstain을 억지로 포함하�
 남기고, triple-success가 아닌 Group의 종류/값/exact-slot은 `N/A`로 표시한다. exact slot 교집합이 없는 Group은
 `not comparable`로 집계한다. 선정과 평가는
 `tests/manual/model_parameter_agent/evaluate_representative_trios.py`를 사용하며 현재 release identity는
-Scenario Lever `v4.1`, Proposal Flow `v4.1.5`를 각각 기록한다.
+Scenario Lever `v4.1`, Proposal Flow `v4.1.7`을 각각 기록한다.
 중단·재개 등으로 실행 증적이 비중복 파일 여러 개라면 `--execution-evidence`를 반복한다. 도구는 release identity가
 같은지 검사하고 동일 Scenario attempt가 중복되면 덮어쓰지 않고 실패한다. 코드 수정 뒤 동일 Scenario를 재실행한
 증적은 `--post-fix-execution-evidence`와 필수 `--post-fix-reason`으로만 명시 교체하고 원 source/status/stage를
@@ -201,10 +201,10 @@ audit에 보존한다. post-fix가 있으면 baseline과 최종 attempt의 Scena
 Proposal 실행 전에 `evaluate_representative_trios.py freeze --plan <plan> --output
 tests/fixtures/model_parameter_agent/<dataset>.json`으로 해당 campaign의 고정 cohort를 최초 1회 저장하며 기존 파일을
 덮어쓰지 않는다. 기존 expanded Event campaign은 20 Group·60 Scenario 계약을 유지하고, 기존 Event 풀 재생성
-campaign은 40 Group·120 대표 Scenario 계약을 사용한다. v4.1.5 Before/After는 기존
+campaign은 40 Group·120 대표 Scenario 계약을 사용한다. v4.1.7 Before/After는 기존
 `v4_1_2_existing_latest_distinct_representative_trio_40_groups_20261007.json`의 ordered Group/Event/Scenario
 ID를 그대로 사용하며 신규·교체 Scenario를 섞지 않는다. fixture의 source Flow 표기는 v4.1.2로 유지하고 실제
-실행 manifest의 target Flow `v4.1.5`는 별도 release gate로 검증한다.
+실행 manifest의 target Flow `v4.1.7`은 별도 release gate로 검증한다.
 이후에는 `--testset-input`으로 fixture SHA-256과 ordered Group/Event/Scenario ID를
 plan과 exact 대조하며 fixture를 다시 생성하지 않는다. 고정 assertion은 release contract·Group/Scenario selection이며
 LLM 결과 baseline은 회귀 비교용 관측값이다. expanded campaign fixture에는
@@ -231,7 +231,9 @@ testset과 이 read-back을 `evaluate_representative_trios.py final-cohort`에 �
 Parameter·값 변별` Markdown/JSON을 생성한다. release-replay는 과거 blocking 행이 아닌 이번 실행에서 생성된
 `final_campaign_readback` ID만 사용한다. 해당 섹션은 전체 고정 Scenario 성공률, full-trio 수, full-trio의
 Parameter type set 동일률, type-consistent trio의 전체 proposed-value signature 변별률, exact common slot 값
-변별률, scalar exact-slot과 PowerMix atomic-vector 분리 지표, slot rationale 필수 섹션 완전성을 포함해야 한다.
+변별률, scalar exact-slot과 PowerMix atomic-vector 분리 지표, slot rationale의 사용자 설명 7개 섹션 완전성과
+내부 구현·평가 용어 노출, 1,200자 초과·평서체 종결 건수를 포함해야 한다. 내부 evidence enum과 policy release/mode는 trace에서 검증하고
+공개 rationale 문자열의 필수 항목으로 요구하지 않는다.
 evidence schema v6 이상은 secret을 제외한 전체 `model_parameter_*` 로컬·Neuro 선언값, runtime effective 값,
 config SHA와 선언 차이를 포함해야 한다. Proposal payload 누락, campaign row 중복, testset/history
 scope 또는 Group identity 불일치는 fail-closed다. 일반 `evaluate` 명령도 `--testset-input`과
@@ -249,7 +251,7 @@ python tests/manual/model_parameter_agent/evaluate_representative_trios.py final
   --output-markdown <run-dir>/final-cohort-trio-quality-report.md
 ```
 
-v4.1.5 완료 기준은 동일 40 Group trio에서 다음과 같이 판정한다.
+v4.1.7 완료 기준은 동일 40 Group trio에서 다음과 같이 판정한다.
 
 | 지표 | Gate | Target |
 | --- | ---: | ---: |
@@ -258,6 +260,8 @@ v4.1.5 완료 기준은 동일 40 Group trio에서 다음과 같이 판정한다
 | 과거 campaign 성공 Scenario 유지율 | 관측 전용 | 비-gate |
 | catalog 밖 Parameter·존재하지 않는 slot | 0건 | 0건 |
 | slot rationale 필수 항목 누락 | 0건 | 0건 |
+| slot rationale 내부 구현·평가 용어 노출 | 0건 | 0건 |
+| slot rationale 1,200자 초과·평서체 종결 | 0건 | 0건 |
 | 부당한 causal assumption | 5% 이하 | 0% |
 | 기술적 `FAILED` | 1% 미만 | 0% |
 
@@ -295,7 +299,7 @@ python tests/manual/model_parameter_agent/collect_existing_representative_trios.
 
 수집 기준은 다음과 같다.
 
-- Scenario Lever `v4.1`, Proposal Flow `v4.1.5`, API `v4`, strategy
+- Scenario Lever `v4.1`, Proposal Flow `v4.1.7`, API `v4`, strategy
   `multi_event_model_lever_dimensions`를 exact pin한다.
 - Group status `created|realized`, stage `completed`, `parameter_mapping_ready=true`와 Dimension/baseline/role/cell
   구조 gate를 통과해야 한다.

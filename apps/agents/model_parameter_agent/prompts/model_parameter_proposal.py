@@ -77,6 +77,8 @@ CANDIDATE_VALIDATION_SYSTEM = """\
 - 각 assessment에는 candidate_key, decision, evidence_basis, causal_path_ko, target_scope_ko, direction,
   time_scope_ko, confidence, rationale_ko를 반환하십시오. 선택한 key는 DIRECT 또는 ASSUMPTION_ELIGIBLE
   assessment와 일치해야 합니다.
+- 사용자 설명으로 이어지는 causal_path_ko·target_scope_ko·time_scope_ko는 중복 없이 간결하게 작성하고,
+  문장형 필드는 한 문장 이내의 일관된 존댓말(`~합니다/~했습니다`)을 사용하십시오.
 - 근거가 부족한 후보도 생략하지 말고 NOT_APPLICABLE로 명시하여 미선택 이유를 남기십시오.
 """
 
@@ -233,7 +235,7 @@ VALUE_PROPOSAL_SYSTEM = """\
 - slots[].reference_value는 해당 exact 좌표의 단일 기준값입니다.
 - 실제 Basecase 값이 있으면 그 값을, Basecase가 없고 LUT만 있으면 LUT 값을 reference_value로 제공합니다.
 - 두 source 값이나 provenance를 동시에 제공하지 않습니다.
-- variation_mode와 variation_policy는 v4.1.5의 정성 근거 수치화 경계입니다. policy는 예측값이 아니라
+- variation_mode와 variation_policy는 v4.1.7의 정성 근거 수치화 경계입니다. policy는 예측값이 아니라
   사용자 검토용 초기값 guardrail이며, parameter별 단위와 weak/medium/strong 변화폭이 다릅니다.
 
 값 산정 규칙:
@@ -262,7 +264,8 @@ VALUE_PROPOSAL_SYSTEM = """\
   parameter·동일 slot·동일 causal mechanism인 trio 안에서 현재 Scenario의 상대 강도가 명확할 때만
   lower/middle/upper로 두고, 비교 불가하면 standalone으로 두십시오. 이 값은 이미 확정된 변화 방향과 severity
   구간 안의 위치만 조정하며 후보 parameter나 slot을 새로 활성화하지 않습니다.
-- variation_factors.rationale_ko에는 각 factor를 현재 Scenario/Event/Lever 문맥에서 판단한 이유를 적으십시오.
+- variation_factors.rationale_ko에는 각 factor를 현재 Scenario/Event/Lever 문맥에서 판단한 이유를 존댓말 한 문장으로
+  간결하게 적으십시오.
   sibling의 사실을 현재 Scenario의 근거로 복사하거나, 세 값을 다르게 만들 목적만으로 factor를 조작하지 마십시오.
 - v4에서 위 방향은 parameter_hint로 해당 모델 input의 증감 의미를 해석할 수 있는 Lever/Dimension 근거를 뜻합니다.
   pressure_contribution나 가격 방향만으로 parameter의 증감 방향 또는 변화율을 정하지 마십시오.
@@ -294,19 +297,25 @@ Parameter-level rationale 규칙:
 - 해당 parameter가 선택된 이유와 scenario dimension과의 관계를 설명하십시오.
 - 여러 event/source dimension이 같은 parameter로 수렴했다면 전체 lineage의 상호작용과
   방향·강도·기간·대상을 어떻게 하나의 제안으로 종합했는지 설명하십시오.
-- 전체 적용 기간, 대상 범위, 배분 원칙, 주요 제약사항을 사용자가 충분히 이해할 수 있게 설명하십시오.
-- 한두 문장으로 제한하지 말고 사용자 친화적인 자연스러운 한국어로 작성하십시오.
+- 전체 적용 기간, 대상 범위와 주요 제약을 포함하되 핵심만 2~3문장으로 요약하십시오.
+- 같은 인과관계나 불확실성을 반복하지 말고 일관된 존댓말(`~합니다/~했습니다`)을 사용하십시오.
 - 개별 slot의 값과 세부 계산 과정을 나열하지 마십시오.
-- candidate_key, slot_key, reference ID, LLM 단계 같은 내부 구현 용어를 사용하지 마십시오.
+- 현업 사용자가 시나리오와 모델 입력값의 관계를 바로 이해할 수 있는 업무 용어를 사용하십시오.
+- candidate_key, slot_key, reference ID, LLM/Step, catalog/binding/routing, exact slot, policy release/mode,
+  BOUNDED_ASSUMPTION 같은 enum, weak/medium/strong, trio/sibling 같은 내부 구현·평가 용어를 사용하지 마십시오.
+- 내부 용어가 입력 근거에 포함되어 있어도 그대로 반복하지 말고 각각 제안 대상, 적용 위치, 시나리오 영향,
+  직접 수치·계산값·보수적 추정·현재 값 유지, 작은/중간/큰 조정처럼 사용자 언어로 풀어 쓰십시오.
 
 Slot-level rationale 규칙:
 - slot_values[].rationale_ko는 해당 slot의 툴팁으로 표시되는 짧은 설명입니다.
 - 확정된 coordinates와 scenario/event/dimension 맥락을 바탕으로 해당 slot을 선택한 이유를 명확히 설명하십시오.
 - reference_value와 hint/comment/dimension을 어떻게 해석해 proposed_value를 산정했는지 간결하게 설명하십시오.
-- 근거 유형, 인과 경로, 기준값, 정책/계산, 주요 가정과 불확실성을 빠뜨리지 마십시오. 서버가 이 내용을 고정
-  설명 템플릿으로 정규화하므로 evidence_ko/calculation_ko/assumption_ko도 구체적으로 작성하십시오.
+- 근거의 성격, 인과 경로, 기준값, 산정 방식과 계산, 주요 가정과 불확실성을 빠뜨리지 마십시오. 서버가 이 내용을 고정
+  설명 템플릿으로 정규화하므로 evidence_ko/calculation_ko/assumption_ko도 각각 한 문장 이내로 구체적으로 작성하십시오.
+- 모든 사용자 설명은 일관된 존댓말(`~합니다/~했습니다`)로 작성하십시오.
 - parameter 전체 선택 이유를 반복하지 마십시오.
-- 내부 구현 용어를 사용하지 마십시오.
+- 내부 구현 용어를 사용하지 마십시오. 특히 enum·정책 버전·실행 mode·fallback 여부는 rationale_ko에 쓰지 말고
+  정성 근거를 수치화한 초기 제안인지, 현재 값 대비 어떻게 조정했는지, 사용자가 무엇을 확인해야 하는지로 설명하십시오.
 
 출력 규칙:
 - 모든 parameter_value_tasks에 대해 parameter_adjustments 항목을 하나씩 반환하십시오.

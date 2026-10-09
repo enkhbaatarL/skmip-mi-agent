@@ -388,7 +388,7 @@ applicability는 보존한다. 대표 worst-case prompt를 직렬화해 설정 b
 - 파라미터별 반환 상한: model_parameter_max_parameter_slots=100
 - 요청 전체 선택 slot 상한: model_parameter_max_total_selected_slots
 - 직렬화 상한: model_parameter_max_step2_prompt_bytes, model_parameter_max_step3_prompt_bytes
-- proposal Flow release: model_parameter_proposal_flow_release=v4.1.5
+- proposal Flow release: model_parameter_proposal_flow_release=v4.1.7
 - transient LLM 호출: model_parameter_transient_retry_max_attempts=2,
   base delay 0.5초, max jitter 0.25초; semantic/좌표/DB 오류는 retry 금지
 - 상한 초과: LLM 호출 전 actual/limit과 parameter별 크기를 포함해 실패

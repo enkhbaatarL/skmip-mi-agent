@@ -68,12 +68,12 @@ POST /model-parameters/scenarios/100/proposals/sync
         "tableName": "table1", "valueFieldNames": ["% change (+/-)"],
         "slotAxesFieldNames": ["Country", "Year"]
       },
-      "rationale": "GDP 입력값 제안입니다.",
+      "rationale": "제안 이유: 경기 둔화 시나리오를 연간 GDP 성장률에 반영하기 위한 제안입니다. 적용 범위는 미국이며, 적용 기간은 2026년입니다.",
       "values": [{
         "Country": "United States", "Year": 2026,
         "basecaseValue": 0.019, "lutValue": 0.02063,
         "proposedValue": 0.0185,
-        "rationale": "경기 둔화 영향을 반영한 샘플입니다."
+        "rationale": "적용 대상: 국가 United States, 연도 2026. 시나리오 영향: 경기 둔화가 연간 GDP 성장률을 낮추는 방향으로 작용합니다. 조정 내용: 현재 모델값 0.019 (1.9%)에서 제안값 0.0185 (1.85%)로 조정했습니다. 산정 근거: 시나리오 근거로 계산했습니다. 계산 방법: 현재 모델값에서 0.05%p 낮췄습니다. 주요 가정: 둔화 영향이 2026년 연간 성장률에 반영된다고 보았습니다. 확인 필요: 적용 기간과 둔화 폭이 실제 전망과 일치하는지 검토해 주세요."
       }]
     }]
   }
@@ -81,6 +81,11 @@ POST /model-parameters/scenarios/100/proposals/sync
 ```
 
 `proposalParameters`가 사용자가 검토할 제안 목록이다. `basecaseValue`는 현재 모델 값, `lutValue`는 참고값, `proposedValue`는 AI 제안값이다. GDP는 비율 단위이므로 이 샘플의 `0.019`는 `1.9%`, `0.0185`는 `1.85%`를 뜻한다.
+
+Proposal Flow v4.1.7부터 공개 rationale은 간결한 존댓말의 업무 설명만 담는다. 내부 진단에 필요한 evidence enum,
+variation policy release/mode, fallback 여부와 candidate/slot 식별자는 trace에 유지하되 이 문자열에는 노출하지 않는다.
+slot rationale은 적용 대상, 시나리오 영향, 현재값→제안값, 산정 근거와 계산, 주요 가정, 사용자 확인사항을
+명시한다. API field와 DB JSON shape는 이전 release와 같다.
 
 위 식별자는 v1 예시다. 같은 응답이 v3 또는 v4 scenario를 대상으로 하면 `scenarioGroupId`는 그대로 채워지고 `eventId`는 다음처럼 명시적으로 `null`이다.
 

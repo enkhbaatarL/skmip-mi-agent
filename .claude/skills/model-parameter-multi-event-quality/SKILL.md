@@ -252,6 +252,9 @@ Step1.5/2/3 semantic abstention도 MI Base 준비 뒤 종료되므로 예외의 
   `--testset-input`과 `--final-history-evidence`를 함께 주면 이 섹션을 본문에 자동 부착한다. 실행 증적이 여러 조각이거나
   기존 covered Proposal과 신규 Proposal이 섞인 campaign은 최종 DB read-back을 source of truth로 삼아 별도
   `final-cohort` Report를 생성하고 본문에서 링크·수치를 반영한다. 수동으로 성공 건수만 옮겨 적어 대신하지 않는다.
+- 같은 최종 Report는 공개 slot rationale의 7개 사용자 설명 섹션뿐 아니라 내부 구현 용어 노출 0건,
+  1,200자 초과 0건, `보았다/판단했다/한다` 같은 평서체 종결 0건도 자동 검사한다. 내부 trace의 enum·정책·fallback
+  진단은 이 사용자 문구 검사 대상이 아니다.
 - Markdown 그룹 표는 triple-success가 아닌 종류/값/exact-slot 지표를 `N/A`로 표시한다. `Read-only KPI`는 핵심
   7개 안팎으로 압축하고 `runtime-capable`, `current write eligible`, `covered`, `coverage limit`을 고정 설명한다.
   `Proposal 결과 KPI`, 그룹 표, post-fix 비교 표의 컬럼 정의도 고정 섹션으로 포함한다. KPI 개선안은 새 지표 제안이

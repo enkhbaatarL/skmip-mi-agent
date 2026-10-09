@@ -312,7 +312,7 @@ def _matches_frozen_graph_context(
 ) -> bool:
     """Compare persisted Scenario context while ignoring request-local pins.
 
-    Proposal Flow v4.1.5 adds the selected MI Base case to graph state after
+    Proposal Flow v4.1.7 adds the selected MI Base case to graph state after
     loading the persisted Scenario context.  That request-local field is not a
     Scenario mutation and must not trip the pre-persistence drift guard.
     """
@@ -334,10 +334,7 @@ def _same_mi_base_content_identity(
 ) -> bool:
     """Allow source transport changes only when the selected workbook identity is exact."""
     fields = ("case_id", "run_seq", "workbook_sha256")
-    return all(
-        _normalize(graph_identity.get(field)) == _normalize(trace_identity.get(field))
-        for field in fields
-    )
+    return all(_normalize(graph_identity.get(field)) == _normalize(trace_identity.get(field)) for field in fields)
 
 
 async def _resolve_trace_mi_base_resources(
@@ -355,10 +352,7 @@ async def _resolve_trace_mi_base_resources(
         else None
     )
     selection = await resolve_mi_base_resources(snapshot)
-    graph_identity = (
-        (raw_state.get("resolved_config") or {}).get("mi_base_resource")
-        or {}
-    )
+    graph_identity = (raw_state.get("resolved_config") or {}).get("mi_base_resource") or {}
     trace_identity = mi_base_resource_identity(selection)
     if not graph_identity or not _same_mi_base_content_identity(
         graph_identity,

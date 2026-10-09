@@ -307,18 +307,12 @@ def test_shared_v1_v3_mapping_invariants_against_v4_master() -> None:
     assert hashlib.sha256(mapping_payload).hexdigest() == EXPECTED_SHARED_MAPPING_SHA256
 
     identified = {
-        row["model_param_dimension_map_id"]
-        for row in mappings
-        if row["model_param_dimension_map_id"] is not None
+        row["model_param_dimension_map_id"] for row in mappings if row["model_param_dimension_map_id"] is not None
     }
     assert identified == set(range(1, 129))
     assert sum(row["model_param_dimension_map_id"] is None for row in mappings) == 1
 
-    active_by_id = {
-        row["model_param_id"]: row
-        for row in master
-        if row["use_yn"] == "Y" and row["del_yn"] == "N"
-    }
+    active_by_id = {row["model_param_id"]: row for row in master if row["use_yn"] == "Y" and row["del_yn"] == "N"}
     candidate_rows = [row for row in mappings if row["mapping_method"] in {"direct", "routing"}]
     assert {
         active_by_id[row["model_param_id"]]["parameter_name"] for row in candidate_rows
@@ -465,12 +459,14 @@ def test_configmap_and_local_resource_manifests_match_canonical() -> None:
             reference["path"],
         )
 
-    assert local["model_parameter_proposal_flow_release"] == embedded[
-        "model_parameter_proposal_flow_release"
-    ] == "v4.1.5"
-    assert local["scenario_group_v4_impact_catalog_version"] == embedded[
-        "scenario_group_v4_impact_catalog_version"
-    ] == "v4.1"
+    assert (
+        local["model_parameter_proposal_flow_release"] == embedded["model_parameter_proposal_flow_release"] == "v4.1.7"
+    )
+    assert (
+        local["scenario_group_v4_impact_catalog_version"]
+        == embedded["scenario_group_v4_impact_catalog_version"]
+        == "v4.1"
+    )
     for setting_name in (
         "model_parameter_transient_retry_max_attempts",
         "model_parameter_transient_retry_base_delay_seconds",
@@ -484,9 +480,7 @@ def test_configmap_and_local_resource_manifests_match_canonical() -> None:
     ):
         assert local[setting_name] == embedded[setting_name]
         assert local[setting_name] > 0
-    assert local["model_parameter_variation_mode"] == embedded[
-        "model_parameter_variation_mode"
-    ] == "balanced"
+    assert local["model_parameter_variation_mode"] == embedded["model_parameter_variation_mode"] == "balanced"
     for setting_name in (
         "model_parameter_variation_profile_enabled",
         "model_parameter_grounded_slot_recovery_enabled",
@@ -526,11 +520,14 @@ def test_canonical_mapping_workbook_and_archive_match_fixture() -> None:
 
     parameter_names = {row["model_param_id"]: row["parameter_name"] for row in canonical["master"]}
     expected_mappings: list[dict[str, Any]] = []
-    next_mapping_id = max(
-        row["model_param_dimension_map_id"]
-        for row in mapping_canonical["dimension_mappings"]
-        if row["model_param_dimension_map_id"] is not None
-    ) + 1
+    next_mapping_id = (
+        max(
+            row["model_param_dimension_map_id"]
+            for row in mapping_canonical["dimension_mappings"]
+            if row["model_param_dimension_map_id"] is not None
+        )
+        + 1
+    )
     for source in mapping_canonical["dimension_mappings"]:
         expected = dict(source)
         if expected["model_param_dimension_map_id"] is None:

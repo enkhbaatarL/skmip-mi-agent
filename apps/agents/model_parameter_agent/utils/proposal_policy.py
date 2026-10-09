@@ -173,11 +173,7 @@ def _coordinate_axes(value: object) -> Mapping[str, Any]:
 
 
 def _alias_without_generic_tokens(value: object) -> str:
-    return " ".join(
-        token
-        for token in _canonical_entity_text(value).split()
-        if token not in _ALIAS_REMOVABLE_TOKENS
-    )
+    return " ".join(token for token in _canonical_entity_text(value).split() if token not in _ALIAS_REMOVABLE_TOKENS)
 
 
 def _plant_alias_candidates(plant: str) -> set[str]:
@@ -185,10 +181,7 @@ def _plant_alias_candidates(plant: str) -> set[str]:
     generic_free = _alias_without_generic_tokens(plant)
     if len(generic_free) >= 4:
         aliases.add(generic_free)
-        aliases.update(
-            f"{generic_free} {facility_type}"
-            for facility_type in _FACILITY_TYPE_ALIAS_TOKENS
-        )
+        aliases.update(f"{generic_free} {facility_type}" for facility_type in _FACILITY_TYPE_ALIAS_TOKENS)
     acronym = _entity_acronym(plant)
     if len(acronym) >= 3:
         aliases.add(acronym)
@@ -231,11 +224,7 @@ def _unique_aliases_by_target(
             targets_by_alias.setdefault(alias, set()).add(target)
     return {
         target: tuple(
-            sorted(
-                alias
-                for alias in aliases
-                if len(targets_by_alias.get(alias, ())) == 1
-            ),
+            sorted(alias for alias in aliases if len(targets_by_alias.get(alias, ())) == 1),
         )
         for target, aliases in aliases_by_target.items()
     }
@@ -262,10 +251,7 @@ def _contains_distinct_phrase_pair(
     first_spans = _phrase_token_spans(text, first_phrase)
     second_spans = _phrase_token_spans(text, second_phrase)
     return bool(second_spans) and any(
-        all(
-            first_end <= second_start or second_end <= first_start
-            for second_start, second_end in second_spans
-        )
+        all(first_end <= second_start or second_end <= first_start for second_start, second_end in second_spans)
         for first_start, first_end in first_spans
     )
 
@@ -287,8 +273,7 @@ def _evidence_phrase_token_spans(
             if candidate_token == phrase_token:
                 continue
             if index == width - 1 and any(
-                candidate_token == f"{phrase_token}{suffix}"
-                for suffix in _KOREAN_POSTPOSITION_SUFFIXES
+                candidate_token == f"{phrase_token}{suffix}" for suffix in _KOREAN_POSTPOSITION_SUFFIXES
             ):
                 continue
             return False
@@ -322,10 +307,7 @@ def _validated_llm_entity_resolution(
     plant_spans = _evidence_phrase_token_spans(evidence_text, plant_evidence)
     train_spans = _evidence_phrase_token_spans(evidence_text, train_evidence)
     has_distinct_evidence = bool(train_spans) and any(
-        all(
-            plant_end <= train_start or train_end <= plant_start
-            for train_start, train_end in train_spans
-        )
+        all(plant_end <= train_start or train_end <= plant_start for train_start, train_end in train_spans)
         for plant_start, plant_end in plant_spans
     )
     if not has_distinct_evidence:
@@ -334,9 +316,7 @@ def _validated_llm_entity_resolution(
     period_evidence = str(raw_resolution.get("period_evidence_text") or "").strip()
     period_note = str(raw_resolution.get("period_match_note_ko") or "").strip()
     period_spans = (
-        _evidence_phrase_token_spans(evidence_text, period_evidence)
-        if period_evidence and period_note
-        else ()
+        _evidence_phrase_token_spans(evidence_text, period_evidence) if period_evidence and period_note else ()
     )
     return LLMEntityResolutionValidation(
         entity_matches=True,
@@ -418,10 +398,7 @@ def _plant_evidence_match(
         literal_plant = _canonical_evidence_text(plant)
         literal_match = f" {literal_plant} " in f" {_canonical_evidence_text(text)} "
         return True, not literal_match
-    if any(
-        _contains_exact_phrase(text, alias)
-        for alias in alias_index.plant_aliases_by_target.get(str(plant), ())
-    ):
+    if any(_contains_exact_phrase(text, alias) for alias in alias_index.plant_aliases_by_target.get(str(plant), ())):
         return True, True
     return False, False
 
@@ -645,31 +622,30 @@ def evaluate_liq_util_evidence(
                     for plant_alias, train_alias in strict_pairs
                 )
             )
-            deterministic_matches = (
-                plant_matches and train_matches and strict_alias_pair_matches
-            )
+            deterministic_matches = plant_matches and train_matches and strict_alias_pair_matches
             if not (resolution.entity_matches or deterministic_matches):
                 missing.add("specific_facility_evidence")
             elif resolution.entity_matches:
                 user_notes.append(
-                    "근거 원문의 Plant·Train 문구를 LLM이 실제 Basecase 좌표 "
-                    f"'{plant} / {train}'와 같은 실체로 해석했습니다. "
-                    f"원문 존재·서로 다른 근거 span·exact target을 서버가 검증했습니다: "
-                    f"{resolution.coordinate_note}",
+                    "근거에 사용된 설비·트레인 표기가 모델의 "
+                    f"'{plant} / {train}'와 같은 대상으로 확인되어 해당 위치에 반영했습니다.",
                 )
             elif plant_uses_alias or train_uses_alias:
                 user_notes.append(
-                    "근거의 공통어·단계·호기 표기를 실제 Basecase 좌표에서 "
-                    f"유일하게 승인된 영문 설비 '{plant}'의 Train 좌표로 정규화해 연결했습니다.",
+                    f"근거의 설비·호기 표기를 모델에 등록된 '{plant} / {train}' 명칭으로 통일해 적용했습니다.",
                 )
         if llm_period_matches:
+            year = coordinates.get("Year")
+            month = coordinates.get("Month")
+            period = f"{year}년" if year is not None else "선택한 연도"
+            if month is not None:
+                period = f"{period} {month}월"
             user_notes.append(
-                "근거 원문의 기간 문구를 exact Year/Month 좌표와 대조해 검증했습니다: "
-                f"{resolution.period_note}",
+                f"근거의 기간 표현이 {period}과 일치해 해당 기간에 반영했습니다.",
             )
         if time_matches and _SHORT_TERM_PATTERN.search(time_window):
             user_notes.append(
-                "'단기' 기간은 분석 기준일이 속한 월의 단일 모델 slot으로 보수적으로 해석했습니다.",
+                "'단기'는 분석 기준일이 포함된 한 달로 보수적으로 해석했습니다.",
             )
 
         if not missing:

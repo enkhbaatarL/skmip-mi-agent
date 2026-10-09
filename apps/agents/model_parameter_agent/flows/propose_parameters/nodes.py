@@ -96,6 +96,7 @@ from apps.agents.model_parameter_agent.utils.resource_runtime import (
 )
 from apps.agents.model_parameter_agent.utils.variation_policy import (
     VARIATION_POLICY_RELEASE,
+    ParameterVariationPolicy,
     VariationDirection,
     VariationFactors,
     VariationMode,
@@ -140,6 +141,189 @@ _COST_DIRECTION_MAP: Mapping[str, VariationDirection] = {
     "decrease": "decrease",
     "recover": "decrease",
 }
+
+_USER_AXIS_LABELS: Mapping[str, str] = {
+    "Year": "연도",
+    "Month": "월",
+    "Period": "기간",
+    "Country": "국가",
+    "Province/Country": "지역",
+    "Region": "권역",
+    "Continent": "대륙",
+    "LNG Plant": "LNG 설비",
+    "LNG Plant Train": "트레인",
+    "Pipeline Name": "파이프라인",
+    "From Country": "출발 국가",
+    "To Country": "도착 국가",
+    "Energy Source": "발전원",
+    "Canal": "운하",
+}
+_USER_EVIDENCE_LABELS: Mapping[str, str] = {
+    "OBSERVED": "시나리오에 직접 제시된 수치를 사용했습니다",
+    "DERIVED": "시나리오 근거로 계산했습니다",
+    "BOUNDED_ASSUMPTION": "직접 수치가 없어 정성 정보를 보수적으로 수치화했습니다",
+    "NEUTRAL": "영향 방향이 상충하거나 변화 근거가 없어 현재 값을 유지했습니다",
+}
+_USER_DURATION_LABELS: Mapping[str, str] = {
+    "short": "단기",
+    "medium": "중기",
+    "long": "장기",
+}
+_USER_SCOPE_LABELS: Mapping[str, str] = {
+    "narrow": "제한적",
+    "medium": "중간",
+    "broad": "광범위",
+}
+_USER_OFFSET_LABELS: Mapping[str, str] = {
+    "none": "상쇄 없음",
+    "partial": "일부 상쇄",
+    "strong": "큰 폭 상쇄",
+}
+_USER_CONFIDENCE_LABELS: Mapping[str, str] = {
+    "low": "낮은 수준",
+    "medium": "중간 수준",
+    "high": "높은 수준",
+}
+_USER_SIBLING_POSITION_LABELS: Mapping[str, str] = {
+    "lower": "낮은 수준",
+    "middle": "중간 수준",
+    "upper": "높은 수준",
+}
+_USER_UNIT_LABELS: Mapping[str, str] = {
+    "fractional_yoy_growth": "연간 성장률",
+    "index": "지수",
+    "fraction": "비중",
+    "celsius": "°C",
+    "thousand_people": "천 명",
+    "integer_intensity": "단계",
+    "Mt LNG/month": "Mt LNG/월",
+    "utilization_fraction": "이용률",
+    "Mt/y": "Mt/년",
+    "Mt": "Mt",
+    "Mt LNG": "Mt LNG",
+    "$/d": "달러/일",
+    "Bcm": "Bcm",
+    "$/tonne": "달러/톤",
+    "$/crossing": "달러/회",
+}
+_INTERNAL_RATIONALE_REPLACEMENTS: tuple[tuple[str, str], ...] = (
+    (r"\bconditional_assumption_policy\b", "정성 근거 적용 기준"),
+    (r"\bbounded_assumption_allowed\s*=\s*true\b", "정성 근거를 제한적으로 수치화할 수 있는 조건"),
+    (r"\bbounded[-_ ]assumption\b", "보수적 추정"),
+    (r"\bBOUNDED_ASSUMPTION\b", "보수적 추정"),
+    (r"\bASSUMPTION_ELIGIBLE\b", "보수적 추정 가능"),
+    (r"\bNOT_APPLICABLE\b", "적용하지 않음"),
+    (r"\bOBSERVED\b", "직접 확인된 수치"),
+    (r"\bDERIVED\b", "계산한 값"),
+    (r"\bNEUTRAL\b", "현재 값 유지"),
+    (r"\bbounded-expert-v\d+\b", "보수적 산정 기준"),
+    (r"\bStep\s*1\.5\b", "영향 연결 판단"),
+    (r"\bStep\s*[23]\b", "값 산정 과정"),
+    (r"\bcandidate_key\b", "제안 대상 식별값"),
+    (r"\bslot_key\b", "적용 위치 식별값"),
+    (r"\bexact\s+slot\b", "정확히 일치하는 적용 위치"),
+    (r"\bcatalog-pinned\b", "사전 정의된"),
+    (r"\bcatalog\b", "사전 정의된 범위"),
+    (r"\bbinding\b", "연결 관계"),
+    (r"\brouting\b", "영향 연결"),
+    (r"\bparameter\b", "모델 입력값"),
+    (r"\bScenario\b", "시나리오"),
+    (r"\bEvent\b", "사건"),
+    (r"\bLever\b", "영향 요인"),
+    (r"\bbranch\b", "시나리오 경로"),
+    (r"\bLLM\b", "AI"),
+    (r"\btrio\b", "비교 시나리오"),
+    (r"\bsibling(?:\s+position)?\b", "비교 시나리오의 상대 수준"),
+    (r"\bmapping_comment\b", "연결 조건"),
+    (r"\btime_window\b", "적용 기간"),
+    (r"\bscope\b", "적용 범위"),
+    (r"\bdirection\b", "변화 방향"),
+    (r"\bconfidence\b", "근거 신뢰도"),
+    (r"\bbalanced\b", "표준 검토 수준"),
+    (r"\bexploratory\b", "확장 검토 수준"),
+    (r"\bstrict\b", "엄격 검토 수준"),
+    (r"\bweak\b", "작은 폭"),
+    (r"\bmedium\b", "중간 폭"),
+    (r"\bstrong\b", "큰 폭"),
+    (r"\bexact\s+Year\b", "정확한 적용 연도"),
+    (r"\bYear\b", "연도"),
+    (r"\bMonth\b", "월"),
+    (r"\bcharter rate\b", "용선료"),
+    (r"\bd\d+_v\d+\b", "선택한 시나리오 조건"),
+)
+_INTERNAL_RATIONALE_ASCII_TOKEN_REPLACEMENTS: tuple[tuple[str, str], ...] = (
+    ("conditional_assumption_policy", "정성 근거 적용 기준"),
+    ("BOUNDED_ASSUMPTION", "보수적 추정"),
+    ("ASSUMPTION_ELIGIBLE", "보수적 추정 가능"),
+    ("NOT_APPLICABLE", "적용하지 않음"),
+    ("bounded-expert-v3", "보수적 산정 기준"),
+    ("bounded_assumption", "보수적 추정"),
+    ("candidate_key", "제안 대상 식별값"),
+    ("slot_key", "적용 위치 식별값"),
+    ("exact slot", "정확히 일치하는 적용 위치"),
+    ("reference_value", "현재 모델값"),
+    ("catalog-pinned", "사전 정의된"),
+    ("mapping_comment", "연결 조건"),
+    ("time_window", "적용 기간"),
+    ("charter rate", "용선료"),
+    ("bounded assumption", "보수적 추정"),
+    ("OBSERVED", "직접 확인된 수치"),
+    ("DERIVED", "계산한 값"),
+    ("NEUTRAL", "현재 값 유지"),
+    ("Scenario", "시나리오"),
+    ("Event", "사건"),
+    ("Lever", "영향 요인"),
+    ("catalog", "사전 정의된 범위"),
+    ("binding", "연결 관계"),
+    ("routing", "영향 연결"),
+    ("parameter", "모델 입력값"),
+    ("Basecase", "현재 모델값"),
+    ("branch", "시나리오 경로"),
+    ("sibling", "비교 시나리오의 상대 수준"),
+    ("trio", "비교 시나리오"),
+    ("balanced", "표준 검토 수준"),
+    ("exploratory", "확장 검토 수준"),
+    ("strict", "엄격 검토 수준"),
+    ("confidence", "근거 신뢰도"),
+    ("severity", "조정 강도"),
+    ("direction", "변화 방향"),
+    ("scope", "적용 범위"),
+    ("profile", "영향 수준"),
+    ("policy", "산정 기준"),
+    ("mode", "검토 수준"),
+    ("fallback", "보완 적용"),
+    ("deterministic", "일관된 기준"),
+    ("exact", "정확히 일치하는"),
+    ("slot", "적용 위치"),
+    ("strong", "큰 폭"),
+    ("medium", "중간 폭"),
+    ("weak", "작은 폭"),
+    ("Year", "연도"),
+    ("Month", "월"),
+    ("LLM", "AI"),
+)
+_USER_POLITE_ENDING_REPLACEMENTS: tuple[tuple[str, str], ...] = (
+    ("낮췄다", "낮췄습니다"),
+    ("높였다", "높였습니다"),
+    ("보았다", "보았습니다"),
+    ("두었다", "두었습니다"),
+    ("않는다", "않습니다"),
+    ("아니다", "아닙니다"),
+    ("어렵다", "어렵습니다"),
+    ("충분하다", "충분합니다"),
+    ("필요하다", "필요합니다"),
+    ("가능하다", "가능합니다"),
+    ("보인다", "보입니다"),
+    ("따른다", "따릅니다"),
+    ("다룬다", "다룹니다"),
+    ("본다", "봅니다"),
+    ("했다", "했습니다"),
+    ("된다", "됩니다"),
+    ("한다", "합니다"),
+    ("있다", "있습니다"),
+    ("없다", "없습니다"),
+    ("이다", "입니다"),
+)
 _SAFE_LEVER_PARAMETER_DIRECTIONS: Mapping[
     tuple[str, str],
     Mapping[str, VariationDirection],
@@ -1374,7 +1558,7 @@ def load_basecase_samples(state: ModelParameterProposalState) -> dict[str, Any]:
             "model_parameter_proposal_flow_release": getattr(
                 cfg,
                 "model_parameter_proposal_flow_release",
-                "v4.1.5",
+                "v4.1.7",
             ),
             "model_parameter_variation_mode": _configured_variation_mode(cfg),
             "model_parameter_variation_profile_enabled": bool(
@@ -4081,8 +4265,8 @@ def _deterministic_variation_factors(
         confidence="medium",
         sibling_position="standalone",
         rationale_ko=(
-            "명시된 적용 기간·대상 범위만 분류하고 상쇄 효과는 partial로 보수적으로 두었습니다. "
-            "형제 시나리오의 상대 위치는 값 생성 근거로 사용하지 않았습니다."
+            "명시된 적용 기간과 대상 범위를 반영하고, 확인되지 않은 상쇄 효과는 일부만 있는 것으로 "
+            "보수적으로 보았습니다. 비교 시나리오의 상대 강도는 값 산정에 사용하지 않았습니다."
         ),
     )
 
@@ -4118,15 +4302,14 @@ def _apply_deterministic_value_fallbacks(
                 slot_key=slot_key,
                 proposed_value=None,
                 rationale_ko=(
-                    "catalog-pinned parameter와 evidence-grounded exact slot을 유지하고, "
-                    "일관된 parameter 방향을 weak guardrail 안에서 초기값으로 수치화했습니다."
+                    "시나리오 근거에서 확인된 변화 방향을 바탕으로, 현재 모델값에서 작은 폭으로 조정한 초기값입니다."
                 ),
                 evidence_basis="BOUNDED_ASSUMPTION",
                 direction=direction,
                 severity="weak",
                 assumption_ko=(
-                    "직접 관측된 exact 값은 없으며, 선택된 모든 routing lineage가 같은 parameter "
-                    f"방향({direction})을 가리킨다는 조건에서만 {VARIATION_POLICY_RELEASE} weak 범위를 적용합니다."
+                    "직접 관측된 값은 없으며, 관련 근거가 모두 같은 변화 방향을 가리킨다는 조건에서만 "
+                    "보수적인 작은 조정폭을 적용했습니다."
                 ),
                 variation_factors=factors,
             )
@@ -4137,8 +4320,8 @@ def _apply_deterministic_value_fallbacks(
                 candidate_key=candidate_key,
                 slot_values=slot_values,
                 rationale_ko=(
-                    "LLM 값 응답이 불완전하거나 전 slot 기준값 유지에 그쳐, 새 parameter/slot을 만들지 않고 "
-                    f"검증된 방향({direction})에 {VARIATION_POLICY_RELEASE} weak fallback을 적용했습니다."
+                    "직접 수치 근거는 없지만 시나리오에서 변화 방향이 일관되게 확인되어, 현재 모델값을 "
+                    "기준으로 작은 폭의 초기값을 제안했습니다."
                 ),
             ),
         )
@@ -4618,14 +4801,14 @@ def _decorate_v4_deterministic_candidate(
             "candidate_key": candidate.get("candidate_key"),
             "decision": "DIRECT",
             "evidence_basis": "DERIVED",
-            "causal_path_ko": "선택된 Scenario value의 deterministic Lever binding",
-            "target_scope_ko": candidate.get("scope") or "binding applicability 범위",
+            "causal_path_ko": ("선택한 시나리오 조건이 이 모델 입력값에 직접 영향을 줍니다"),
+            "target_scope_ko": candidate.get("scope") or "선택한 시나리오의 적용 대상",
             "direction": candidate.get("direction") or "unchanged",
             "direction_semantics": "lever",
             "lever_code": candidate.get("lever_code"),
-            "time_scope_ko": candidate.get("time_window") or "Scenario 적용 기간",
+            "time_scope_ko": candidate.get("time_window") or "선택한 시나리오의 적용 기간",
             "confidence": "high",
-            "rationale_ko": "catalog-pinned primary binding을 적용했습니다.",
+            "rationale_ko": "선택한 시나리오 조건과 이 모델 입력값의 직접적인 연관성을 확인했습니다.",
         },
     ]
     selected["_routing_priority"] = 0
@@ -5286,10 +5469,7 @@ def _grounded_v4_slot_recovery(
                 _slot_from_coordinates(
                     candidate_key,
                     coordinate,
-                    note=(
-                        "v4.1.5 grounded slot 복구·확장: 현재 Scenario/Event/Lever 원문과 실제 catalog에서 "
-                        "유일하게 일치한 대상과 명시적으로 포함된 모든 exact 기간을 선택했습니다."
-                    ),
+                    note=("시나리오에 명시된 대상과 기간이 모델의 적용 위치와 일치해 함께 반영했습니다."),
                 ),
             )
             recovered[-1]["_selection_method"] = "V4_GROUNDED_CATALOG_EXPANSION"
@@ -5390,8 +5570,8 @@ def _conservative_v4_slot_recovery(
             ),
         )
         note = (
-            "v4.1.5 보수적 slot 복구: catalog 내 적용 대상이 하나로 확정되어 "
-            "Lever 기간 범위의 가장 이른 exact 기간 한 건을 초기값으로 선택했습니다."
+            "적용 대상은 하나로 확인됐지만 기간이 명확하지 않아, 사용 가능한 기간 중 가장 이른 값을 "
+            "초기 제안으로 선택했습니다."
         )
         recovered.append(
             _slot_from_coordinates(
@@ -5554,24 +5734,247 @@ def _numeric_reference_value(reference: Mapping[str, Any]) -> float:
 def _routing_evidence_summary(candidate: Mapping[str, Any]) -> dict[str, str]:
     evidence_items = [item for item in candidate.get("routing_evidence") or [] if isinstance(item, Mapping)]
 
-    def joined(field: str, fallback: str) -> str:
+    def joined(field: str, fallback: str, *, separator: str = " / ") -> str:
         values: list[str] = []
         for item in evidence_items:
             value = " ".join(str(item.get(field) or "").split())
             if value and value not in values:
                 values.append(value)
-        return " / ".join(values) or fallback
+        return separator.join(values) or fallback
 
     return {
-        "causal_path": joined("causal_path_ko", "선택된 Scenario Lever와 parameter binding의 인과 경로"),
-        "target_scope": joined("target_scope_ko", "현재 exact slot 대상"),
-        "time_scope": joined("time_scope_ko", "현재 exact slot 기간"),
+        "causal_path": joined(
+            "causal_path_ko",
+            "선택한 시나리오 조건이 이 모델 입력값에 직접 영향을 줍니다",
+            separator=" 또한 ",
+        ),
+        "target_scope": joined("target_scope_ko", "현재 제안 대상", separator="; "),
+        "time_scope": joined("time_scope_ko", "현재 제안 기간", separator="; "),
         "routing_basis": joined("evidence_basis", "DERIVED"),
         "routing_rationale": joined(
             "rationale_ko",
             "선택된 Scenario Lever와 catalog binding을 기준으로 parameter를 선정",
         ),
     }
+
+
+def _user_facing_text(value: object, *, fallback: str = "") -> str:
+    text = " ".join(str(value or "").split())
+    for pattern, replacement in _INTERNAL_RATIONALE_REPLACEMENTS:
+        text = re.sub(pattern, replacement, text, flags=re.IGNORECASE)
+    for token, replacement in _INTERNAL_RATIONALE_ASCII_TOKEN_REPLACEMENTS:
+        text = re.sub(
+            rf"(?<![A-Za-z0-9_]){re.escape(token)}(?![A-Za-z0-9_])",
+            replacement,
+            text,
+            flags=re.IGNORECASE,
+        )
+    text = re.sub(
+        r"(?<![A-Za-z0-9_])d\d+_v\d+(?![A-Za-z0-9_])",
+        "선택한 시나리오 조건",
+        text,
+        flags=re.IGNORECASE,
+    )
+    text = re.sub(
+        r"(?<![A-Za-z0-9_])bounded-expert-v\d+(?![A-Za-z0-9_])",
+        "보수적 산정 기준",
+        text,
+        flags=re.IGNORECASE,
+    )
+    text = re.sub(
+        r"(?<![A-Za-z0-9_])Step\s*(?:1\.5|2|3)(?![A-Za-z0-9_])",
+        "내부 판단 과정",
+        text,
+        flags=re.IGNORECASE,
+    )
+    text = text.replace("슬롯", "적용 위치")
+    text = text.replace("정확한 적용 연도 적용 위치", "정확한 적용 연도")
+    text = text.replace("적용 연도 좌표", "적용 연도")
+    text = text.replace("연도 좌표", "연도 위치")
+    text = text.replace("정확한 적용 연도은", "정확한 적용 연도는")
+    text = text.replace("적용 위치은", "적용 위치는")
+    text = text.replace("후보 정책이 허용하는 범위 내의", "모델 입력 범위의")
+    text = text.replace("후보 정책 범위 내에서", "모델 입력 범위에")
+    text = text.replace("이 단계에서 확정하지 않는다", "세부 값 산정 시 확정한다")
+    text = re.sub(
+        r"(정확한 )?적용 연도(?: 위치)?는 (?:후속|이후) 단계에서 [^.;]+(?:합니다|됩니다|한다|된다)",
+        r"\1적용 연도는 세부 값 산정 시 확정합니다",
+        text,
+    )
+    text = text.replace("후속 단계", "세부 값 산정 과정")
+    text = text.replace("이후 단계", "세부 값 산정 과정")
+    for plain_ending, polite_ending in _USER_POLITE_ENDING_REPLACEMENTS:
+        text = re.sub(
+            rf"{re.escape(plain_ending)}(?=\s*(?:[.!?,;]|/|$))",
+            polite_ending,
+            text,
+        )
+    text = re.sub(r"\.(?=\s*;)", "", text)
+    text = re.sub(r"\.{2,}", ".", text)
+    text = re.sub(r"\s+([,.;:])", r"\1", text)
+    text = re.sub(r"\s{2,}", " ", text).strip(" ;")
+    return text or fallback
+
+
+def _user_clause(value: object, *, fallback: str = "") -> str:
+    return _user_facing_text(value, fallback=fallback).rstrip(" .;:")
+
+
+def _user_excerpt(
+    value: object,
+    *,
+    fallback: str = "",
+    max_chars: int,
+) -> str:
+    text = _user_clause(value, fallback=fallback)
+    if len(text) <= max_chars:
+        return text
+    prefix = text[: max_chars - 1]
+    cut_at = max(prefix.rfind(". "), prefix.rfind(", "), prefix.rfind("; "), prefix.rfind(" "))
+    if cut_at >= max_chars // 2:
+        prefix = prefix[:cut_at]
+    return f"{prefix.rstrip(' ,.;:')}…"
+
+
+def _complete_user_statement(text: str) -> str:
+    for action_noun in ("한정", "반영", "유지", "적용", "확인", "제시", "가정", "산정"):
+        if text.endswith(action_noun):
+            return f"{text}했습니다"
+    return text
+
+
+def _compact_user_notes(user_notes: list[str]) -> str:
+    if not user_notes:
+        return ""
+    normalized: list[str] = []
+    for note in user_notes:
+        normalized_note = _user_clause(note)
+        if normalized_note:
+            normalized.append(normalized_note)
+    parts: list[str] = []
+    if any("명칭으로 통일" in note for note in normalized):
+        parts.append("설비·호기 표기는 모델에 등록된 명칭으로 통일했습니다")
+    if any("같은 대상으로 확인" in note for note in normalized):
+        parts.append("근거의 설비·호기 표기가 모델의 등록 대상과 일치함을 확인했습니다")
+    if any("분석 기준일이 포함된 한 달" in note for note in normalized):
+        parts.append("'단기'는 분석 기준일이 포함된 한 달로 해석했습니다")
+    covered_fragments = ("명칭으로 통일", "같은 대상으로 확인", "분석 기준일이 포함된 한 달")
+    remaining = [note for note in normalized if not any(fragment in note for fragment in covered_fragments)]
+    parts.extend(_user_excerpt(note, max_chars=140) for note in remaining[:2])
+    if len(remaining) > 2:
+        parts.append(f"그 밖의 적용 확인 {len(remaining) - 2}건은 같은 기준으로 처리했습니다")
+    return ". ".join(parts)
+
+
+def _user_number(value: float) -> str:
+    if math.isclose(value, 0.0, rel_tol=0.0, abs_tol=1e-12):
+        return "0"
+    return f"{value:,.10g}"
+
+
+def _user_value(value: float, unit: str) -> str:
+    number = _user_number(value)
+    if unit in {"fractional_yoy_growth", "fraction", "utilization_fraction"}:
+        return f"{number} ({_user_number(value * 100)}%)"
+    unit_label = _USER_UNIT_LABELS.get(unit, unit)
+    return f"{number} {unit_label}".strip()
+
+
+def _user_coordinates(coordinates: Mapping[str, Any]) -> str:
+    parts = [
+        f"{_USER_AXIS_LABELS.get(str(axis_name), str(axis_name))} {axis_value}"
+        for axis_name, axis_value in coordinates.items()
+    ]
+    return ", ".join(parts) or "현재 제안 위치"
+
+
+def _user_variation_factor_summary(variation_factors: Mapping[str, Any] | None) -> str:
+    if not variation_factors:
+        return ""
+    duration = _USER_DURATION_LABELS.get(str(variation_factors.get("duration") or ""), "판단하지 않음")
+    scope = _USER_SCOPE_LABELS.get(str(variation_factors.get("scope") or ""), "판단하지 않음")
+    offset = _USER_OFFSET_LABELS.get(str(variation_factors.get("offset") or ""), "판단하지 않음")
+    confidence = _USER_CONFIDENCE_LABELS.get(str(variation_factors.get("confidence") or ""), "판단하지 않음")
+    summary = f"조정폭은 {duration} 영향·{scope} 범위·{offset}·{confidence} 근거를 반영했습니다."
+    sibling_position = _USER_SIBLING_POSITION_LABELS.get(
+        str(variation_factors.get("sibling_position") or ""),
+    )
+    if sibling_position:
+        summary = f"{summary} 비교 가능한 시나리오 안에서는 {sibling_position}으로 판단했습니다."
+    return summary
+
+
+def _user_calculation(
+    *,
+    policy: ParameterVariationPolicy,
+    reference_value: float,
+    proposed_value: float,
+    direction: str,
+    evidence_basis: str,
+    calculation_ko: str,
+    variation_factors: Mapping[str, Any] | None,
+    clipped: bool,
+) -> str:
+    if direction == "unchanged" or math.isclose(
+        reference_value,
+        proposed_value,
+        rel_tol=0.0,
+        abs_tol=1e-12,
+    ):
+        calculation = "시나리오 영향이 서로 상쇄되거나 변화 방향을 확정하기 어려워 현재 모델값을 유지했습니다."
+    else:
+        delta = proposed_value - reference_value
+        movement = "높였습니다" if delta > 0 else "낮췄습니다"
+        if policy.method == "relative" and not math.isclose(reference_value, 0.0, rel_tol=0.0, abs_tol=1e-12):
+            percent = abs(delta / reference_value) * 100
+            calculation = f"현재 모델값에서 {_user_number(percent)}% {movement}."
+        elif policy.method == "integer_step":
+            calculation = f"현재 모델값에서 {_user_number(abs(delta))}단계 {movement}."
+        elif policy.unit in {"fractional_yoy_growth", "fraction", "utilization_fraction"}:
+            calculation = f"현재 모델값에서 {_user_number(abs(delta) * 100)}%p {movement}."
+        else:
+            unit_label = _USER_UNIT_LABELS.get(policy.unit, policy.unit)
+            calculation = f"현재 모델값에서 {_user_number(abs(delta))} {unit_label} {movement}."
+
+    if evidence_basis == "BOUNDED_ASSUMPTION":
+        factor_summary = _user_variation_factor_summary(variation_factors)
+        calculation = (
+            f"{calculation} {factor_summary}"
+            if factor_summary
+            else f"{calculation} 직접 전망치가 없어 보수적인 조정폭을 적용했습니다."
+        )
+    else:
+        detail = _user_clause(calculation_ko)
+        if detail and detail not in calculation:
+            calculation = f"{calculation} 세부 산정: {detail}."
+    if clipped:
+        calculation = f"{calculation} 모델 입력값의 허용 범위를 벗어나지 않도록 상한·하한 안에서 조정했습니다."
+    return calculation
+
+
+def _user_parameter_rationale(
+    *,
+    candidate: Mapping[str, Any],
+    policy_trace: list[dict[str, Any]],
+) -> str:
+    routing = _routing_evidence_summary(candidate)
+    causal_path = _user_excerpt(
+        routing["causal_path"],
+        fallback="선택한 시나리오의 변화가 이 모델 입력값에 영향을 주는 것으로 판단했습니다.",
+        max_chars=220,
+    )
+    target_scope = _user_excerpt(routing["target_scope"], fallback="현재 제안 대상", max_chars=130)
+    time_scope = _user_excerpt(routing["time_scope"], fallback="현재 제안 기간", max_chars=130)
+    basis_note = ""
+    evidence_bases = {str(trace.get("evidence_basis") or "") for trace in policy_trace}
+    if "BOUNDED_ASSUMPTION" in evidence_bases:
+        basis_note = " 직접 전망치가 없는 값은 현재 모델값을 기준으로 보수적으로 제안했습니다."
+    elif evidence_bases == {"NEUTRAL"}:
+        basis_note = " 변화 방향이 불분명한 값은 현재 모델값을 유지했습니다."
+    return (
+        f"제안 이유: {causal_path}. 적용 범위·기간: {target_scope}; {time_scope}.{basis_note} "
+        "세부 산정 근거와 가정은 각 적용 위치에서 확인해 주세요."
+    )
 
 
 def _fixed_slot_rationale(
@@ -5582,36 +5985,60 @@ def _fixed_slot_rationale(
     proposed_value: float,
     evidence_basis: str,
     direction: str,
-    severity: str | None,
     calculation_ko: str,
     evidence_ko: str | None,
     assumption_ko: str | None,
     original_rationale_ko: str,
-    variation_mode: VariationMode,
-    variation_factor_summary: str | None = None,
+    variation_factors: Mapping[str, Any] | None,
+    clipped: bool,
+    original_value_was_recomputed: bool,
 ) -> str:
     routing = _routing_evidence_summary(candidate)
     policy = get_parameter_variation_policy(parameter_name(candidate))
-    evidence_text = " ".join(str(evidence_ko or "").split()) or "정량 원문 없음"
-    assumption_text = " ".join(str(assumption_ko or "").split()) or "추가 가정 없음"
-    severity_text = severity or "not-applicable"
-    factor_text = variation_factor_summary or "미적용(명시 정량값 또는 policy 기본 단계)"
+    basis_label = _USER_EVIDENCE_LABELS.get(evidence_basis, "시나리오 근거를 바탕으로 산정했습니다")
+    original_explanation = _user_excerpt(
+        original_rationale_ko,
+        fallback="시나리오의 영향 방향과 적용 범위를 반영했습니다",
+        max_chars=180,
+    )
+    evidence_text = _complete_user_statement(_user_excerpt(evidence_ko, max_chars=180))
+    if original_value_was_recomputed:
+        original_explanation = evidence_text or "시나리오의 영향 방향과 적용 범위를 반영했습니다"
+    if evidence_text and evidence_text not in original_explanation:
+        original_explanation = f"{original_explanation}. {evidence_text}"
+    assumption_text = _complete_user_statement(_user_excerpt(assumption_ko, max_chars=170))
+    if not assumption_text:
+        assumption_text = {
+            "OBSERVED": "제시된 수치의 대상·단위·기간이 이 모델 입력값과 일치한다고 보았습니다.",
+            "DERIVED": "제시된 증감 정보와 계산 관계가 이 모델 입력값에 직접 적용된다고 보았습니다.",
+            "BOUNDED_ASSUMPTION": "직접 전망치가 없어 시나리오의 방향과 영향 범위를 초기값으로 환산했습니다.",
+            "NEUTRAL": "상반된 영향이 서로 상쇄되거나 변화 방향을 확정하기 어렵다고 보았습니다.",
+        }.get(evidence_basis, "시나리오의 대상·단위·기간이 이 모델 입력값과 일치한다고 보았습니다.")
+    assumption_text = assumption_text.rstrip(" .;:")
     uncertainty = (
-        "정성 근거를 정책 범위로 수치화한 초기값이므로 사용자 검토가 필요합니다."
+        "직접 관측값이 아닌 초기 제안이므로 실제 전망과 함께 검토해 주세요."
         if evidence_basis == "BOUNDED_ASSUMPTION"
-        else "입력 근거와 계산의 대상·단위·기간 일치 여부를 사용자가 최종 검토해야 합니다."
+        else "근거의 대상·단위·기간이 실제 적용 조건과 일치하는지 검토해 주세요."
+    )
+    calculation = _user_calculation(
+        policy=policy,
+        reference_value=reference_value,
+        proposed_value=proposed_value,
+        direction=direction,
+        evidence_basis=evidence_basis,
+        calculation_ko=calculation_ko,
+        variation_factors=variation_factors,
+        clipped=clipped,
     )
     return (
-        f"대상·기간: {to_compact_json(dict(coordinates))}; "
-        f"근거 유형: {evidence_basis} (routing={routing['routing_basis']}); "
-        f"인과 경로: {routing['causal_path']}; 대상 범위: {routing['target_scope']}; "
-        f"기간 범위: {routing['time_scope']}; 선정 판단: {routing['routing_rationale']}; "
-        f"기준값: {reference_value:g} {policy.unit}; "
-        f"적용 정책: {VARIATION_POLICY_RELEASE}/{variation_mode}/{direction}/{severity_text}; "
-        f"변형 요인: {factor_text}; "
-        f"계산: {calculation_ko}; 제안값: {proposed_value:g} {policy.unit}; "
-        f"근거: {evidence_text}; 주요 가정: {assumption_text}; "
-        f"판단 설명: {' '.join(original_rationale_ko.split())}; 불확실성: {uncertainty}"
+        f"적용 대상: {_user_coordinates(coordinates)}. "
+        f"시나리오 영향: {_user_excerpt(routing['causal_path'], max_chars=180)}. "
+        f"조정 내용: 현재 모델값 {_user_value(reference_value, policy.unit)}에서 "
+        f"제안값 {_user_value(proposed_value, policy.unit)}로 조정했습니다. "
+        f"산정 근거: {basis_label}. {original_explanation}. "
+        f"계산 방법: {calculation} "
+        f"주요 가정: {assumption_text}. "
+        f"확인 필요: {uncertainty}"
     )
 
 
@@ -5634,7 +6061,7 @@ def _v4_policy_value(  # noqa: C901
     ):
         raise MIBaseError(
             ErrorCode.INVALID_REQUEST,
-            detail=("v4.1.5 value requires an evidence-specific direction and observed/derived/assumption explanation"),
+            detail=("v4.1.7 value requires an evidence-specific direction and observed/derived/assumption explanation"),
         )
     raw_basis = slot_value.evidence_basis
     evidence_basis = raw_basis or "DERIVED"
@@ -6001,19 +6428,20 @@ def _sanitize_llm_adjustments(  # noqa: C901
                     proposed_value=validated_proposed_value,
                     evidence_basis=str(slot_policy_trace.get("evidence_basis") or "DERIVED"),
                     direction=str(slot_policy_trace.get("direction") or "unchanged"),
-                    severity=slot_policy_trace.get("applied_severity"),
                     calculation_ko=str(slot_policy_trace.get("calculation_ko") or ""),
                     evidence_ko=slot_value.evidence_ko,
                     assumption_ko=slot_value.assumption_ko,
                     original_rationale_ko=slot_value.rationale_ko,
-                    variation_mode=variation_mode,
-                    variation_factor_summary=(
-                        (
-                            "지속={duration}, 범위={scope}, 상쇄={offset}, 신뢰도={confidence}, "
-                            "trio위치={sibling_position}; 판단={rationale_ko}"
-                        ).format(**slot_policy_trace["variation_factors"])
+                    variation_factors=(
+                        slot_policy_trace.get("variation_factors")
                         if isinstance(slot_policy_trace.get("variation_factors"), dict)
                         else None
+                    ),
+                    clipped=bool(slot_policy_trace.get("clipped")),
+                    original_value_was_recomputed=(
+                        str(slot_policy_trace.get("evidence_basis") or "") == "BOUNDED_ASSUMPTION"
+                        and get_parameter_variation_policy(parameter_name(candidate)).method != "atomic_share"
+                        and slot_value.proposed_value is not None
                     ),
                 )
             value_cell = _parameter_value_cell_from_slot_value(
@@ -6067,16 +6495,15 @@ def _sanitize_llm_adjustments(  # noqa: C901
 
         parameter_rationale = adjustment.rationale_ko
         if v4_contract_context:
-            routing = _routing_evidence_summary(candidate)
-            parameter_rationale = (
-                f"선정 근거: {routing['causal_path']} 대상 범위: {routing['target_scope']} "
-                f"기간 범위: {routing['time_scope']} 선정 판단: {routing['routing_rationale']} "
-                "값 산정 경계: "
-                f"{VARIATION_POLICY_RELEASE}/{variation_mode}. {adjustment.rationale_ko}"
+            parameter_rationale = _user_parameter_rationale(
+                candidate=candidate,
+                policy_trace=policy_trace,
             )
         user_notes = _slot_user_notes(selected_slots)
         if user_notes:
-            parameter_rationale = f"{parameter_rationale}\n\n참고: {' '.join(user_notes)}"
+            note_summary = _compact_user_notes(user_notes)
+            if note_summary:
+                parameter_rationale = f"{parameter_rationale}\n\n참고: {note_summary}."
         adjustment_payload = ParameterAdjustment(
             candidate_key=adjustment.candidate_key,
             model_file=str(candidate.get("model_file") or ""),

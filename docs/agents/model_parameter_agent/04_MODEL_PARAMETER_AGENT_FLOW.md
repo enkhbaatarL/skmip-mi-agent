@@ -734,7 +734,7 @@ request-local `trace_evidence`를 싣는다. trace에는 종료 단계까지의 
 기존 `ABSTAINED_*` 계약은 바뀌지 않으며, 품질 runner는 이 증적을 일반 실행 오류와 분리해 `ABSTAINED`/`REVIEW`로
 집계한다.
 
-v4.1.5는 schema/semantic/좌표 오류를 LLM에 재질의하지 않는다. Step2는 첫 응답을 sanitize한 뒤 현재
+v4.1.7은 schema/semantic/좌표 오류를 LLM에 재질의하지 않는다. Step2는 첫 응답을 sanitize한 뒤 현재
 Scenario/Event/Lever 원문에 실제 catalog target alias와 명시 기간이 있고 target이 하나로만 확정될 때
 evidence-grounded 방식으로 누락 slot을 복구하거나 기존 선택 slot을 확장한다. global time-only Parameter도
 명시 기간이 있으면 허용하고, 닫힌 연·월 범위·분기·반기·N개월에 포함되는 모든 exact 기간을 선택한다.
@@ -750,8 +750,13 @@ Step3은 16개 Parameter별 `bounded-expert-v3` policy를 사용한다. slot을 
 `BOUNDED_ASSUMPTION`, `NEUTRAL`로 구분하고, bounded assumption만 서버가 reference와 Parameter별
 weak/medium/strong 폭으로 다시 계산한다. 같은 severity 안에서는 지속기간·대상 범위·상쇄 정도·근거 신뢰도와
 동일 mechanism trio의 상대 위치를 이용해 결정론적으로 band 내부값을 정한다. 이 factor는 후보·slot·방향을
-활성화하지 않으며 direct `OBSERVED`/`DERIVED` 값에는 적용하지 않는다. 최종 slot rationale은 대상·기간, 근거 유형,
-인과 경로, 기준값, 정책/계산, 변형 요인, 제안값, 주요 가정과 불확실성을 고정 템플릿으로 명시한다. 응답이
+활성화하지 않으며 direct `OBSERVED`/`DERIVED` 값에는 적용하지 않는다. 내부 trace에는 원래 enum, 정책 release,
+mode, severity, variation factor와 fallback 여부를 그대로 보존한다. 공개 slot rationale은 `적용 대상`,
+`시나리오 영향`, `조정 내용`, `산정 근거`, `계산 방법`, `주요 가정`, `확인 필요`의 사용자 설명으로 변환하며
+candidate/slot key, Step, catalog/binding/routing, 정책 버전·mode, enum, weak/medium/strong, trio/sibling 같은
+구현·평가 용어를 노출하지 않는다. v4.1.7은 공개 문장을 존댓말로 통일하고 각 항목을 짧게 요약하며, 서버가
+bounded assumption 값을 다시 계산한 경우 LLM 초안 숫자를 제거하고 최종값·서버 계산만 설명한다. 반복되는
+설비명·기간 보정 참고사항도 한 문장으로 합친다. 응답이
 불완전하거나 모든 slot이 `DERIVED` 기준값 유지인 경우에도 catalog-pinned exact slot과 모든 routing lineage의
 Parameter 방향이 하나로 일치할 때만 non-strict mode에서 `weak` deterministic fallback을 적용한다. PowerMix,
 unchanged/unknown, 방향 상충, 안전한 Lever→Parameter 부호 규칙이 없는 경우는 추정하지 않는다. 공개 API와 DB JSON
@@ -759,9 +764,9 @@ shape는 유지한다.
 
 로컬 `envs/config.yaml`과 내부 Neuro 배포 ConfigMap은 다음 값을 동일하게 유지한다.
 
-| 설정 | v4.1.5 기본값 | 의미 |
+| 설정 | v4.1.7 기본값 | 의미 |
 | --- | --- | --- |
-| `model_parameter_proposal_flow_release` | `v4.1.5` | Proposal 로직 release 식별자 |
+| `model_parameter_proposal_flow_release` | `v4.1.7` | Proposal 로직 release 식별자 |
 | `model_parameter_max_routing_candidates_per_dimension` | `2` | legacy Step1.5 dimension별 기존 후보 상한 |
 | `model_parameter_v4_max_routing_candidates_per_dimension` | `3` | v4 Step1.5 dimension별 후보 상한 |
 | `model_parameter_max_conditional_parameters_per_scenario` | `4` | Scenario 전체 conditional Parameter 상한 |
@@ -792,7 +797,7 @@ python tests/manual/model_parameter_agent/run_proposal_only.py \
 초기 `uncovered-only-v1` 정책은 우회 옵션을 제공하지 않는다.
 
 - Group 또는 Scenario ID 중 한 종류의 명시 범위가 필수다.
-- runner의 `proposal_flow_release=v4.1.5`은 로직 release이며 Impact Lever catalog version이 아니다.
+- runner의 `proposal_flow_release=v4.1.7`은 로직 release이며 Impact Lever catalog version이 아니다.
   `extend16-v8`는 임의 label이 아니라 catalog `v4.1` / checksum
   `7f4ef0b7aa60efb550b9175654fd82350f0c293debf880a9180e7e935db54d69`, extend16 capability와
   `new-bc-v7` contract SHA, resource semantic schema와 실제 Basecase/LUT content fingerprint를 묶은 고정

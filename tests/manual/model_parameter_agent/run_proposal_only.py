@@ -96,7 +96,7 @@ EVIDENCE_SCHEMA_VERSION = 6
 UNCOVERED_POLICY_VERSION = "uncovered-only-v1"
 RELEASE_REPLAY_POLICY_VERSION = "release-replay-v1"
 BASELINE_CAPABILITY_RELEASE = "extend16-v8"
-PROPOSAL_FLOW_RELEASE = "v4.1.5"
+PROPOSAL_FLOW_RELEASE = "v4.1.7"
 EXPECTED_V4_0_CATALOG_CHECKSUM = "416017351f2b9539370963a3ca413914876da55a1db3f41e3dacd34bd466c763"
 EXPECTED_V4_1_CATALOG_CHECKSUM = "7f4ef0b7aa60efb550b9175654fd82350f0c293debf880a9180e7e935db54d69"
 EXPECTED_NEW_BC_V7_CONTRACT_SHA256 = "e8bea11883e7e796938a994f6415aa0c294a8eccbb9181981a213fcdb0aec7bb"
@@ -2096,8 +2096,10 @@ async def run_campaign(
 
     if any(attempt.get("status") == "BLOCKED" for attempt in evidence["attempts"]):
         evidence["status"] = "BLOCKED"
-    elif campaign_readback_errors or len(evidence["attempts"]) != len(eligible_ids) or any(
-        attempt.get("status") == "FAIL" for attempt in evidence["attempts"]
+    elif (
+        campaign_readback_errors
+        or len(evidence["attempts"]) != len(eligible_ids)
+        or any(attempt.get("status") == "FAIL" for attempt in evidence["attempts"])
     ):
         evidence["status"] = "FAIL"
     elif any(attempt.get("status") == "ABSTAINED" for attempt in evidence["attempts"]):

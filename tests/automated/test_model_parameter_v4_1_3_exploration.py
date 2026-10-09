@@ -715,10 +715,7 @@ def test_step2_grounding_ignores_llm_routing_catalog_horizon(
         "period_groups": [
             {
                 "period_group_id": "p1",
-                "available_periods": [
-                    {"Year": year}
-                    for year in range(2026, 2031)
-                ],
+                "available_periods": [{"Year": year} for year in range(2026, 2031)],
             },
         ],
     }
@@ -943,7 +940,7 @@ def test_step3_bounded_assumption_is_server_calculated_and_slot_rationale_is_exp
                 "evidence_basis": "BOUNDED_ASSUMPTION",
                 "causal_path_ko": "feedgas 차질로 검증된 Train 이용률 하락",
                 "target_scope_ko": "Plant A Train 1",
-                "time_scope_ko": "2026년 8월",
+                "time_scope_ko": "분석 기준일 이후 단기이며 exact Year slot은 이 단계에서 확정하지 않는다.",
             },
         ],
     }
@@ -982,11 +979,12 @@ def test_step3_bounded_assumption_is_server_calculated_and_slot_rationale_is_exp
             LLMValueCell(
                 slot_key="slot-1",
                 proposed_value=0.1,
-                rationale_ko="정량값이 없어 중간 강도를 가정했습니다.",
+                rationale_ko="기준 0.8에서 초안값 0.1로 낮추는 중간 강도를 가정했습니다.",
                 evidence_basis="BOUNDED_ASSUMPTION",
                 direction="decrease",
                 severity="medium",
-                assumption_ko="차질 강도를 medium으로 한정",
+                evidence_ko="2026년 8월 feedgas 차질이 확인됐습니다.",
+                assumption_ko="차질 강도를 medium으로 보았다",
                 variation_factors=LLMVariationFactors(
                     duration="long",
                     scope="broad",
@@ -1011,14 +1009,59 @@ def test_step3_bounded_assumption_is_server_calculated_and_slot_rationale_is_exp
     assert warnings == []
     assert sanitized[0]["value_grid"][0]["proposed_value"] == pytest.approx(0.72)
     rationale = sanitized[0]["value_grid"][0]["rationale_ko"]
-    assert "대상·기간:" in rationale
-    assert "근거 유형: BOUNDED_ASSUMPTION" in rationale
-    assert "인과 경로:" in rationale
-    assert "기준값: 0.8 utilization_fraction" in rationale
-    assert "적용 정책: bounded-expert-v3/balanced/decrease/medium" in rationale
-    assert "변형 요인: 지속=long, 범위=broad, 상쇄=none, 신뢰도=high" in rationale
-    assert "불확실성:" in rationale
+    assert "적용 대상: LNG 설비 Plant A, 트레인 Train 1, 연도 2026, 월 8." in rationale
+    assert "시나리오 영향: feedgas 차질로 검증된 Train 이용률 하락." in rationale
+    assert "조정 내용: 현재 모델값 0.8 (80%)에서 제안값 0.72 (72%)" in rationale
+    assert "제안값 0.72 (72%)로 조정했습니다." in rationale
+    assert "산정 근거: 직접 수치가 없어 정성 정보를 보수적으로 수치화했습니다." in rationale
+    assert "2026년 8월 feedgas 차질이 확인됐습니다." in rationale
+    assert "초안값 0.1" not in rationale
+    assert "계산 방법: 현재 모델값에서 8%p 낮췄습니다." in rationale
+    assert "조정폭은 장기 영향·광범위 범위·상쇄 없음·높은 수준 근거를 반영했습니다." in rationale
+    assert "주요 가정: 차질 강도를 중간 폭으로 보았습니다." in rationale
+    assert "보았다" not in rationale
+    assert "확인 필요: 직접 관측값이 아닌 초기 제안" in rationale
+    parameter_rationale = sanitized[0]["parameter_selection_rationale_ko"]
+    assert parameter_rationale.startswith("제안 이유: feedgas 차질로 검증된 Train 이용률 하락.")
+    assert "적용 범위·기간: Plant A Train 1;" in parameter_rationale
+    assert "정확한 적용 연도는 세부 값 산정 시 확정합니다." in parameter_rationale
+    assert "적용 위치은" not in parameter_rationale
+    assert len(rationale) <= 1200
+    assert len(parameter_rationale) <= 600
+    assert (
+        nodes._user_facing_text(  # noqa: SLF001
+            "분석 기준일 이후 단기이며 정확한 적용 연도 슬롯은 후속 단계에서 제한합니다.",
+        )
+        == "분석 기준일 이후 단기이며 정확한 적용 연도는 세부 값 산정 시 확정합니다."
+    )
+    assert (
+        nodes._user_facing_text(  # noqa: SLF001
+            "영향을 반영한다.; 적용 연도 좌표는 후속 단계에서 제한합니다.",
+        )
+        == "영향을 반영합니다; 적용 연도는 세부 값 산정 시 확정합니다."
+    )
+    forbidden_terms = (
+        "BOUNDED_ASSUMPTION",
+        "bounded-expert",
+        "balanced",
+        "routing",
+        "catalog",
+        "binding",
+        "exact slot",
+        "candidate_key",
+        "slot_key",
+        "trio",
+        "sibling",
+        "Step1.5",
+        "Step2",
+        "Step3",
+        "LLM",
+    )
+    assert not any(term.casefold() in rationale.casefold() for term in forbidden_terms)
+    assert not any(term.casefold() in parameter_rationale.casefold() for term in forbidden_terms)
     assert sanitized[0]["_variation_policy_trace"][0]["structured_fields_supplied"] is True
+    assert sanitized[0]["_variation_policy_trace"][0]["evidence_basis"] == "BOUNDED_ASSUMPTION"
+    assert sanitized[0]["_variation_policy_trace"][0]["policy_release"] == "bounded-expert-v3"
 
 
 def test_step3_missing_structured_evidence_is_repaired_then_rejected_if_still_missing() -> None:
@@ -1174,14 +1217,8 @@ def test_step2_recovers_global_explicit_periods_without_semantic_retry(
 
     output = asyncio.run(nodes.propose_parameter_slots(state))
 
-    assert [
-        slot["slot_axes"][0]["axis_value"]
-        for slot in output["parameter_slots"]
-    ] == [2026, 2027]
-    assert all(
-        slot["_selection_method"] == "V4_GROUNDED_CATALOG_EXPANSION"
-        for slot in output["parameter_slots"]
-    )
+    assert [slot["slot_axes"][0]["axis_value"] for slot in output["parameter_slots"]] == [2026, 2027]
+    assert all(slot["_selection_method"] == "V4_GROUNDED_CATALOG_EXPANSION" for slot in output["parameter_slots"])
     assert [call["step"] for call in output["llm_calls"]] == ["Step2 slot proposal"]
 
 
@@ -1265,6 +1302,12 @@ def test_step3_uses_deterministic_weak_fallback_without_semantic_retry(
     value = output["parameter_adjustments"][0]["value_grid"][0]["proposed_value"]
     assert value < 0.8
     assert output["parameter_adjustments"][0]["_variation_policy_trace"][0]["applied_severity"] == "weak"
+    public_rationale = output["parameter_adjustments"][0]["value_grid"][0]["rationale_ko"]
+    assert "직접 수치가 없어 정성 정보를 보수적으로 수치화했습니다" in public_rationale
+    assert "작은 폭으로 조정한 초기값" in public_rationale
+    assert "bounded-expert" not in public_rationale
+    assert "fallback" not in public_rationale.casefold()
+    assert "routing" not in public_rationale.casefold()
     assert any("deterministic weak fallback" in warning for warning in output["validation_warnings"])
     assert [call["step"] for call in output["llm_calls"]] == ["Step3 value proposal"]
 

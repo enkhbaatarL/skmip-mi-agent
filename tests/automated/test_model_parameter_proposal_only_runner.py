@@ -208,7 +208,7 @@ def test_config_snapshot_captures_local_neuro_and_runtime_without_secrets() -> N
     assert snapshot["top_level_key_parity"] is True
     for section in ("local_declared", "neuro_declared", "runtime_effective"):
         values = snapshot[section]
-        assert values["model_parameter_proposal_flow_release"] == "v4.1.5"
+        assert values["model_parameter_proposal_flow_release"] == "v4.1.7"
         assert values["model_parameter_variation_profile_enabled"] is True
         assert values["model_parameter_grounded_slot_recovery_enabled"] is True
         storage = values["model_parameter_resource_storage"]

@@ -27,6 +27,7 @@ from itertools import combinations
 import json
 import math
 from pathlib import Path
+import re
 import statistics
 from typing import Any
 
@@ -35,7 +36,7 @@ EXPECTED_API_VERSION = "v4"
 EXPECTED_GENERATION_STRATEGY = "multi_event_model_lever_dimensions"
 EXPECTED_CATALOG_VERSION = "v4.1"
 EXPECTED_CATALOG_CHECKSUM = "7f4ef0b7aa60efb550b9175654fd82350f0c293debf880a9180e7e935db54d69"
-EXPECTED_PROPOSAL_FLOW_RELEASE = "v4.1.5"
+EXPECTED_PROPOSAL_FLOW_RELEASE = "v4.1.7"
 FIXED_TESTSET_SOURCE_FLOW_RELEASE = "v4.1.2"
 EXPANDED_EVENT_SELECTION_POLICY = "expanded_event_cohort/add-only"
 REGENERATED_EVENT_POOL_SELECTION_POLICY = "existing_event_pool/add-only-regenerated-scenarios"
@@ -58,18 +59,45 @@ NON_SLOT_KEYS = {
 }
 FINAL_COHORT_PROPOSAL_STATUSES = frozenset({"PROPOSED", "CONFIRMED"})
 EXPLICIT_SLOT_RATIONALE_SECTIONS = (
-    "대상·기간:",
-    "근거 유형:",
-    "인과 경로:",
-    "기준값:",
-    "적용 정책:",
-    "변형 요인:",
-    "계산:",
-    "제안값:",
-    "근거:",
+    "적용 대상:",
+    "시나리오 영향:",
+    "조정 내용:",
+    "산정 근거:",
+    "계산 방법:",
     "주요 가정:",
-    "판단 설명:",
-    "불확실성:",
+    "확인 필요:",
+)
+USER_FACING_RATIONALE_FORBIDDEN_TERMS = (
+    "candidate_key",
+    "slot_key",
+    "bounded-expert",
+    "BOUNDED_ASSUMPTION",
+    "ASSUMPTION_ELIGIBLE",
+    "OBSERVED",
+    "DERIVED",
+    "NEUTRAL",
+    "routing",
+    "catalog",
+    "binding",
+    "exact slot",
+    "Step1.5",
+    "Step2",
+    "Step3",
+    "LLM",
+    "trio",
+    "sibling",
+    "variation_mode",
+    "variation_policy",
+    "balanced",
+    "exploratory",
+    "strict",
+    "weak",
+    "medium",
+    "strong",
+)
+MAX_USER_SLOT_RATIONALE_CHARS = 1200
+USER_FACING_PLAIN_ENDING_PATTERN = re.compile(
+    r"(?:낮췄다|높였다|보았다|두었다|않는다|했다|된다|한다|있다|없다|이다)(?=\s*[.!?])",
 )
 AUTOMATIC_RETRY_FORBIDDEN_NOTE = "proposal evaluation raised; automatic retry is forbidden"
 AUTHORIZED_INFERRED_BACKFILL = "authorized_inferred_backfill"
@@ -94,7 +122,7 @@ READ_ONLY_KPI_COLUMN_DEFINITIONS = (
     ),
     (
         "Release 고정",
-        "Scenario Lever v4.1과 Proposal Flow v4.1.5가 실제 preflight 증적에 함께 기록됐는지",
+        "Scenario Lever v4.1과 Proposal Flow v4.1.7이 실제 preflight 증적에 함께 기록됐는지",
     ),
     (
         "Runtime-capable / coverage limit",
@@ -856,12 +884,29 @@ def _slot_rationale_audit(
             if rationale:
                 nonempty += 1
             missing_sections = [section for section in EXPLICIT_SLOT_RATIONALE_SECTIONS if section not in rationale]
-            if rationale and not missing_sections:
+            leaked_internal_terms = [
+                term for term in USER_FACING_RATIONALE_FORBIDDEN_TERMS if term.casefold() in rationale.casefold()
+            ]
+            presentation_issues: list[str] = []
+            if len(rationale) > MAX_USER_SLOT_RATIONALE_CHARS:
+                presentation_issues.append(
+                    f"length={len(rationale)}>{MAX_USER_SLOT_RATIONALE_CHARS}",
+                )
+            plain_endings = sorted(set(USER_FACING_PLAIN_ENDING_PATTERN.findall(rationale)))
+            if plain_endings:
+                presentation_issues.append(f"plain_endings={','.join(plain_endings)}")
+            if rationale and not missing_sections and not leaked_internal_terms and not presentation_issues:
                 explicit += 1
                 continue
             if rationale:
                 legacy_explainable += 1
-                classification = "legacy_explainable"
+                classification = (
+                    "internal_jargon"
+                    if leaked_internal_terms
+                    else "user_presentation"
+                    if presentation_issues
+                    else "legacy_explainable"
+                )
             else:
                 missing += 1
                 classification = "missing"
@@ -873,6 +918,8 @@ def _slot_rationale_audit(
                     "rationale_nonempty": bool(rationale),
                     "classification": classification,
                     "missing_sections": missing_sections,
+                    "leaked_internal_terms": leaked_internal_terms,
+                    "presentation_issues": presentation_issues,
                 },
             )
     return total, nonempty, explicit, legacy_explainable, missing, incomplete
@@ -963,9 +1010,7 @@ def _proposal_gap_recommendations(cases: Sequence[Mapping[str, Any]]) -> list[di
             "Event·Scenario의 프로젝트/설비 표기를 canonical Plant·Train alias 사전과 대조하고, "
             "고유하게 일치할 때만 해당 기간의 catalog slot을 복구한다."
         ),
-        safety_boundary=(
-            "Plant와 Train을 모두 식별하지 못하거나 복수 target이면 임의의 대표 설비를 선택하지 않는다."
-        ),
+        safety_boundary=("Plant와 Train을 모두 식별하지 못하거나 복수 target이면 임의의 대표 설비를 선택하지 않는다."),
     )
     pipeline_step2_count = stage_parameter_counts[("step2", "PipelineAdjustment")]
     add(
@@ -1276,6 +1321,8 @@ def build_final_cohort_trio_analysis(
     rationale_nonempty = 0
     rationale_explicit = 0
     rationale_legacy_explainable = 0
+    rationale_internal_term_leak = 0
+    rationale_presentation_issue = 0
     rationale_missing = 0
     rationale_incomplete_by_scenario: dict[int, list[dict[str, Any]]] = {}
     proposal_success_ids: set[int] = set()
@@ -1332,6 +1379,10 @@ def build_final_cohort_trio_analysis(
             rationale_nonempty += slot_nonempty
             rationale_explicit += slot_explicit
             rationale_legacy_explainable += slot_legacy_explainable
+            slot_internal_term_leak = sum(item.get("classification") == "internal_jargon" for item in incomplete)
+            slot_presentation_issue = sum(item.get("classification") == "user_presentation" for item in incomplete)
+            rationale_internal_term_leak += slot_internal_term_leak
+            rationale_presentation_issue += slot_presentation_issue
             rationale_missing += slot_missing
             if incomplete:
                 rationale_incomplete_by_scenario[scenario_id] = incomplete
@@ -1352,6 +1403,8 @@ def build_final_cohort_trio_analysis(
                     "slot_rationale_nonempty_count": slot_nonempty,
                     "slot_rationale_explicit_count": slot_explicit,
                     "slot_rationale_legacy_explainable_count": slot_legacy_explainable,
+                    "slot_rationale_internal_term_leak_count": slot_internal_term_leak,
+                    "slot_rationale_presentation_issue_count": slot_presentation_issue,
                     "slot_rationale_missing_count": slot_missing,
                 },
             )
@@ -1655,6 +1708,16 @@ def build_final_cohort_trio_analysis(
             rationale_legacy_explainable,
             rationale_total,
         ),
+        "slot_rationale_internal_term_leak_count": rationale_internal_term_leak,
+        "slot_rationale_internal_term_leak_rate_percent": _percent(
+            rationale_internal_term_leak,
+            rationale_total,
+        ),
+        "slot_rationale_presentation_issue_count": rationale_presentation_issue,
+        "slot_rationale_presentation_issue_rate_percent": _percent(
+            rationale_presentation_issue,
+            rationale_total,
+        ),
         "slot_rationale_missing_count": rationale_missing,
         "slot_rationale_missing_rate_percent": _percent(rationale_missing, rationale_total),
     }
@@ -1665,7 +1728,15 @@ def build_final_cohort_trio_analysis(
         )
     if rationale_legacy_explainable:
         quality_review_reasons.append(
-            "legacy 근거는 비어 있지 않지만 v4.1.5 필수 명시 섹션을 모두 갖추지 않아 재구성 없이 별도 분류함",
+            "legacy 근거는 비어 있지 않지만 v4.1.7 사용자 설명 섹션을 모두 갖추지 않아 재구성 없이 별도 분류함",
+        )
+    if rationale_internal_term_leak:
+        quality_review_reasons.append(
+            "사용자 노출 slot rationale에 내부 구현·평가 용어가 남아 있음",
+        )
+    if rationale_presentation_issue:
+        quality_review_reasons.append(
+            "사용자 노출 slot rationale에 과도한 길이 또는 평서체 종결이 남아 있음",
         )
     if len(ideal_groups) != len(identical_type_groups):
         quality_review_reasons.append(
@@ -3251,6 +3322,18 @@ def render_final_cohort_trio_section(analysis: Mapping[str, Any]) -> str:
             f"({kpis.get('slot_rationale_legacy_explainable_rate_percent', 0)}%) |"
         ),
         (
+            "| 사용자 설명 내부 용어 노출 | "
+            f"{kpis.get('slot_rationale_internal_term_leak_count', 0)} / "
+            f"{kpis.get('value_cell_count', 0)} "
+            f"({kpis.get('slot_rationale_internal_term_leak_rate_percent', 0)}%) |"
+        ),
+        (
+            "| 사용자 설명 길이·문체 문제 | "
+            f"{kpis.get('slot_rationale_presentation_issue_count', 0)} / "
+            f"{kpis.get('value_cell_count', 0)} "
+            f"({kpis.get('slot_rationale_presentation_issue_rate_percent', 0)}%) |"
+        ),
+        (
             "| Slot 근거 없음 | "
             f"{kpis.get('slot_rationale_missing_count', 0)} / "
             f"{kpis.get('value_cell_count', 0)} "
@@ -3276,31 +3359,23 @@ def render_final_cohort_trio_section(analysis: Mapping[str, Any]) -> str:
             "| --- | --- |",
             "| 중단 단계 | "
             + md_cell(
-                ", ".join(
-                    f"{name}={count}" for name, count in (gap_analysis.get("stage_frequency") or {}).items()
-                ),
+                ", ".join(f"{name}={count}" for name, count in (gap_analysis.get("stage_frequency") or {}).items()),
             )
             + " |",
             "| Reason | "
             + md_cell(
-                ", ".join(
-                    f"{name}={count}" for name, count in (gap_analysis.get("reason_frequency") or {}).items()
-                ),
+                ", ".join(f"{name}={count}" for name, count in (gap_analysis.get("reason_frequency") or {}).items()),
             )
             + " |",
             "| Parameter/경계 | "
             + md_cell(
-                ", ".join(
-                    f"{name}={count}"
-                    for name, count in (gap_analysis.get("parameter_frequency") or {}).items()
-                ),
+                ", ".join(f"{name}={count}" for name, count in (gap_analysis.get("parameter_frequency") or {}).items()),
             )
             + " |",
             "| Scenario Group | "
             + md_cell(
                 ", ".join(
-                    f"{name}={count}"
-                    for name, count in (gap_analysis.get("scenario_group_frequency") or {}).items()
+                    f"{name}={count}" for name, count in (gap_analysis.get("scenario_group_frequency") or {}).items()
                 ),
             )
             + " |",
@@ -3342,9 +3417,7 @@ def render_final_cohort_trio_section(analysis: Mapping[str, Any]) -> str:
             "| --- | ---: | --- | --- |",
         ],
     )
-    recommendations = [
-        item for item in gap_analysis.get("recommendations") or [] if isinstance(item, Mapping)
-    ]
+    recommendations = [item for item in gap_analysis.get("recommendations") or [] if isinstance(item, Mapping)]
     if recommendations:
         lines.extend(
             [
@@ -3412,8 +3485,9 @@ def render_final_cohort_trio_section(analysis: Mapping[str, Any]) -> str:
                 "변하지 않은 원별 share가 전체 cell 비율을 낮추는 구조적 효과를 scalar 변별과 섞지 않습니다."
             ),
             (
-                "- Slot 근거 필수 섹션은 대상·기간, 근거 유형, 인과 경로, 기준값, 적용 정책, 계산, "
-                "변형 요인, 제안값, 근거, 주요 가정, 판단 설명, 불확실성입니다."
+                "- Slot 근거 필수 섹션은 적용 대상, 시나리오 영향, 조정 내용, 산정 근거, 계산 방법, "
+                "주요 가정, 확인 필요입니다. 공개 설명은 1,200자 이하의 존댓말로 작성하며, 내부 enum·정책 버전·"
+                "실행 mode는 trace에서 확인합니다."
             ),
             (
                 "- `legacy_explainable`은 기존 근거 문자열이 비어 있지 않다는 표시일 뿐, 누락된 표준 섹션을 "
@@ -3655,7 +3729,7 @@ def render_markdown(report: Mapping[str, Any]) -> str:
         read_only_release.get("proposal_flow_release") or report.get("proposal_flow_release")
     ) == EXPECTED_PROPOSAL_FLOW_RELEASE
     lines = [
-        "# v4.1 Scenario Lever / v4.1.5 Proposal Flow 대표 3개 품질 평가",
+        "# v4.1 Scenario Lever / v4.1.7 Proposal Flow 대표 3개 품질 평가",
         "",
         f"- 생성 시각(UTC): {report['generated_at']}",
         f"- Proposal 품질 실행 상태: `{report.get('execution_status')}`",

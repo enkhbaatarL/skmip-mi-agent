@@ -428,8 +428,8 @@ def test_liq_llm_resolution_uses_scenario_text_and_exact_period_quote() -> None:
     decision = evaluate_liq_util_evidence(candidate, slot, context)
 
     assert decision.allowed is True
-    assert any("실제 Basecase 좌표" in note for note in decision.user_notes)
-    assert any("exact Year/Month" in note for note in decision.user_notes)
+    assert any("모델의 'Alpha LNG / Train 1'와 같은 대상" in note for note in decision.user_notes)
+    assert any("2027년 5월과 일치" in note for note in decision.user_notes)
 
 
 def test_liq_multi_slot_requires_slot_specific_period_evidence() -> None:
@@ -522,7 +522,7 @@ def test_liq_entity_resolution_note_is_preserved_for_service_user() -> None:
     }
     slot = _slot("liq", axes, slot_key="slot-1")
     slot["_user_notes"] = [
-        "근거의 한국어 설비/호기 표기를 Basecase 영문 좌표와 동일 실체로 정규화해 연결했습니다.",
+        "근거의 설비·호기 표기를 모델에 등록된 영문 명칭으로 통일해 적용했습니다.",
     ]
     adjustment = LLMValueAdjustment(
         candidate_key="liq",
@@ -546,7 +546,7 @@ def test_liq_entity_resolution_note_is_preserved_for_service_user() -> None:
 
     assert warnings == []
     assert "참고:" in sanitized[0]["parameter_selection_rationale_ko"]
-    assert "동일 실체로 정규화" in sanitized[0]["parameter_selection_rationale_ko"]
+    assert "설비·호기 표기는 모델에 등록된 명칭으로 통일했습니다" in sanitized[0]["parameter_selection_rationale_ko"]
 
 
 @pytest.mark.parametrize(

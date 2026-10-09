@@ -89,14 +89,42 @@ workbook/LUT 및 공개 API/DB schema를 그대로 유지한다. 변경 범위�
 - 불완전 응답 또는 모든 slot의 `DERIVED` no-change에는 exact slot과 routing 방향이 모두 확정된 경우만 weak
   deterministic fallback을 적용한다. PowerMix·unknown/unchanged·상충 방향은 실패를 유지한다. semantic 오류를
   고치기 위한 LLM 추가 호출은 없다.
-- slot rationale에는 variation factor와 판단 이유, fallback 여부와 불확실성을 명시한다.
+- 내부 trace에는 variation factor와 판단 이유, fallback 여부를 명시하고 공개 slot rationale에는 업무 근거와
+  불확실성만 설명한다.
 - 동일 고정 cohort의 release 재평가는 기존 Proposal을 보존한 append-only `release-replay-v1`으로 수행하며,
   새 Proposal ID만 최종 KPI에 사용한다.
 - 실행 evidence/report에는 secret을 제외한 전체 `model_parameter_*` 로컬·Neuro 선언값과 runtime effective
   snapshot, 파일 SHA와 선언 차이를 포함한다.
 
-배포 식별자는 `model_parameter_proposal_flow_release=v4.1.5`이고 catalog version은 계속 `v4.1`이다.
+### v4.1.6 사용자 rationale 표현
+
+`v4.1.6`은 v4.1.5의 후보·slot·값 계산과 안전 경계를 그대로 유지하고, 플랫폼에 저장·노출되는 rationale만
+현업 사용자 관점으로 정리한다. 내부 trace에는 evidence enum, variation policy release/mode, severity,
+variation factor, fallback 여부를 계속 남긴다.
+
+- Parameter rationale은 제안 이유, 시나리오 영향, 적용 범위·기간을 설명한다.
+- Slot rationale은 `적용 대상`, `시나리오 영향`, `조정 내용`, `산정 근거`, `계산 방법`, `주요 가정`,
+  `확인 필요`를 명시한다.
+- `candidate_key`, `slot_key`, Step, catalog/binding/routing, 정책 버전·mode, enum,
+  weak/medium/strong, trio/sibling 같은 내부 용어는 공개 문자열에 넣지 않는다.
+- 직접 전망 수치가 없는 값은 “정성 정보를 보수적으로 수치화한 초기 제안”임을 밝히고 사용자 검토를 요청한다.
+- 공개 API/DB JSON shape와 rationale field 이름은 바꾸지 않는다.
+
+배포 식별자는 `model_parameter_proposal_flow_release=v4.1.6`이고 catalog version은 계속 `v4.1`이다.
 신규 테이블·컬럼 또는 mgmt migration은 필요하지 않다.
+
+### v4.1.7 간결한 사용자 설명
+
+`v4.1.7`은 v4.1.6의 계산·저장 계약을 유지하면서 공개 rationale의 길이와 문체를 정리한다.
+
+- 모든 문장형 설명은 `~합니다/~했습니다` 존댓말로 통일한다.
+- Parameter 설명은 핵심 인과관계와 적용 범위·기간만 2~3문장으로 요약한다.
+- Slot 설명은 기존 7개 항목을 유지하되 인과관계·근거·가정을 각각 짧게 요약하고 반복 설명을 제거한다.
+- 서버 정책이 LLM 초안값을 재계산한 경우 초안의 숫자 설명은 공개하지 않고 최종 제안값과 서버 계산만 설명한다.
+- 여러 적용 위치에 반복되는 설비명·기간 보정 참고사항은 한 문장으로 합친다.
+
+현재 배포 식별자는 `model_parameter_proposal_flow_release=v4.1.7`이며 catalog version은 계속 `v4.1`이다.
+DB/API JSON shape와 mgmt migration 변경은 없다.
 
 ## 2. 확장 binding
 
