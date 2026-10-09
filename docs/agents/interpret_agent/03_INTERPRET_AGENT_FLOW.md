@@ -64,9 +64,11 @@ node 자체도 동기 함수이며 Agent 코드에서 `asyncio.to_thread()`를 �
 ```mermaid
 flowchart TD
     A[Group + optional Scenario filter] --> B[최신 proposal 조회]
-    B --> C[MI Base / Scenario Feature 정규화]
-    C --> D[JKM·TTF·HH 가격 조회]
-    D --> E[InterpretInput]
+    B --> C[proposal ID와 pinned MI Base case 검증]
+    C --> D[MI Base / Scenario Feature 정규화]
+    D --> E[JKM·TTF·HH 가격 및 run 증적 조회]
+    E --> F[월 축·기준 가격 snapshot 정합성 검증]
+    F --> G[InterpretInput]
 ```
 
 ## 2. proposal을 Feature 시계열로 바꾸는 법
@@ -83,6 +85,10 @@ repository는 다음 조건을 만족하는 row를 Scenario별로 모은다.
 
 Scenario별 `model_param_proposal_id`가 가장 큰 row 하나를 사용한다. `CONFIRMED`이고
 `confirmation_parameters`가 non-empty이면 확정값을 사용하고, 그렇지 않으면 `proposal_parameters`를 사용한다.
+
+선택한 proposal의 `model_param_proposal_id`와 `mi_base_case_id`를 입력 snapshot 증적으로 보존한다. proposal ID와
+양수 `mi_base_case_id`가 모두 있어야 하며, 한 Group 해석에 포함된 proposal은 모두 같은 MI Base case를
+가리켜야 한다. null·잘못된 ID 또는 mixed case는 fail-closed 처리한다.
 
 요청한 Scenario ID 일부가 조회되지 않아도 나머지 row로 계속 실행한다. 전체 조회 결과가 0건일 때만 실패한다.
 
@@ -113,8 +119,8 @@ proposedValue  → Scenario Feature series
 ```
 
 여러 Scenario proposal의 `basecaseValue`는 하나의 MI Base store로 병합한다. 같은 Feature·grouping·기간이
-여러 proposal에 있으면 현재 구현은 나중에 읽은 값을 덮어쓰며, proposal 간 basecase 일치 여부를 별도로
-검증하지 않는다.
+여러 proposal에 있고 값이 같으면 한 값으로 합친다. 값이 다르면 어느 proposal을 기준으로 해석할지 결정할 수
+없으므로 `DATA_RETRIEVAL_FAILED`로 중단한다.
 
 Feature `unit`은 현재 빈 문자열이고 `index`도 `None`이다. Feature의 geo label을 JKM·TTF·HH 중 하나에
 hard mapping하지 않는다.
@@ -131,8 +137,18 @@ hard mapping하지 않는다.
 
 모든 가격은 `perd_unit_spt_cd='M'`인 월간 결과만 읽고 `perd_key`를 `YYYY-MM`으로 정규화한다.
 
-MI Base는 최신 완료 `MI_BASE` case를 사용한다. Scenario 가격은 Group의 active Scenario가 가진 최신 완료
-run을 사용한다.
+MI Base는 전역 최신 case를 다시 고르지 않고 proposal에 고정된 정확한 `mi_base_case_id`의 완료
+`MI_BASE` run을 사용한다. Scenario 가격은 Group의 active Scenario가 가진 최신 완료 run을 사용하고,
+Scenario별 `run_seq`를 입력 snapshot 증적으로 보존한다.
+
+각 Scenario 가격 row의 `base_case_prc`를 함께 읽어 같은 기간의 pinned MI Base `base_case_prc`와 비교한다.
+모든 값이 허용 오차 안에서 같아야 하며, 한 Scenario 또는 MI Base에서 지수별로 서로 다른 `run_seq`가 섞이면
+실패한다. 모델 결과 table에는 proposal ID와 run을 직접 잇는 FK가 없으므로, 이 기준 가격 검증이 현재 가능한
+snapshot 일치 guard다.
+
+조회된 각 가격 series는 `YYYY-MM` 형식의 오름차순·중복 없는 연속 월이어야 한다. 지수별 MI Base 축과 해당
+Scenario 축도 완전히 같아야 한다. 화면의 실제 결과가 2026-04~2030-12라면 이 57개월을 그대로 사용하며
+첫해를 1월로 확장하지 않는다.
 
 세 지수 모두 MI Base 결과가 없으면 실패한다. 대상 Scenario별로도 세 지수 가격이 모두 없으면 실패한다. 특정
 지수 하나 또는 둘만 없는 경우는 남은 series로 계속 진행한다.
@@ -151,8 +167,8 @@ diff = scenario value - MI Base value
 Feature는 `(feature 이름, 정렬된 groupKeys)`가 같은 MI Base series와 짝을 이룬다. Scenario에만 있거나
 MI Base에만 있어 짝이 없는 series는 diff 결과에 포함하지 않는다.
 
-공통 기간이 하나도 없으면 해당 metric의 자동 요약은 `공통 구간 없음`이 된다. graph 전체를 실패시키지는
-않는다.
+Feature의 공통 기간이 하나도 없으면 해당 metric의 자동 요약은 `공통 구간 없음`이 된다. graph 전체를
+실패시키지는 않는다. 가격은 load 단계에서 Base와 Scenario의 월 축 완전 일치를 이미 검증한다.
 
 ### Feature 지표
 
@@ -271,7 +287,7 @@ Scenario별 호출이 모두 끝난 뒤 Group synthesis LLM을 한 번 호출한
 
 finalize는 LLM을 호출하거나 DB를 조회하지 않는다. 다음 값을 조립해 `PriceInterpretationResult`를 만든다.
 
-- meta: Group ID, `MI Base`, Feature 목록, 고정 지수 목록, 전체 표시 기간, 단위
+- meta: Group ID, `MI Base`, Feature 목록, 고정 지수 목록, 수급모델 가격 축의 실제 시작·종료 월, 단위
 - scenarios: Scenario별 해석
 - synthesis: Group 종합
 
@@ -321,7 +337,9 @@ callback 전송 오류는 graph 오류와 분리해 로그에 남긴다. callbac
 | --- | --- |
 | `app_identifier` | `agents.interpret_agent.aip_app_id` |
 | `agent_name` | `interpret_agent` |
+| `api_identifier` | `interpret_price` |
 | `session_id` | `scenario_group_id` 문자열 |
+| tag `interpret_agent_version` | `v4.1.7` |
 
 같은 context를 LangGraph config, runtime context, MLflow context에 사용한다. Scenario별 LLM과 Group synthesis
 LLM에도 이 context와 graph callback handler를 전달한다.

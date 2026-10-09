@@ -27,9 +27,10 @@ router = APIRouter()
         "시나리오별 '입력 차이 → 예측 가격 결과 → 도메인 해석'과 그룹 종합을 "
         "동기적으로 산출해 즉시 반환합니다(콜백 없음). "
         "입력은 DB에서 조회합니다: 제안 파라미터는 tmm_mi_model_param_proposal_m.proposal_parameters "
-        "(basecaseValue=MI Base 입력, proposedValue=시나리오 입력), 예측 가격 결과는 모델 실행 결과 "
-        "테이블(MI Base=base_case_prc, 시나리오=user_adj_prc). scenarioIds가 비어 있으면 MI Base를 "
-        "제외한 전체 시나리오를 해석합니다."
+        "(basecaseValue=MI Base 입력, proposedValue=시나리오 입력)과 pinned mi_base_case_id를 사용하고, "
+        "예측 가격 결과는 모델 실행 결과 테이블(MI Base=base_case_prc, 시나리오=user_adj_prc)의 "
+        "실제 monthly 축을 사용합니다. scenarioIds가 비어 있으면 MI Base를 제외한 전체 시나리오를 "
+        "해석합니다."
     ),
 )
 async def preview_price_interpretation(

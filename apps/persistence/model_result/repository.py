@@ -16,24 +16,23 @@ from sqlalchemy import text
 from apps.common.configs.database.sync_database.base import BaseSyncSQLRepository
 
 
-# MI Base(최신 완료 MI_BASE case)의 base_case_prc 시계열.
+# Proposal에 고정된 MI Base case의 base_case_prc 시계열.
 _MI_BASE_PRICE_SQL = text(
     """
     SELECT p.perd_key AS period_key,
-           p.base_case_prc AS value
+           p.base_case_prc AS value,
+           c.case_id AS case_id,
+           h.run_id AS run_id,
+           h.run_seq AS run_seq
     FROM tmd_mdl_scnrcasem c
     JOIN tmd_mdl_scnrcaseh h ON h.run_id = c.last_run_id
     JOIN tmd_mdl_scnrcaseprcl p ON p.run_seq = h.run_seq
-    WHERE c.case_id = (
-        SELECT MAX(mb.case_id)
-        FROM tmd_mdl_scnrcasem mb
-        JOIN tmd_mdl_scnrcaseh mh ON mh.run_id = mb.last_run_id
-        WHERE mb.exec_type_cd = 'MI_BASE'
-          AND mb.del_yn = 'N'
-          AND mb.case_stat_cd = 'COMPLETED'
-          AND mh.exec_stat_cd = 'COMPLETED'
-          AND mh.del_yn = 'N'
-    )
+    WHERE c.case_id = :mi_base_case_id
+    AND c.exec_type_cd = 'MI_BASE'
+    AND c.del_yn = 'N'
+    AND c.case_stat_cd = 'COMPLETED'
+    AND h.exec_stat_cd = 'COMPLETED'
+    AND h.del_yn = 'N'
     AND p.prc_rgn_nm = :prc_rgn_nm
     AND p.perd_unit_spt_cd = 'M'
     AND p.del_yn = 'N'
@@ -46,7 +45,11 @@ _SCENARIO_PRICE_BY_GROUP_SQL = text(
     """
     SELECT c.scnr_id AS scenario_id,
            p.perd_key AS period_key,
-           p.user_adj_prc AS value
+           p.base_case_prc AS base_value,
+           p.user_adj_prc AS value,
+           c.case_id AS case_id,
+           h.run_id AS run_id,
+           h.run_seq AS run_seq
     FROM tmd_mdl_scnrcasem c
     JOIN tmd_mdl_scnrcaseh h ON h.run_id = c.last_run_id
     JOIN tmd_mdl_scnrcaseprcl p ON p.run_seq = h.run_seq
@@ -55,6 +58,10 @@ _SCENARIO_PRICE_BY_GROUP_SQL = text(
         FROM tmm_mi_scenario_m s
         WHERE s.scenario_group_id = :scenario_group_id AND s.del_yn = 'N'
     )
+    AND c.del_yn = 'N'
+    AND c.case_stat_cd = 'COMPLETED'
+    AND h.exec_stat_cd = 'COMPLETED'
+    AND h.del_yn = 'N'
     AND h.run_seq = (
         SELECT MAX(lr.run_seq)
         FROM tmd_mdl_scnrcasem lc
@@ -70,6 +77,7 @@ _SCENARIO_PRICE_BY_GROUP_SQL = text(
     ORDER BY c.scnr_id ASC, p.perd_key ASC
     """
 )
+
 
 def _normalize_period_key(raw: object) -> str | None:
     """perd_key(정수형 YYYYMM 등)를 표시용 'YYYY-MM'으로 정규화한다."""
@@ -98,7 +106,11 @@ def _rows_to_series(rows: list[dict]) -> list[dict]:
         value = _to_float(row.get("value"))
         if period_key is None or value is None:
             continue
-        series.append({"period_key": period_key, "value": value})
+        point = {"period_key": period_key, "value": value}
+        for key in ("case_id", "run_id", "run_seq"):
+            if row.get(key) is not None:
+                point[key] = row[key]
+        series.append(point)
     return series
 
 
@@ -109,19 +121,34 @@ class ModelResultRepository(BaseSyncSQLRepository):
     처리한다. 이 repository는 조회만 담당하며 결과를 그대로 반환한다.
     """
 
-    def fetch_mi_base_prices(self, prc_rgn_nm: str) -> list[dict]:
-        rows = self.session.execute(
-            _MI_BASE_PRICE_SQL, {"prc_rgn_nm": prc_rgn_nm}
-        ).mappings().all()
+    def fetch_mi_base_prices(
+        self,
+        *,
+        mi_base_case_id: int,
+        prc_rgn_nm: str,
+    ) -> list[dict]:
+        rows = (
+            self.session.execute(
+                _MI_BASE_PRICE_SQL,
+                {
+                    "mi_base_case_id": mi_base_case_id,
+                    "prc_rgn_nm": prc_rgn_nm,
+                },
+            )
+            .mappings()
+            .all()
+        )
         return _rows_to_series([dict(row) for row in rows])
 
-    def fetch_scenario_prices(
-        self, scenario_group_id: int, prc_rgn_nm: str
-    ) -> dict[int, list[dict]]:
-        rows = self.session.execute(
-            _SCENARIO_PRICE_BY_GROUP_SQL,
-            {"scenario_group_id": scenario_group_id, "prc_rgn_nm": prc_rgn_nm},
-        ).mappings().all()
+    def fetch_scenario_prices(self, scenario_group_id: int, prc_rgn_nm: str) -> dict[int, list[dict]]:
+        rows = (
+            self.session.execute(
+                _SCENARIO_PRICE_BY_GROUP_SQL,
+                {"scenario_group_id": scenario_group_id, "prc_rgn_nm": prc_rgn_nm},
+            )
+            .mappings()
+            .all()
+        )
         return self._group_rows_by_scenario(rows)
 
     @staticmethod
@@ -132,9 +159,16 @@ class ModelResultRepository(BaseSyncSQLRepository):
             scenario_id = int(data["scenario_id"])
             period_key = _normalize_period_key(data.get("period_key"))
             value = _to_float(data.get("value"))
-            if period_key is None or value is None:
+            base_value = _to_float(data.get("base_value"))
+            if period_key is None or value is None or base_value is None:
                 continue
-            grouped.setdefault(scenario_id, []).append(
-                {"period_key": period_key, "value": value}
-            )
+            point = {
+                "period_key": period_key,
+                "base_value": base_value,
+                "value": value,
+            }
+            for key in ("case_id", "run_id", "run_seq"):
+                if data.get(key) is not None:
+                    point[key] = data[key]
+            grouped.setdefault(scenario_id, []).append(point)
         return grouped

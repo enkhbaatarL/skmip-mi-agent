@@ -163,6 +163,7 @@ class ModelParameterRepository(BaseSyncSQLRepository):
             latest[int(proposal.scenario_id)] = proposal
         return [
             {
+                "model_param_proposal_id": int(proposal.model_param_proposal_id),
                 "scenario_id": int(proposal.scenario_id),
                 "scenario_group_id": int(proposal.scenario_group_id),
                 "mi_event_id": (int(proposal.mi_event_id) if proposal.mi_event_id is not None else None),

@@ -66,6 +66,7 @@ def _proposal_model() -> SimpleNamespace:
         scenario_id=100,
         scenario_group_id=20,
         mi_event_id=None,
+        mi_base_case_id=15,
         request_usr_id=None,
         status="PROPOSED",
         callback_status="SKIPPED",
@@ -89,6 +90,8 @@ def test_repository_null_event_row_is_consumed_by_interpret_normalization() -> N
     scenario_features, base_features, target_ids = ProposalParameterService()._normalize_features(proposals)
 
     assert proposals[0]["mi_event_id"] is None
+    assert proposals[0]["model_param_proposal_id"] == 901
+    assert proposals[0]["mi_base_case_id"] == 15
     assert target_ids == ["100"]
     assert base_features[0].values == [0.02]
     assert scenario_features["100"].features[0].values == [0.018]
@@ -98,9 +101,11 @@ def test_interpret_loader_does_not_require_proposal_event_id(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     proposal = {
+        "model_param_proposal_id": 901,
         "scenario_id": 100,
         "scenario_group_id": 20,
         "mi_event_id": None,
+        "mi_base_case_id": 15,
         "status": "PROPOSED",
         "proposal_parameters": _proposal_parameters(),
     }
@@ -119,12 +124,15 @@ def test_interpret_loader_does_not_require_proposal_event_id(
     monkeypatch.setattr(
         ProposalParameterService,
         "_load_prices",
-        lambda self, session, scenario_group_id, target_ids: {},
+        lambda self, session, scenario_group_id, target_ids, *, mi_base_case_id: ({}, 501, {}),
     )
 
     result = ProposalParameterService().load_interpret_input(scenario_group_id=20)
 
     assert result.scenario_group_id == 20
+    assert result.mi_base_case_id == 15
+    assert result.mi_base_price_run_seq == 501
+    assert result.model_param_proposal_ids == {"100": 901}
     assert result.scenario_ids == ["100"]
     assert result.features == ["GDP"]
     repository.fetch_proposals_by_group.assert_called_once_with(20, None)

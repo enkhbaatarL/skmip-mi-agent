@@ -1,5 +1,7 @@
 # Interpret Agent 처음 이해하기
 
+현재 Interpret Agent 런타임·OpenAPI 버전은 `v4.1.7`이다.
+
 ## 이 Agent는 무엇을 하나요?
 
 Interpret Agent는 Scenario별 수급모델 입력과 가격 예측 결과를 `MI Base`와 비교하고, 그 차이가 어떤 시장
@@ -27,9 +29,9 @@ Agent는 수치를 그대로 나열하는 데서 끝나지 않는다. 여러 입
 ```text
 1. Scenario Group ID와 선택적인 Scenario ID를 받는다
    ↓
-2. 저장된 Model Parameter proposal에서 MI Base 입력과 Scenario 입력을 읽는다
+2. 저장된 Model Parameter proposal에서 입력과 고정된 MI Base case ID를 읽는다
    ↓
-3. 완료된 수급모델 실행 결과에서 MI Base·Scenario 가격을 읽는다
+3. 고정된 MI Base case와 완료된 Scenario run의 가격을 읽고 snapshot 정합성을 검증한다
    ↓
 4. 같은 기간끼리 맞춰 입력·가격 차이와 이상 신호를 계산한다
    ↓
@@ -59,7 +61,8 @@ Scenario만 고를 수 있다. 이 목록을 비우거나 body를 생략하면, 
 ### MI Base
 
 Scenario를 비교하는 기준 입력과 기준 가격이다. Interpret Agent는 결과를 항상 `MI Base 대비`로 설명한다.
-MI Base의 절대값만 따로 평가하는 기능은 없다.
+MI Base의 절대값만 따로 평가하는 기능은 없다. `v4.1.7`은 각 Model Parameter proposal에 저장된
+`mi_base_case_id`를 사용하며, 한 요청의 모든 proposal이 같은 case를 가리킬 때만 실행한다.
 
 ### Model Parameter proposal
 
@@ -130,8 +133,9 @@ callback을 보내지 않는다.
 ### Plain text
 
 사용자에게 보이는 해석은 Markdown이나 HTML이 아닌 일반 텍스트 계약을 따른다. 프롬프트가 일반 텍스트를
-요구하고, 응답 schema가 남아 있는 표현용 서식도 한 번 더 제거한다. 문단 구분 개행과 Group synthesis의
-`■ ` 문자는 허용된다.
+요구하고, 응답 schema가 남아 있는 표현용 서식도 한 번 더 제거한다. heading·중첩 인용·목록·표·link·강조·
+code 표식과 정상·인코딩·불완전 HTML을 정규화하며 `script`, `style` 같은 비표시 내용도 버린다. 문단 구분
+개행, `• ` 일반 텍스트 bullet과 Group synthesis의 `■ ` 문자는 허용된다.
 
 ## 사용자는 어떤 결과를 보나요?
 
@@ -153,11 +157,14 @@ preview 결과는 다음 공통 정보를 함께 제공한다.
 - 기준 ID인 `MI Base`
 - 실제 proposal에서 발견한 Feature 이름
 - 고정 가격 지수 순서 `JKM`, `TTF`, `HH`
-- 월간 Feature와 가격 자료를 합쳐 계산한 전체 표시 기간
+- 수급모델 월별 가격 결과의 실제 시작·종료 기간
 - 가격 단위 `$/MMBtu`
 
 `meta.indices`는 해석 설정의 고정 지수 목록이다. 특정 지수의 DB 시계열이 없더라도 현재 구현은 이 목록 자체를
 줄이지 않는다.
+
+`meta.periodStart`와 `meta.periodEnd`는 가격 화면과 같은 수급모델 monthly 축을 따른다. 예를 들어 모델 결과가
+2026년 4월부터 2030년 12월까지라면 각각 `2026-04`, `2030-12`이며, 첫해가 1월부터 시작한다고 보정하지 않는다.
 
 ## 두 가지 실행 방식
 
