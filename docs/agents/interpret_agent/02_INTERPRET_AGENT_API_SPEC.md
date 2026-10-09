@@ -297,11 +297,16 @@ callback 자체 전송 실패는 callback body로 다시 알릴 곳이 없다. c
 
 | 필드 | prompt 제한 |
 | --- | --- |
-| `identity` | 45자 |
-| `driverPhase` | 220자 |
-| `priceCharacter` | 220자 |
-| `summary` | 260자 |
+| `identity` | 70자 |
+| `driverPhase` | 340자 |
+| `priceCharacter` | 340자 |
+| `summary` | 420자 |
 | `overallMessage` | 600자 |
+
+Scenario 해석은 단순 수치 요약이 아니라 `핵심 market call → 입력 변화와 물리적 수급의 전이 경로 → 지수별
+상대 민감도·비동조·정상화 → 방향·수치 신뢰도 분리 → 근거 기반 모니터링과 조건부 대응` 순서의 전문 리포트
+문체를 요구한다. 근거에 없는 사건·회사·운영 사실은 추가하지 않으며, 데이터 품질 신호가 있으면 수치 신뢰도와
+활용 범위를 낮춰 설명한다.
 
 ## 4. 오류 계약
 

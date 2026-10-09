@@ -186,6 +186,47 @@ class InterpretPlainTextTest(unittest.TestCase):
         group_schema = group_synthesizer.GroupSynthesisLLMOutput.model_json_schema()
         self.assertIn("일반 텍스트", group_schema["properties"]["overall_message"]["description"])
 
+    def test_scenario_prompt_requires_professional_causal_report_with_expanded_limits(self) -> None:
+        prompt = scenario_interpreter.build_user_prompt(
+            scenario_id="315",
+            feature_metrics=[],
+            price_metrics=[],
+            data_quality=["가격 입력 재검증 필요"],
+        )
+
+        for expected in (
+            "입력 변화 → 물리적 공급·수요 변화 → 지역별 가격 반응",
+            "지수 간 상대 민감도",
+            "계절적 정점·유일한 피크라고 단정하지 않습니다",
+            "경제적 방향성의 신뢰도와 입력·가격 수치의 신뢰도를 분리",
+            "가격 입력 재검증 필요",
+            "수치 신뢰도와 활용 범위를 낮추고",
+            "모니터링 항목",
+            "헤지·조달·검증",
+            "ShippingCost()",
+        ):
+            self.assertIn(expected, prompt)
+        self.assertIn(
+            f"identity: 공백 포함 {scenario_interpreter.IDENTITY_MAX_CHARS}자 이내",
+            prompt,
+        )
+        self.assertIn(
+            f"driver_phase: 3~4문장, 공백 포함 {scenario_interpreter.DRIVER_PHASE_MAX_CHARS}자 이내",
+            prompt,
+        )
+        self.assertIn(
+            f"price_character: 3~4문장, 공백 포함 {scenario_interpreter.PRICE_CHARACTER_MAX_CHARS}자 이내",
+            prompt,
+        )
+        self.assertIn(
+            f"summary: 4~5문장, 공백 포함 {scenario_interpreter.SUMMARY_MAX_CHARS}자 이내",
+            prompt,
+        )
+        self.assertLessEqual(scenario_interpreter.IDENTITY_MAX_CHARS, 45 * 2)
+        self.assertLessEqual(scenario_interpreter.DRIVER_PHASE_MAX_CHARS, 220 * 2)
+        self.assertLessEqual(scenario_interpreter.PRICE_CHARACTER_MAX_CHARS, 220 * 2)
+        self.assertLessEqual(scenario_interpreter.SUMMARY_MAX_CHARS, 260 * 2)
+
 
 if __name__ == "__main__":
     unittest.main()

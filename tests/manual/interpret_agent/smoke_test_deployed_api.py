@@ -19,6 +19,12 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 from apps.agents.interpret_agent.constants import INTERPRET_AGENT_VERSION
+from apps.agents.interpret_agent.prompts.scenario_interpreter import (
+    DRIVER_PHASE_MAX_CHARS,
+    IDENTITY_MAX_CHARS,
+    PRICE_CHARACTER_MAX_CHARS,
+    SUMMARY_MAX_CHARS,
+)
 from apps.agents.interpret_agent.utils.plain_text import find_rich_text_markers
 
 
@@ -27,10 +33,10 @@ EXPECTED_PATHS = {
     "/scenario-groups/{scenario_group_id}/price-interpretations",
 }
 LENGTH_LIMITS = {
-    "identity": 45,
-    "driverPhase": 220,
-    "priceCharacter": 220,
-    "summary": 260,
+    "identity": IDENTITY_MAX_CHARS,
+    "driverPhase": DRIVER_PHASE_MAX_CHARS,
+    "priceCharacter": PRICE_CHARACTER_MAX_CHARS,
+    "summary": SUMMARY_MAX_CHARS,
     "overallMessage": 600,
 }
 

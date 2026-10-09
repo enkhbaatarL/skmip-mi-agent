@@ -264,7 +264,17 @@ Feature 근거는 특정 지수 bucket에 넣지 않고 flat list로 전달한�
 ### structured output
 
 각 호출은 `identity`, `driver_phase`, `price_character`, `summary`를 반환한다. 프롬프트는 MI Base 대비
-관점, 일반 텍스트, 정중한 문체, 근거 수치 보존, 글자 수를 요구한다.
+관점, 일반 텍스트, 근거 수치 보존과 함께 다음 분석 순서를 요구한다.
+
+1. `identity`: 원인과 지수별 방향을 압축한 market call
+2. `driver_phase`: 입력 변화에서 물리적 수급과 지역별 가격으로 이어지는 전이 경로
+3. `price_character`: 지수별 상대 민감도, 최대·평균 변화, 비동조와 정상화
+4. `summary`: 방향·수치 신뢰도 분리, 근거 기반 모니터링 항목, 조건부 헤지·조달·검증 제언
+
+근거에 없는 사건·회사·물량·확률은 만들지 않는다. `data_quality` 신호가 있으면 수치 신뢰도와 활용 범위를
+낮추고 재검증 대상을 summary에 명시한다. 분량 상한은 기존의 두 배를 넘지 않는 70·340·340·420자다.
+가격의 `max_pos`·`max_neg` month는 동일한 최대 편차가 여러 달 지속될 때도 대표 한 점만 담을 수 있으므로,
+별도 지속 구간 근거 없이 특정 월 집중·계절성·유일한 피크를 추론하지 않는다.
 
 Pydantic API schema로 변환할 때 Markdown·HTML 표현 문법을 제거한다. 글자 수와 문체는 validator가 아니라
 프롬프트로만 통제한다.
