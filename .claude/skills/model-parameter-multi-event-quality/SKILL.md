@@ -279,7 +279,8 @@ release acceptance까지 요청받으면 이 보고서의 mandatory `FAIL`이 0�
 - unscoped read-only discovery만 허용하고 unscoped `--execute`는 DB 접속 전에 차단한다.
 - 기존 보고서 경로는 덮어쓰지 않으며 보고서 예약 실패도 DB 접속 전에 차단한다.
 - write-producing Scenario workflow를 자동 retry하지 않는다. 내부 LLM retry는 timeout·transport·HTTP
-  408/425/429/5xx로 제한하고 semantic/schema/좌표/integrity 오류에는 적용하지 않는다.
+  408/425/429/5xx와 `EOF while parsing`으로 확인된 불완전 JSON으로 제한하고, 완결 JSON의
+  semantic/schema·좌표/integrity 오류에는 적용하지 않는다.
 - catalog checksum, Lever ID/binding, group Event membership 오류를 경고로 낮추지 않는다.
 - valid but unmapped/non-executable catalog state는 reason code와 함께 coverage 증적으로 보존한다.
 - 보고서에 비밀값, DB 자격증명, 전체 prompt 원문을 기록하지 않는다.

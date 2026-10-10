@@ -122,6 +122,102 @@ def _quality_evidence(
     )
 
 
+def _v4_routing_candidate(candidate_key: str, *, with_evidence: bool = True) -> dict[str, object]:
+    raw_candidate_key = f"raw-{candidate_key}"
+    candidate: dict[str, object] = {
+        "candidate_key": candidate_key,
+        "mapping_method": "routing",
+        "mapping_strategy": "v4",
+        "merged_candidate_keys": [raw_candidate_key],
+    }
+    if with_evidence:
+        candidate["routing_evidence"] = [
+            {
+                "candidate_key": raw_candidate_key,
+                "decision": "DIRECT",
+                "evidence_basis": "DERIVED",
+                "causal_path_ko": "독립 인과 경로",
+                "target_scope_ko": "독립 적용 대상",
+                "direction": "decrease",
+                "time_scope_ko": "2026년",
+                "confidence": "high",
+                "rationale_ko": "후보별 근거를 확인했습니다.",
+            },
+        ]
+    return candidate
+
+
+def test_v4_all_selected_routing_candidates_pass_with_independent_evidence() -> None:
+    candidates = [
+        _v4_routing_candidate("candidate-a"),
+        _v4_routing_candidate("candidate-b"),
+    ]
+    result = {
+        "parameter_adjustments": [
+            {"candidate_key": "candidate-a"},
+            {"candidate_key": "candidate-b"},
+        ],
+    }
+
+    status, messages = evaluate_proposals._review_routing_selection(  # noqa: SLF001
+        1925,
+        candidates,
+        result,
+    )
+
+    assert status == "PASS"
+    assert messages == []
+
+
+def test_v4_all_selected_routing_candidates_review_missing_independent_evidence() -> None:
+    candidates = [
+        _v4_routing_candidate("candidate-a"),
+        _v4_routing_candidate("candidate-b", with_evidence=False),
+    ]
+    result = {
+        "parameter_adjustments": [
+            {"candidate_key": "candidate-a"},
+            {"candidate_key": "candidate-b"},
+        ],
+    }
+
+    status, messages = evaluate_proposals._review_routing_selection(  # noqa: SLF001
+        1925,
+        candidates,
+        result,
+    )
+
+    assert status == "REVIEW"
+    assert messages == [
+        "v4 routing 후보가 모두 selected이지만 독립 applicability 근거가 누락되었습니다: "
+        "candidate_keys=['candidate-b']",
+    ]
+
+
+def test_legacy_all_selected_routing_candidates_still_require_review() -> None:
+    candidates = [
+        {"candidate_key": "candidate-a", "mapping_method": "routing"},
+        {"candidate_key": "candidate-b", "mapping_method": "routing"},
+    ]
+    result = {
+        "parameter_adjustments": [
+            {"candidate_key": "candidate-a"},
+            {"candidate_key": "candidate-b"},
+        ],
+    }
+
+    status, messages = evaluate_proposals._review_routing_selection(  # noqa: SLF001
+        100,
+        candidates,
+        result,
+    )
+
+    assert status == "REVIEW"
+    assert messages == [
+        "routing 후보가 모두 selected입니다. DB scenario dimension에 따른 선택/제외 사유 검토가 필요합니다.",
+    ]
+
+
 def test_parser_accepts_repeatable_scenario_ids_and_defaults_to_read_only(tmp_path: Path) -> None:
     args = runner.build_parser().parse_args(
         [

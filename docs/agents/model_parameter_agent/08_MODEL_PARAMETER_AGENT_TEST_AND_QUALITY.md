@@ -243,6 +243,9 @@ scope 또는 Group identity 불일치는 fail-closed다. 일반 `evaluate` 명�
 최종 섹션은 미제안·실패도 Group/Event, 중단 단계, reason code, 확정 가능한 Parameter별로 자동 집계하고,
 hotspot별 개선 방향과 안전 경계를 함께 렌더링한다. semantic abstention·기술 실패·capability limit을 분리하며,
 Step1.5 미결정 routing은 모든 입력 후보 Parameter의 실패로 중복 집계하지 않는다.
+v4 Step1.5에서 복수 binding이 후보별 구조화된 `routing_evidence`를 통과했다면 모두 선택된 것은
+정상 결과다. 모두 선택됐다는 사실만으로 `REVIEW`를 주지 않고, 후보별 근거가 누락된 경우만
+관측·판정 미완료로 분류한다.
 
 ```bash
 python tests/manual/model_parameter_agent/evaluate_representative_trios.py final-cohort \

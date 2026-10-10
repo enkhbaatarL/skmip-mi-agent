@@ -724,7 +724,8 @@ GDP slot 처리 예시에서 Step2는 `candidate_key + Country + Year`를 반환
 
 Step1.5·Step2·Step3의 구조화 LLM 호출은 `model_parameter_transient_retry_*` 설정으로 호출 단위 재시도를
 수행한다. 기본값은 최대 2회 시도(최초 1회 + 재시도 1회), 0.5초 exponential backoff와 최대 0.25초 jitter다.
-timeout, transport 연결 오류, HTTP 408/425/429/5xx만 재시도하며 structured schema/semantic 오류,
+timeout, transport 연결 오류, HTTP 408/425/429/5xx와 JSON parser가 `EOF while parsing`으로 확인한
+불완전 structured response만 재시도한다. 완결된 JSON의 structured schema/semantic 오류,
 exact 좌표·근거 실패, unchanged/no-change와 DB/catalog/integrity 오류는 재시도하지 않는다. 공통 connector의
 내부 retry는 0으로 두어 이 정책과 중첩되지 않게 한다. 성공 trace와 실패 context에는 attempt/retry 수, 분류 사유,
 delay를 남기되 prompt 원문은 남기지 않는다. 이는 proposal graph나 DB write 전체를 다시 실행하는 outer retry가 아니다.
@@ -823,6 +824,9 @@ python tests/manual/model_parameter_agent/run_proposal_only.py \
   in-flight proposal 또는 persistence integrity가 바뀐 `BLOCKED`는 campaign 전체를 즉시 중단한다. proposal ID 전후 snapshot과
   정확히 한 행의 delta, 완료 시각, v4 response identity, runtime Parameter 경계와 API/DB proposal payload 일치를
   검증한다. DB payload의 `lutValue` 저장은 실패로 판정한다.
+- v4 Step1.5에서 복수 routing binding이 각각의 구조화된 applicability 근거를 통과했다면
+  모두 선택된 사실 자체를 `REVIEW`로 판정하지 않는다. 후보별 `routing_evidence`가 누락되거나
+  decision·evidence basis·방향·인과 경로·대상·기간 근거가 완전하지 않을 때만 `REVIEW`로 남긴다.
 - evidence JSON에는 capability release, 실제 코드 allow-list, catalog pin, resource contract/fingerprint,
   `uncovered-only-v1`, Scenario input fingerprint, 기존 proposal 상태와 skip/hard-stop 사유를 기록한다.
 

@@ -57,7 +57,8 @@ workbook/LUT와 공개 API/DB schema를 그대로 둔다. 변경 범위는 propo
   active binding만 검토하며 다른 Lever나 legacy mapping을 scan하지 않는다.
 - Step2는 parent 전체 영향이 명시된 경우에만 child를 확장한다. 대상이 유일하고 기간만 모호하면 가장 이른 exact
   현재·미래 기간 한 건을 복구하며, 과거 월·PowerMix·LNG Plant/Train 증적 대상에는 적용하지 않는다.
-- Step2/Step3 schema·semantic·좌표 오류는 재호출하지 않는다. transient 오류만 호출 단위 retry 대상이며 Scenario
+- Step2/Step3의 완결 JSON schema·semantic·좌표 오류는 재호출하지 않는다. timeout·transport·retryable HTTP와
+  `EOF while parsing`으로 확인된 불완전 JSON만 호출 단위 retry 대상이며 Scenario
   전체 outer retry는 없다.
 - Step3은 active 16종별 variation policy를 prompt와 서버 계산에 함께 적용하고, 모든 slot의 대상·기간·근거 유형·
   인과 경로·기준값·계산·가정·불확실성을 rationale에 명시한다. 구조화 근거가 없거나 선언 방향과 실제 값 방향이
@@ -232,8 +233,9 @@ v4.1.1부터 proposal-only runner는 Scenario `FAIL`을 격리해 같은 명시 
 resource/context/catalog/input fingerprint, in-flight proposal 또는 persistence integrity 변경은 `BLOCKED`로 분류해
 campaign 전체를 즉시 중단한다. Scenario 전체 proposal/DB write의 outer retry는 없다.
 
-Step1.5·Step2·Step3 내부 LLM 호출만 timeout·transport·HTTP 408/425/429/5xx에 대해 기본 최대 2회 시도한다.
-semantic empty, schema invalid, exact 좌표 불일치, basecase 동일값은 자동 재시도하지 않는다. 이는 Parameter Agent
+Step1.5·Step2·Step3 내부 LLM 호출만 timeout·transport·HTTP 408/425/429/5xx와
+`EOF while parsing`으로 확인된 불완전 JSON에 대해 기본 최대 2회 시도한다.
+semantic empty, 완결 JSON의 schema invalid, exact 좌표 불일치, basecase 동일값은 자동 재시도하지 않는다. 이는 Parameter Agent
 운영 Flow의 validation & transient retry 개선이며, 실패한 Scenario를 다시 실행하는 보충 실행과 다르다.
 확정적 코드 수정 효과로 이미 실패한 동일 Scenario를 다시 호출하면 최초 증적·수정 항목·새 revision을 남긴
 `post-fix re-test`로 구분한다.

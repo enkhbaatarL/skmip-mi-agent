@@ -858,6 +858,34 @@ def _review_selected_parameters(
     return not unknown_selected, messages
 
 
+def _has_grounded_v4_routing_evidence(candidate: dict[str, Any]) -> bool:
+    candidate_keys = {
+        str(candidate_key)
+        for candidate_key in candidate.get("merged_candidate_keys") or [candidate.get("candidate_key")]
+        if str(candidate_key or "")
+    }
+    for evidence in candidate.get("routing_evidence") or []:
+        if not isinstance(evidence, dict):
+            continue
+        if str(evidence.get("candidate_key") or "") not in candidate_keys:
+            continue
+        decision = str(evidence.get("decision") or "")
+        evidence_basis = str(evidence.get("evidence_basis") or "")
+        valid_basis = (
+            decision == "DIRECT" and evidence_basis in {"OBSERVED", "DERIVED"}
+        ) or (
+            decision == "ASSUMPTION_ELIGIBLE" and evidence_basis == "BOUNDED_ASSUMPTION"
+        )
+        if not valid_basis or str(evidence.get("direction") or "") == "unknown":
+            continue
+        if all(
+            str(evidence.get(field) or "").strip()
+            for field in ("causal_path_ko", "target_scope_ko", "time_scope_ko", "rationale_ko")
+        ):
+            return True
+    return False
+
+
 def _review_routing_selection(
     _scenario_id: int,
     candidates: list[dict[str, Any]],
@@ -879,9 +907,22 @@ def _review_routing_selection(
     if not selected_routing_keys:
         messages.append("routing 후보 중 selected parameter가 없습니다.")
     if len(routing_candidates) > 1 and len(selected_routing_keys) == len(routing_candidates):
-        messages.append(
-            "routing 후보가 모두 selected입니다. DB scenario dimension에 따른 선택/제외 사유 검토가 필요합니다.",
-        )
+        all_v4 = all(str(candidate.get("mapping_strategy") or "").lower() == "v4" for candidate in routing_candidates)
+        if all_v4:
+            missing_evidence = sorted(
+                str(candidate.get("candidate_key") or "")
+                for candidate in routing_candidates
+                if not _has_grounded_v4_routing_evidence(candidate)
+            )
+            if missing_evidence:
+                messages.append(
+                    "v4 routing 후보가 모두 selected이지만 독립 applicability 근거가 누락되었습니다: "
+                    f"candidate_keys={missing_evidence}",
+                )
+        else:
+            messages.append(
+                "routing 후보가 모두 selected입니다. DB scenario dimension에 따른 선택/제외 사유 검토가 필요합니다.",
+            )
     return ("PASS" if not messages else "REVIEW"), messages
 
 

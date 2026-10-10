@@ -67,6 +67,9 @@ catalog의 `known_unsupported`, `unchanged`, binding 없는 `price_only`, no-bin
 
 - `mapping_method=direct`인 runtime 후보는 graph selection에서 사라지면 `FAIL`이다.
 - 여러 executable binding의 routing 후보가 선택되지 않은 것은 자동 오류가 아니라 `REVIEW`다.
+- v4 복수 routing binding이 각각의 구조화된 applicability 근거를 통과해 모두 선택된 것은 정상이다.
+  후보별 `routing_evidence`의 candidate lineage, decision/evidence basis, direction, causal path, target scope,
+  time scope가 완전하면 PASS하고 누락이 있을 때만 `REVIEW`로 남긴다.
 - `load_context + match_v4_parameter_candidates_from_rows` 결과가 독립 expected raw oracle다. context resource로 구성된 `_evaluate_scenario().rule_candidates`는 graph의 v4 raw trace이며, key와 canonical parameter/model target이 독립 oracle와 일치해야 한다.
 - raw occurrence identity는 production `v4-lever|Dimension|Lever|parameter|model file|model sheet` key다.
 - Step1.5 이후에는 parameter/model target별로 병합된 `parameter|v4|...` key를 사용한다. 단순 key 동등 비교를 하지 않고 `merged_candidate_keys`/binding lineage가 runtime-allowed raw key를 보존하는지 검증한다.

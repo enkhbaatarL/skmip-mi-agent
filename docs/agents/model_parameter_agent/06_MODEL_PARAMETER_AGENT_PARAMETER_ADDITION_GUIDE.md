@@ -395,7 +395,8 @@ applicability는 보존한다. 대표 worst-case prompt를 직렬화해 설정 b
 - 직렬화 상한: model_parameter_max_step2_prompt_bytes, model_parameter_max_step3_prompt_bytes
 - proposal Flow release: model_parameter_proposal_flow_release=v4.1.7
 - transient LLM 호출: model_parameter_transient_retry_max_attempts=2,
-  base delay 0.5초, max jitter 0.25초; semantic/좌표/DB 오류는 retry 금지
+  base delay 0.5초, max jitter 0.25초; timeout·transport·retryable HTTP와
+  `EOF while parsing`으로 확인된 불완전 JSON만 retry하고 완결 JSON의 schema·semantic/좌표/DB 오류는 retry 금지
 - 상한 초과: LLM 호출 전 actual/limit과 parameter별 크기를 포함해 실패
 
 proposal Step3의 `proposedValue`는 유한 숫자여야 한다. Confirmation은 `proposedValue` key가 필수지만 값은 `null`일 수 있고, non-null 값만 persistence 경계에서 엄격한 유한 숫자로 정규화한다. 원래 proposal과 같아야 한다는 비교는 없다. 두 경로 모두 설정 기반 소수 자릿수 round/trunc/ceil을 적용하지 않는다. Basecase/LUT 기준값의 adapter 정밀도 정책은 이와 별개로 유지하되 v4 PowerMix source fraction은 atomic sum을 보존하도록 정밀도 변환에서 제외한다. 기존 proposed precision 설정 키는 배포 설정 호환용이며 runtime 제안값을 변환하지 않는다.
