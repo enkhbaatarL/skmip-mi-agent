@@ -155,7 +155,7 @@ Lever 방향은 시장·운영 문맥이지 각 모델 입력 필드의 수학�
 cross-table active binding, checksum/read-back과 함께 검증·적용한다. checksum이 바뀌면 기존 v4 Scenario를
 새 catalog로 재해석하지 않고 신규 Scenario를 생성한다. v4.1은 master와 legacy mapping을 바꾸지 않고 기존
 v4.0 옆에 같은 Lever Full Set 21행과 conditional binding을 추가한다. versioned capability는 `extend16-v8`,
-workbook contract는 model input이 같아 `new-bc-v7`을 유지하며 local/Kubernetes config의
+workbook contract는 model input이 같아 `new-bc-v8`을 유지하며 local/Kubernetes config의
 catalog version·capability release·hash를 함께 갱신한다. public API payload와 confirmation workflow도 변경하지 않는다.
 
 ### 정답 10

@@ -8,10 +8,11 @@
 
 | 목적 | 사용할 API |
 |---|---|
+| 파일→파라미터→정식 테이블명 조회 | `GET /model-parameters/logical-table-catalog` |
 | 결과를 바로 확인 | `POST /model-parameters/scenarios/{scenario_id}/proposals/sync` |
 | 운영에서 제안 작업 접수 | `POST /model-parameters/scenarios/{scenario_id}/proposals` |
 | 사용자가 검토한 값 확정 | `POST /model-parameters/proposals/{modelParamProposalId}/confirmation` |
-| 현재 성공 HTTP 상태 | 세 API 모두 `200` |
+| 현재 성공 HTTP 상태 | 네 API 모두 `200` |
 
 경로의 두 ID는 실제 숫자로 바꾼다. 배포 환경에 따라 경로 앞에 별도 공통 prefix가 붙을 수 있다. `userId`는 선택 항목이며, 제안 API는 body 자체를 생략해도 된다.
 
@@ -35,6 +36,56 @@ proposal/confirmation의 파라미터 JSON shape는 유지한다. proposal 결�
 | v4 Lever-native 멀티 이벤트 | 여러 event를 묶는 authoritative 그룹 ID | `null` |
 
 v3/v4에서도 endpoint와 기존 optional `eventId` 필드는 유지된다. 개별 source event와 v4 Lever provenance·미지원 진단은 public proposal 응답에 필드를 추가해 노출하지 않고 내부 state, trace, validation warning과 prompt grounding에만 사용한다.
+
+## 0. 정식 논리 테이블 카탈로그 API
+
+```http
+GET /model-parameters/logical-table-catalog
+```
+
+검토 완료된 `20261010-v3-final` 카탈로그를 화면용
+`modelFile → parameterName → tables[].displayName` 구조로 반환한다. 전체 정본은 정식 논리 테이블
+199행(고유 193개)이며, 그중 `modelParamId`로 master에 연결된 22개 파라미터·54개 관계를 이 계층에 담는다.
+연결되지 않은 정식 테이블 145행도 체크인 canonical에는 보존하지만 파라미터 계층에는 임의 배치하지 않는다.
+
+```json
+{
+  "status": "success",
+  "message": "model parameter logical table catalog retrieved",
+  "data": {
+    "catalogVersion": "20261010-v3-final",
+    "hierarchy": ["modelFile", "parameterName", "tables.displayName"],
+    "entryCount": 199,
+    "logicalTableCount": 193,
+    "mappedEntryCount": 54,
+    "parameterCount": 22,
+    "files": [{
+      "modelFile": "Demand",
+      "parameters": [{
+        "modelParamId": 7,
+        "parameterCode": "PowerMix",
+        "parameterName": "PowerMix",
+        "useYn": "Y",
+        "tables": [{
+          "logicalTableCode": "annual_power_mix_adjustment",
+          "displayName": "Annual Power Mix Adjustment",
+          "modelSheet": "PowerMixAdjustment",
+          "modelTableKey": "table1",
+          "tableRole": "WRITE_TARGET",
+          "displayOrder": 1,
+          "uiVisible": true
+        }]
+      }]
+    }]
+  }
+}
+```
+
+화면 라벨은 반드시 `displayName`을 사용한다. `modelTableKey`의 `table1`, `table2` 등은 기존
+proposal/confirmation 저장·검증용 machine key이며, 화면에 표시할 정식 명칭이 아니다. 하나의 machine key가
+여러 정식 논리 테이블을 가리킬 수 있다. 예를 들어 `CanalToll`의 Suez/Panama 두 표는 모두 `table4`를
+사용한다. 기본 화면은 `useYn=Y`인 파라미터와 `uiVisible=true`인 표를 사용하고, 비활성·숨김 관계는 관리·검증
+용도로만 유지한다. `modelParamId`가 유일한 master join key이며 `parameterCode` 문자열로 join하지 않는다.
 
 ## 1. 동기 제안 API
 

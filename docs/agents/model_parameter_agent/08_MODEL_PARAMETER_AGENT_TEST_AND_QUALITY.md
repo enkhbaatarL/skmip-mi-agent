@@ -93,8 +93,9 @@ DB/canonical만 맞거나 LUT 테스트만 통과하거나 전체 파라미터 �
 
 ### Slot, 값과 저장
 
-- 정확히 v4 전략인 요청은 `new-bc-v7` versioned contract를 사용하고, 변경되지 않은 workbook artifact는
-  `resources/basecase_v4/new-bc-v1/`의 digest를 재사용한다. v1/v3는
+- 정확히 v4 전략인 요청은 `new-bc-v8` versioned contract를 사용한다. 활성 MI Base workbook은 Object Storage에서
+  받은 실제 digest를 요청별로 고정하고, startup/configured-fallback 검증은
+  `resources/basecase_v4/new-bc-v2/` packaged baseline digest를 사용한다. v1/v3는
   기존 `resources/basecase/`를 계속 사용해야 한다. startup은 contract schema/path와 Workbook path/digest만 검증하며
   최초 exact v4 materialization이 sheet/header/range/count를 검증하고 process cache해야 한다.
 - proposal-only frozen-context guard는 persisted Scenario/Event/Group context 변경을 계속 차단하되, graph가

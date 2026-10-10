@@ -136,7 +136,7 @@ data:
           object_storage_path: fundamental_model_artifact/input_template/복호화_(Base) Trade Model_Input.xlsm
 
       workbook_contract:
-        path: contracts/model-parameter-workbook-contract-v7.json
+        path: contracts/model-parameter-workbook-contract-v8.json
 
       proposal_capabilities:
         path: contracts/model-parameter-proposal-capabilities-v4.json

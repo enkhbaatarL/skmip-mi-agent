@@ -12,6 +12,9 @@
 | proposal capability | `extend16-v7` 당시 기준 | `extend16-v8` |
 | workbook contract | `new-bc-v7` | `new-bc-v7`, 변경 없음 |
 
+> 위 workbook 행은 v4.1 conditional-binding 출시 당시의 비교 기록이다. 현재 runtime은 후속
+> `new-bc-v8`을 사용하며, `new-bc-v2` packaged baseline digest와 ID 13·14의 matrix 종료 열 `G:CL`을 함께 고정했다. 활성 MI Base는 Object Storage workbook의 실제 digest에 같은 구조 계약을 적용한다.
+
 v4.1은 기존 v4.0 행을 수정하지 않고 `tmm_mi_model_impact_lever_m`에 같은 21개 Lever의 새 version 행을
 side-by-side로 추가한다. 신규 Scenario Group만 설정의 `scenario_group_v4_impact_catalog_version=v4.1`을 사용한다.
 기존 Group은 저장된 v4.0 version/checksum으로 계속 hydrate한다. migration 정본은 sibling mgmt의 0036이다.

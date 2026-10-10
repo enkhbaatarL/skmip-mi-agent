@@ -19,7 +19,7 @@ from apps.common.values.error_codes import ErrorCode
 
 PACKAGE_DIR = Path(__file__).resolve().parents[1]
 PACKAGE_RESOURCE_DIR = PACKAGE_DIR / "resources"
-DEFAULT_WORKBOOK_CONTRACT_PATH = PACKAGE_RESOURCE_DIR / "contracts" / "model-parameter-workbook-contract-v7.json"
+DEFAULT_WORKBOOK_CONTRACT_PATH = PACKAGE_RESOURCE_DIR / "contracts" / "model-parameter-workbook-contract-v8.json"
 V1_PARAMETER_NAMES = frozenset({"GDP", "PMI", "PowerMix", "Temperature", "LiqUtilAdjustment"})
 EXTEND10_PARAMETER_NAMES = frozenset(
     {
@@ -408,7 +408,7 @@ class WorkbookParameterContract(_FrozenModel):
 
 
 class ModelParameterWorkbookContract(_FrozenModel):
-    schema_version: Literal[1, 2, 3, 4, 5, 6, 7]
+    schema_version: Literal[1, 2, 3, 4, 5, 6, 7, 8]
     release_id: Literal[
         "new-bc-v1",
         "new-bc-v2",
@@ -417,6 +417,7 @@ class ModelParameterWorkbookContract(_FrozenModel):
         "new-bc-v5",
         "new-bc-v6",
         "new-bc-v7",
+        "new-bc-v8",
     ]
     capability: Literal["read_only_proposal"]
     api_version: Literal["v4"]
@@ -457,6 +458,7 @@ class ModelParameterWorkbookContract(_FrozenModel):
             "new-bc-v5": 5,
             "new-bc-v6": 6,
             "new-bc-v7": 7,
+            "new-bc-v8": 8,
         }[self.release_id]
         if self.schema_version != expected_schema_version:
             raise ValueError("workbook contract schema version and release ID disagree")
@@ -486,7 +488,7 @@ class ModelParameterWorkbookContract(_FrozenModel):
             raise ValueError(
                 "LiqUtilAdjustment must retain its evidence gate, zero minimum, and unbounded maximum",
             )
-        if self.release_id in {"new-bc-v4", "new-bc-v5", "new-bc-v6", "new-bc-v7"}:
+        if self.release_id in {"new-bc-v4", "new-bc-v5", "new-bc-v6", "new-bc-v7", "new-bc-v8"}:
             if (
                 nameplate_transform is not None
                 or liq_util.write_target.row_policy != "existing_exact"
@@ -502,7 +504,15 @@ class ModelParameterWorkbookContract(_FrozenModel):
             or nameplate_transform.factor != 12.0
         ):
             raise ValueError("legacy workbook contracts must retain the MTPM-to-MTPA transform")
-        if self.release_id in {"new-bc-v2", "new-bc-v3", "new-bc-v4", "new-bc-v5", "new-bc-v6", "new-bc-v7"}:
+        if self.release_id in {
+            "new-bc-v2",
+            "new-bc-v3",
+            "new-bc-v4",
+            "new-bc-v5",
+            "new-bc-v6",
+            "new-bc-v7",
+            "new-bc-v8",
+        }:
             pipeline = self.parameters["PipelineAdjustment"]
             supply = self.parameters["SupplyDisruption"]
             if (
@@ -519,7 +529,14 @@ class ModelParameterWorkbookContract(_FrozenModel):
                 or supply.constraints.minimum != 0.0
             ):
                 raise ValueError("SupplyDisruption must retain the approved production-seasonality workbook contract")
-            if self.release_id in {"new-bc-v3", "new-bc-v4", "new-bc-v5", "new-bc-v6", "new-bc-v7"} and (
+            if self.release_id in {
+                "new-bc-v3",
+                "new-bc-v4",
+                "new-bc-v5",
+                "new-bc-v6",
+                "new-bc-v7",
+                "new-bc-v8",
+            } and (
                 pipeline.reference_source.reference_unit != pipeline.write_target.write_unit
                 or supply.reference_source.reference_unit != supply.write_target.write_unit
                 or pipeline.write_target.value_field != "User adjusted capacity (Mt/y)"
@@ -527,7 +544,7 @@ class ModelParameterWorkbookContract(_FrozenModel):
                 or supply.write_target.value_field != "Volumes (Mt)"
             ):
                 raise ValueError("new-bc-v3+ must use the final workbook target sheets and Mt units")
-        if self.release_id in {"new-bc-v5", "new-bc-v6", "new-bc-v7"}:
+        if self.release_id in {"new-bc-v5", "new-bc-v6", "new-bc-v7", "new-bc-v8"}:
             population = self.parameters["Population"]
             hurricane = self.parameters["HurricaneIntensity"]
             liq_prod = self.parameters["LiqProdAdjustment"]
@@ -547,15 +564,14 @@ class ModelParameterWorkbookContract(_FrozenModel):
                 raise ValueError("HurricaneIntensity must retain its GoM evidence gate and integer 0..4 range")
             if (
                 liq_prod.reference_source.parser != "liquefaction_production_rows"
-                or liq_prod.reference_source.key_axes
-                != ("Country", "LNG Plant", "LNG Plant Train", "Year", "Month")
+                or liq_prod.reference_source.key_axes != ("Country", "LNG Plant", "LNG Plant Train", "Year", "Month")
                 or liq_prod.constraints.minimum != 0.0
                 or not liq_prod.constraints.direct_evidence_required
                 or liq_prod.write_target.row_policy != "existing_exact"
                 or liq_prod.write_target.metadata_authority != "write_target"
             ):
                 raise ValueError("LiqProdAdjustment must retain its exact-slot production override contract")
-        if self.release_id in {"new-bc-v6", "new-bc-v7"}:
+        if self.release_id in {"new-bc-v6", "new-bc-v7", "new-bc-v8"}:
             basecase_only = {
                 "User-Adjusted Gas Demand": ("exact_rows", ("Country", "Year", "Month", "Demand Sub-Sector")),
                 "RegasAdjustment": (
@@ -591,7 +607,7 @@ class ModelParameterWorkbookContract(_FrozenModel):
                     raise ValueError(
                         f"{parameter_name} must retain its non-negative existing-exact Basecase-only contract",
                     )
-        if self.release_id == "new-bc-v7":
+        if self.release_id in {"new-bc-v7", "new-bc-v8"}:
             new_parameters = {
                 "RegionalProductionAdjustment": (
                     "regional_production_annual",
@@ -614,7 +630,20 @@ class ModelParameterWorkbookContract(_FrozenModel):
                     or not parameter.constraints.direct_evidence_required
                 ):
                     raise ValueError(
-                        f"{parameter_name} must retain its non-negative direct-evidence v7 contract",
+                        f"{parameter_name} must retain its non-negative direct-evidence v7+ contract",
+                    )
+        if self.release_id == "new-bc-v8":
+            for parameter_name in ("LiqProdAdjustment", "LiqUtilAdjustment"):
+                columns = self.parameters[parameter_name].write_target.columns
+                if (
+                    columns.get("value_start") != "G"
+                    or columns.get("value_end") != "CL"
+                    or columns.get("year_row") != "7"
+                    or columns.get("month_row") != "8"
+                    or columns.get("period_row") != "9"
+                ):
+                    raise ValueError(
+                        f"{parameter_name} must retain the reviewed G:CL 84-month write-target boundary",
                     )
         return self
 
@@ -655,7 +684,7 @@ def load_workbook_contract(
 ) -> ModelParameterWorkbookContract:
     try:
         document = json.loads(path.read_text(encoding="utf-8"))
-        if document.get("schema_version") in {2, 3, 4, 5, 6, 7} and "extends" in document:
+        if document.get("schema_version") in {2, 3, 4, 5, 6, 7, 8} and "extends" in document:
             extends = _extends_basename(document.pop("extends"))
             base_path = path.parent / extends
             base_document = load_workbook_contract(base_path).model_dump(mode="json")

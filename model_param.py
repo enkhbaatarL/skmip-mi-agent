@@ -1,3 +1,5 @@
+# Copyright (c) 2026 SK Innovation E&S.
+
 from __future__ import annotations
 
 import asyncio
@@ -28,7 +30,7 @@ from apps.common.openapi.local_docs import register_local_openapi_docs
 INGRESS_PREFIX = os.getenv("OPENAPI_PREFIX", "").rstrip("/")
 
 
-def _lut_catalog_debug_json(lut_catalog: Any) -> str:
+def _lut_catalog_debug_json(lut_catalog: Any) -> str:  # noqa: ANN401
     if lut_catalog is None:
         payload = {
             "version": None,
@@ -38,9 +40,7 @@ def _lut_catalog_debug_json(lut_catalog: Any) -> str:
     else:
         counts_by_parameter: dict[str, int] = {}
         for record in lut_catalog.records:
-            counts_by_parameter[record.parameter_name] = (
-                counts_by_parameter.get(record.parameter_name, 0) + 1
-            )
+            counts_by_parameter[record.parameter_name] = counts_by_parameter.get(record.parameter_name, 0) + 1
         payload = {
             "version": lut_catalog.version,
             "policy": {
@@ -58,7 +58,7 @@ def _lut_catalog_debug_json(lut_catalog: Any) -> str:
     )
 
 
-def _basecase_cache_debug_json(summary: Any) -> str:
+def _basecase_cache_debug_json(summary: Any) -> str:  # noqa: ANN401
     payload = {
         "parameter_count": summary.parameter_count,
         "profile_count": summary.profile_count,
@@ -92,20 +92,19 @@ def _is_sensitive_config_key(key: str) -> bool:
     return "token" in normalized_key and not normalized_key.endswith("token_url")
 
 
-def _redact_config_value(value: Any, *, key: str = "") -> Any:
+def _redact_config_value(value: Any, *, key: str = "") -> Any:  # noqa: ANN401
     if _is_sensitive_config_key(key):
         return "**********"
     if isinstance(value, dict):
         return {
-            str(item_key): _redact_config_value(item_value, key=str(item_key))
-            for item_key, item_value in value.items()
+            str(item_key): _redact_config_value(item_value, key=str(item_key)) for item_key, item_value in value.items()
         }
     if isinstance(value, list):
         return [_redact_config_value(item) for item in value]
     return value
 
 
-def _config_debug_json(cfg: Any, *, source_path: Path) -> str:
+def _config_debug_json(cfg: Any, *, source_path: Path) -> str:  # noqa: ANN401
     payload = {
         "source_path": str(source_path),
         "settings": _redact_config_value(cfg.model_dump(mode="json")),
@@ -122,6 +121,9 @@ def _config_debug_json(cfg: Any, *, source_path: Path) -> str:
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     from apps.agents.model_parameter_agent.utils.basecase import (
         preload_basecase_runtime_cache,
+    )
+    from apps.agents.model_parameter_agent.utils.logical_table_catalog import (
+        load_logical_table_catalog,
     )
     from apps.agents.model_parameter_agent.utils.lut import (
         ReferenceLoadPolicy,
@@ -149,6 +151,14 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     )
     setup_mlflow_tracing(cfg, agent_name=AGENT_NAME)
 
+    logical_table_catalog = load_logical_table_catalog()
+    logger.info(
+        "Model Parameter logical-table catalog validated | version={} entries={} mapped_parameters={}",
+        logical_table_catalog.catalog_version,
+        logical_table_catalog.expected_counts.entry_count,
+        logical_table_catalog.expected_counts.mapped_parameter_count,
+    )
+
     logger.info("Validating ORM models against the database schema")
     await asyncio.to_thread(
         validate_schema,
@@ -160,9 +170,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     lut_policy = ReferenceLoadPolicy(
         start_year=cfg.model_parameter_lut_horizon_start_year,
         end_year=cfg.model_parameter_lut_horizon_end_year,
-        value_max_decimal_places=(
-            cfg.model_parameter_basecase_value_max_decimal_places
-        ),
+        value_max_decimal_places=(cfg.model_parameter_basecase_value_max_decimal_places),
         value_precision_mode=cfg.model_parameter_basecase_value_precision_mode,
     )
     resource_manifest = load_model_parameter_resource_manifest(

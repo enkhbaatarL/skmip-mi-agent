@@ -119,10 +119,10 @@ def test_integrated_manifest_declares_expected_resources() -> None:
         get_settings().model_parameter_resources,
         source_path=CONFIG_FILE_PATH,
     )
-    assert integrated.schema_version == 7
-    assert integrated.workbook_contract.release_id == "new-bc-v7"
+    assert integrated.schema_version == 8
+    assert integrated.workbook_contract.release_id == "new-bc-v8"
     assert integrated.workbook_contract.public_api_unchanged is True
-    assert integrated.workbook_contract_path.name == "model-parameter-workbook-contract-v7.json"
+    assert integrated.workbook_contract_path.name == "model-parameter-workbook-contract-v8.json"
     assert len(integrated.workbook_contract_schema_hash) == 64
     assert integrated.proposal_capability_contract.release_id == "extend16-v8"
     assert {item.model_param_id for item in integrated.proposal_capability_contract.parameters} == {

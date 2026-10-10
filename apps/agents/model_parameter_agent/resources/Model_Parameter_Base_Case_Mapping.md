@@ -1,6 +1,6 @@
 # Model Parameter Base Case Mapping
 
-> 현재 runtime 계약은 proposal capability `extend16-v8`, workbook contract `new-bc-v7`, 신규 Scenario
+> 현재 runtime 계약은 proposal capability `extend16-v8`, workbook contract `new-bc-v8`, 신규 Scenario
 > Group catalog `v4.1`(checksum `7f4ef0b7…4d69`)을 따른다. 이 문서의 역사 표를 DB 적용 입력으로 사용하지 않는다.
 
 ## 기준과 범위
@@ -21,17 +21,24 @@
 - proposal scope: v1/v3는 `GDP`, `PMI`, `PowerMix`, `Temperature`, `LiqUtilAdjustment` 5종; v4 extend16은 LUT-backed 10종과 Basecase-only 6종을 DB ID/name/target capability로 허용
 - 기존 v1/v3 mapping rollout의 수정 대상: `tmm_mi_model_param_dimension_map`만; master, Impact Lever, Scenario/proposal, DB schema는 변경하지 않음
 - 공개 proposal/confirmation API와 payload: 변경 없음
-- `new-bc-v7`는 최종 workbook의 대상 시트·헤더·단위를 고정하고 v4.1 DB master·Lever metadata와 정합화함
+- `new-bc-v8`는 최종 workbook의 대상 시트·헤더·단위를 고정하고 v4.1 DB master·Lever metadata와 정합화함
+- ID 13·14 matrix target은 7/8/9행의 Year/Month/Period와 `G:CL` 84개월
+  (2025-01~2031-12)만 사용하며, DB master도 mgmt v0044에서 종료 열 `CL`로 정합화함
 - LiqUtilAdjustment는 `existing_exact` 행 정책을 사용해 최종 시트에 없는 LUT 시설명을 제외하고, Plant/Train/Lifecycle/Nameplate/Period를 최종 대상 행의 표기로 반환함
 - impact catalog version: 신규 그룹 `v4.1`; 기존 그룹은 저장된 pin 유지
 
-## v4 `new-bc-v7` read-only proposal overlay
+## v4 `new-bc-v8` read-only proposal overlay
 
 이 overlay는 정확히 `api_version=v4`, `generation_strategy=multi_event_model_lever_dimensions`인 신규
 proposal에만 적용한다. `read_only`는 Workbook/reference capability이며 기존 proposal persistence를
 비활성화한다는 뜻이 아니다. 계약은
-`resources/contracts/model-parameter-workbook-contract-v7.json`이며, workbook artifact는 digest가 변하지 않아
-`resources/basecase_v4/new-bc-v1/`을 재사용한다. 기존 `resources/basecase/`와 v1/v3 parser는 유지한다.
+`resources/contracts/model-parameter-workbook-contract-v8.json`이며, 검증용 packaged baseline/fallback artifact는
+`resources/basecase_v4/new-bc-v2/`에 고정한다. 정상 운영 요청은 활성 MI Base에 연결된 세 workbook을
+Object Storage에서 내려받아 같은 v8 구조 계약과 실제 다운로드 hash로 검증한다. v8은 v7의 17종 계약을 유지하면서
+`LiqProdAdjustment`와 `LiqUtilAdjustment` write target의 종료 열을 `DA`에서 `CL`로 바로잡고,
+세 workbook에 추가된 `SUMMARY`/`플랫폼 입력 안내` 시트를 화면 표 정의의 검증 근거로 사용한다.
+Agent가 읽는 17종 source·target record와 값은 `new-bc-v1` 대비 동일하다.
+기존 `resources/basecase/`와 v1/v3 parser는 유지한다.
 
 | Parameter | authoritative source | exact key·변환 | 2026~2030 records |
 |---|---|---|---:|
@@ -64,7 +71,7 @@ LiqUtilAdjustment는 하나의 Lever provenance 안에 exact Plant와 exact Trai
 Step2 판단용 applicability에서만 생략한다.
 
 활성 Basecase-only 6종은 등록 LUT가 없어 검증된 workbook slot만 사용한다. 아래 master 표는 0032 역사
-canonical을 설명한다. `new-bc-v7`는
+canonical을 설명한다. `new-bc-v8`는
 최종 workbook target과 단위를 검증하며 공개 API/persistence shape, legacy mapping, workbook writer·Formula/Query
 recalc·model engine은 변경하지 않는다.
 
@@ -148,8 +155,8 @@ recalc·model engine은 변경하지 않는다.
 | 10  | fixed_columns       | 6      | 12         | B:Year,C:Country,D:Drive Train,F:% New Car Sales                                                        | —          | —        | —         | —          | —           | —         | stop_when_all_key_columns_empty |
 | 11  | fixed_columns       | 6      | 12         | J:Year,K:Country,M:Population (Thousands)                                                               | —          | —        | —         | —          | —           | —         | stop_when_all_key_columns_empty |
 | 12  | fixed_columns       | 7      | 13         | B:Year,C:Month,D:Hurricane intensity                                                                    | —          | —        | —         | —          | —           | —         | stop_when_all_key_columns_empty |
-| 13  | matrix_time_columns | 10     | 11         | B:Country,C:LNG Plant,D:LNG Plant Train,E:Life Cycle Category,F:Nameplate Capacity (MTPA)               | —          | 7        | 8         | 9          | G           | DA        | stop_when_all_key_columns_empty |
-| 14  | matrix_time_columns | 10     | 11         | B:Country,C:LNG Plant,D:LNG Plant Train,E:Life Cycle Category,F:Nameplate Capacity (MTPA)               | —          | 7        | 8         | 9          | G           | DA        | stop_when_all_key_columns_empty |
+| 13  | matrix_time_columns | 10     | 11         | B:Country,C:LNG Plant,D:LNG Plant Train,E:Life Cycle Category,F:Nameplate Capacity (MTPA)               | —          | 7        | 8         | 9          | G           | CL        | stop_when_all_key_columns_empty |
+| 14  | matrix_time_columns | 10     | 11         | B:Country,C:LNG Plant,D:LNG Plant Train,E:Life Cycle Category,F:Nameplate Capacity (MTPA)               | —          | 7        | 8         | 9          | G           | CL        | stop_when_all_key_columns_empty |
 | 15  | fixed_columns       | 7      | 13         | B:Year,C:Month,D:Pipeline name,E:From country,F:To country,H:User adjusted capacity (Mt/y)                | —          | —        | —         | —          | —           | —         | stop_when_all_key_columns_empty |
 | 16  | matrix_time_columns | 10     | 11         | B:Continent,C:Region,D:Country,E:Regasification plant,F:Life Cycle Category,G:Nameplate capacity (MTPA) | —          | 9        | 10        | —          | H           | DK        | stop_when_all_key_columns_empty |
 | 17  | fixed_columns       | 7      | 8          | I:Year,J:Month,K:Country,M:Volumes (Mt)                                                                 | —          | —        | —         | —          | —           | —         | stop_when_all_key_columns_empty |
@@ -298,7 +305,8 @@ legacy direct/routing mapping은 모두 활성·미삭제 master만 참조해야
 
 아래 DB 명령은 기존 mapping rollout 절차다. 역사적 runtime allow-list-only v0.2.4에서는 실행하지 않았으며,
 당시 DB·canonical·config·workbook은 repository diff와 read-only fingerprint로 불변을 확인했다. 현재
-`new-bc-v7`는 v4.1에서도 변경되지 않은 master·model input과 final workbook target·unit metadata를 정합화한다.
+`new-bc-v8`와 mgmt v0044는 ID 13·14의 master 종료 열을 `CL`로 갱신해 final workbook
+target·unit metadata와 정합화한다. model input 값과 나머지 master·mapping·Lever 데이터는 변경하지 않는다.
 
 1. `poetry run python scripts/model_parameter/apply_model_parameter_v1_v3_mapping.py`로 dry-run한다. live v4 master·Lever canonical을 선검증하고 mapping만 DML한 뒤 129행·35/6/55/33, exact 후보 10개와 전체 불변식을 검증하고 rollback한다.
 2. 승인된 DB에는 mgmt 0032 migration을 적용한다. 적용 후 master 21행·활성 14개와 새 catalog checksum을 확인한다.
