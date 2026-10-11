@@ -120,12 +120,14 @@ flowchart LR
 prepare transaction은 다음을 함께 처리한다.
 
 1. `miEventIds` 1~5개와 Event 존재 여부를 확인한다.
-2. Event 원본 row를 정렬된 ID 순으로 잠그고 같은 Event 조합을 재검사한다.
+2. Event 원본 row를 정렬된 ID 순으로 잠그고 활성 Event 존재 여부를 재확인한다.
 3. 빈 Scenario Group, Event 관계, queued create operation, `accepted` event를 저장한다.
 4. lifespan task runner에 operation producer를 등록한다.
 
-요청 순서는 Event 관계의 `display_order`와 graph 입력에 보존한다. 중복 점유용 `event_set_hash`는 정렬된
-Event ID 집합과 api version으로 계산한다.
+요청 순서는 Event 관계의 `display_order`와 graph 입력에 보존한다. `event_set_hash`는 정렬된 Event ID 목록의
+버전이 지정된 표현(`v1:[...]`)을 해시한 조합 식별 정보이며 생성 차단에 사용하지 않는다. 엔진 버전은 별도
+`api_version`에 저장한다. 동일 Event 조합의 기존 그룹에 `queued|running` 작업이 있어도 요청마다 새 그룹과
+operation을 생성한다. Event row 잠금은 접수 transaction 동안만 유지하며 긴 생성 작업 동안 유지하지 않는다.
 
 ### v4 graph
 
