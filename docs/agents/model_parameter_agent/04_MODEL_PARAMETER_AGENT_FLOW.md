@@ -765,7 +765,9 @@ Parameter 방향이 하나로 일치할 때만 non-strict mode에서 `weak` dete
 unchanged/unknown, 방향 상충, 안전한 Lever→Parameter 부호 규칙이 없는 경우는 추정하지 않는다. 공개 API와 DB JSON
 shape는 유지한다.
 
-로컬 `envs/config.yaml`과 내부 Neuro 배포 ConfigMap은 다음 값을 동일하게 유지한다.
+로컬 `envs/config.yaml`과 내부 Neuro의 외부 관리 Model Parameter 설정은 다음 값을 동일하게 유지한다.
+검토용 사본을 `devops/k8s/model-parameter-configmap.yaml`에 둘 수 있지만 이 파일은 민감한 배포값을 포함할
+수 있어 Git에 커밋하지 않는다. 공용 `devops/k8s/configmap.yaml`은 전용 Neuro 설정의 source of truth가 아니다.
 
 | 설정 | v4.1.7 기본값 | 의미 |
 | --- | --- | --- |

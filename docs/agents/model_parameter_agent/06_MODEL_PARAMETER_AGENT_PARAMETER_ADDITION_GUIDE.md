@@ -249,7 +249,9 @@ workbook은 다음 명령으로 v4 canonical·config·archive와 보호 대상 l
 adapter, manifest, config/ConfigMap, canonical/workbook/docs/tests를 함께 갱신한다. staging 원본은 사용자가
 별도로 요청하지 않는 한 이동·삭제·덮어쓰기하지 않는다.
 
-envs/config.yaml과 devops/k8s/configmap.yaml을 같이 수정한다.
+`envs/config.yaml`과 외부에서 관리하는 Neuro Model Parameter 설정을 같이 수정한다. 검토용 Neuro 사본을
+`devops/k8s/model-parameter-configmap.yaml`에 둘 수 있지만 Git에는 커밋하지 않는다. 공용
+`devops/k8s/configmap.yaml`은 전용 설정의 source of truth가 아니다.
 
 - 활성 parameter: enabled=true, adapter, files, required_columns, key_axes, 필요 시 metadata_axes
 - 보류 parameter: enabled=false로 다운로드·구조 검증만 수행

@@ -343,7 +343,8 @@ skmip-mi-agent/
 │       └── mi_base/                       # 외부 MI Base·연결 파일 read-only 조회
 ├── docs/agents/model_parameter_agent/      # 공식 Agent 문서
 ├── envs/config.yaml                       # 로컬 실행·resource 설정
-├── devops/k8s/configmap.yaml              # 배포 환경 설정
+├── devops/k8s/model-parameter-configmap.yaml # 로컬 검토용 Neuro 설정(Git 제외)
+├── devops/k8s/configmap.yaml              # 여러 Agent가 공유하는 Kubernetes 예시
 └── tests/
     ├── automated/test_model_parameter_*.py
     ├── manual/model_parameter_agent/

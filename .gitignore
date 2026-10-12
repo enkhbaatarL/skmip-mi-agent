@@ -61,6 +61,7 @@ logs/
 .env.*
 !.env.example
 .vscode/settings.json
+devops/k8s/model-parameter-configmap.yaml
 
 # =========================
 # Local database / temp files

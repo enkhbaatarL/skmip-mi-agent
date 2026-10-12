@@ -137,7 +137,10 @@ Object Storage를 사용할 수 없는 환경에서 운영자 또는 승인된 �
 Basecase를 사용할 수 있다. 이 모드는 client 초기화·metadata head처럼 **현재 remote identity를 하나도 확정하지
 못한 가용성 실패**에만 적용한다. SCNRCASE 3종 구성이 잘못됐거나, 현재 remote metadata를 확인한 뒤 download,
 hash 또는 workbook contract 검증이 실패한 경우에는 configured fallback으로 바꾸지 않고 fail-closed한다.
-기본값은 `verified_cache`이며 configured fallback은 실행 증적에 정책과 `source=configured_fallback`을 남긴다.
+공통 `Settings`와 로컬·Neuro 설정은 기본적으로 `verified_cache`를 사용한다. 이 cache는 현재 PK의
+case/run/linked-file identity와 workbook hash가 모두 같은 경우에만 허용되며, 다른 MI Base나 등록
+Basecase로 전환하는 fallback이 아니다. configured fallback은 명시적으로 설정한 환경에서만 실행 증적에
+정책과 `source=configured_fallback`을 남긴다.
 
 활성 Base가 없을 때는 `model_parameter_mi_base_fallback.no_active_case_mode=fail`이 기본이다.
 운영자가 이를 `configured_fallback`으로 명시한 환경에서만 기존 등록 resource를 사용한다. 접수 시 선택한
@@ -172,15 +175,22 @@ record에는 선택된 workbook root와 dynamic contract를 명시적으로 전�
 | config.yaml > model_parameter_mi_base_fallback | 활성 Base 부재 시 fail/configured fallback, 활성 Base Object Storage 장애 시 fail/verified-cache/명시적 configured fallback 경계 |
 | 공통 설정 | 2026~2030 horizon, Basecase/LUT 기준값 숫자 정밀도(v4 PowerMix raw fraction 제외), 파라미터별/요청 전체 slot 상한, Step2·Step3 byte 상한 |
 
-envs/config.yaml과 devops/k8s/configmap.yaml의 model_parameter_resources 및 관련 limit은 동일해야 한다.
-`model_parameter_resource_storage`는 두 설정에 같은 field set을 유지하고 bucket·region·timeout·cache·retry
-계약을 맞춘다. endpoint와 credential 값은 로컬 MinIO와 Kubernetes Secret 주입 차이로 환경별로
-다를 수 있다. MI Base는 같은 Object Storage credential을 사용하고 fallback 정책만 별도 설정으로 둔다.
+`envs/config.yaml`과 외부에서 관리하는 Neuro Model Parameter 설정의 `model_parameter_resources` 및 관련
+limit은 동일해야 한다. 로컬 검토용 Neuro 사본은 `devops/k8s/model-parameter-configmap.yaml`에 둘 수 있지만
+Git에서 제외하며, 자동화가 그 파일의 존재를 요구해서는 안 된다. 공용 `devops/k8s/configmap.yaml`은 여러
+Agent용 예시이므로 이 전용 설정을 맞추기 위해 수정하지 않는다. `model_parameter_resource_storage`는 두
+설정에 같은 field set을 유지하고 bucket·region·timeout·cache·retry 계약을 맞춘다. endpoint·region·credential
+값은 각 배포 환경에서 승인된 값을 그대로 사용하고 코드 기본값을 근거로 임의 변경하지 않는다. MI Base는
+같은 Object Storage credential을 사용하고 fallback 정책만 별도 설정으로 둔다.
 resource schema v8의 semantic hash에는 workbook contract hash와 packaged baseline 고정 digest가 포함된다. Workbook reference
 cache는 contract hash와 실제 파일 signature를 포함해 다른 release를 재사용하지 않는다. 기존 LUT adapter
 schema `model-parameter-lut-adapters-v3`과 Impact Lever hydrated catalog checksum은 각각 별도 authority다.
 
-기존 `model_parameter_proposed_value_max_decimal_places`와 `model_parameter_proposed_value_precision_mode` 설정 키는 배포 설정 호환을 위해 남아 있지만 신규 proposal과 confirmation의 `proposedValue`에는 적용하지 않는다. proposal Step3 값은 유한 숫자여야 한다. Confirmation은 `proposedValue` key를 요구하지만 값은 `null`일 수 있고, non-null 값만 persistence 경계에서 엄격한 유한 숫자로 정규화한다. 두 경로 모두 설정 기반 소수 자릿수 round/trunc/ceil을 하지 않는다.
+기존 `model_parameter_proposed_value_max_decimal_places`와 `model_parameter_proposed_value_precision_mode`는 과거
+설정 입력을 깨지 않기 위한 호환 필드이므로 로컬·Neuro 설정에 그대로 선언한다. 다만 신규 proposal과
+confirmation의 `proposedValue`에는 적용하지 않는다. proposal Step3 값은 유한 숫자여야 한다. Confirmation은
+`proposedValue` key를 요구하지만 값은 `null`일 수 있고, non-null 값만 persistence 경계에서 엄격한 유한
+숫자로 정규화한다. 두 경로 모두 설정 기반 소수 자릿수 round/trunc/ceil을 하지 않는다.
 
 ## 3. LUT-backed 활성 10개
 
