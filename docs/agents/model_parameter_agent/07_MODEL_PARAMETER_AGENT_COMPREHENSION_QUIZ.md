@@ -120,7 +120,10 @@ v1/v3는 raw 10개 중 5개만 허용한다.
 
 ### 정답 4
 
-**1번, 2번, 3번, 4번.** checksum/code/ID/primary/source-event 무결성은 strict validation이다. `unchanged`는 오류가 아니라 supporting context이며, unchanged-only라서 변화 후보가 0개가 되면 그때 요청을 `INVALID_REQUEST`로 끝낸다.
+**1번, 2번, 3번, 4번.** checksum/code/ID/primary/source-event 무결성은 strict validation이다.
+`unchanged`는 오류가 아니라 supporting context이며, unchanged-only라서 변화 후보가 0개가 되면
+`ABSTAINED_NO_CHANGE`로 정상 미제안 이력을 저장한다. 비동기 요청은 기존 `PROCESSING` 행을
+`ABSTAINED`로 전환하고, 동기 요청도 빈 `PROPOSED` 대신 `ABSTAINED` 행과 결과를 반환한다.
 
 ### 정답 5
 
@@ -160,7 +163,13 @@ catalog version·capability release·hash를 함께 갱신한다. public API pay
 
 ### 정답 10
 
-raw active/executable candidate라도 allow-list 밖이면 `active-but-blocked`로 제외하며 LLM이나 proposal 저장으로 진행하지 않는다. 이 필터 뒤 허용 candidate가 0개면 `INVALID_REQUEST`로 종료하고 proposal row를 저장하지 않는다. Lever provenance와 `PROPOSAL_SCOPE_EXCLUDED` 같은 제외 reason code는 public proposal/confirmation 또는 저장 JSON shape에 추가하지 않고 내부 non-input state, trace와 validation warning에 남긴다. public 실패 detail은 경로에 따라 일반화된 메시지만 반환할 수 있다. Confirmation은 원래 proposal과 항목·값을 비교하지 않아 수정·추가·삭제와 구조상 유효한 custom parameter를 허용한다. 각 value에는 `proposedValue` key가 필요하지만 값은 `null`일 수 있고, non-null 값만 persistence에서 유한 숫자로 검증한다.
+raw active/executable candidate라도 allow-list 밖이면 `active-but-blocked`로 제외하며 LLM이나 제안값 생성으로
+진행하지 않는다. 이 필터 뒤 허용 candidate가 0개면 `ABSTAINED_OUT_OF_PROPOSAL_SCOPE`로 정상 미제안 이력을
+저장한다. Lever provenance와 `PROPOSAL_SCOPE_EXCLUDED` 같은 내부 제외 reason code는 public
+proposal/confirmation JSON shape에 새 필드로 추가하지 않고 non-input state, trace와 validation warning에 남긴다.
+callback과 결과 행에는 내부 제외 코드 대신 공개 `ABSTAINED_*` 코드와 사용자 문구를 기록한다. Confirmation은
+원래 proposal과 항목·값을 비교하지 않아 수정·추가·삭제와 구조상 유효한 custom parameter를 허용한다. 각 value에는
+`proposedValue` key가 필요하지만 값은 `null`일 수 있고, non-null 값만 persistence에서 유한 숫자로 검증한다.
 
 ## 4. 점수 해석
 

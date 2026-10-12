@@ -725,7 +725,8 @@ GDP slot 처리 예시에서 Step2는 `candidate_key + Country + Year`를 반환
 Step1.5·Step2·Step3의 구조화 LLM 호출은 `model_parameter_transient_retry_*` 설정으로 호출 단위 재시도를
 수행한다. 기본값은 최대 2회 시도(최초 1회 + 재시도 1회), 0.5초 exponential backoff와 최대 0.25초 jitter다.
 timeout, transport 연결 오류, HTTP 408/425/429/5xx와 JSON parser가 `EOF while parsing`으로 확인한
-불완전 structured response만 재시도한다. 완결된 JSON의 structured schema/semantic 오류,
+불완전 structured response만 재시도한다. 마지막 경우의 내부 retry 분류값은 `LLM_INCOMPLETE_JSON`이다.
+완결된 JSON의 structured schema/semantic 오류,
 exact 좌표·근거 실패, unchanged/no-change와 DB/catalog/integrity 오류는 재시도하지 않는다. 공통 connector의
 내부 retry는 0으로 두어 이 정책과 중첩되지 않게 한다. 성공 trace와 실패 context에는 attempt/retry 수, 분류 사유,
 delay를 남기되 prompt 원문은 남기지 않는다. 이는 proposal graph나 DB write 전체를 다시 실행하는 outer retry가 아니다.

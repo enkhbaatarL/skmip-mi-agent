@@ -263,7 +263,9 @@ stateDiagram-v2
 `ABSTAINED`와 `FAILED`는 모두 `proposal_parameters=[]`을 저장한다. `ABSTAINED`는 기존 `error_code`에
 `ABSTAINED_*` 사유 코드를, `error_message`에 사용자 표시용 두 줄 안내를 저장한다. `FAILED`는 기존
 `ErrorCode` 이름과 실패 안내를 저장한다. 즉 플랫폼 B.E는 `status`로 보류/실패를 먼저 구분하고,
-`error_code`로 세부 원인을 판별하면 된다. `ABSTAINED`는 확정 대상이 아니며 후속 모델 실행 입력에서도 제외한다.
+`error_code`로 세부 원인을 판별하면 된다. 전체 공개 보류·실패 코드와 내부 진단 코드의 구분은
+[API 오류 코드 표](02_MODEL_PARAMETER_AGENT_API_SPEC.md#4-오류를-받았을-때-확인할-것)를 따른다.
+`ABSTAINED`는 확정 대상이 아니며 후속 모델 실행 입력에서도 제외한다.
 
 운영 DB의 `status` CHECK 제약에도 `ABSTAINED`를 추가해야 한다. 이 DDL 마이그레이션의 source of truth는
 형제 저장소 `skmip-mi-agent-mgmt`이며, Agent 배포보다 먼저 적용한다. 허용 상태는
