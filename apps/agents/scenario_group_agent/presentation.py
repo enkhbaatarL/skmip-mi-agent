@@ -910,6 +910,12 @@ def _v3_event_markdown(events: list[dict[str, Any]], diagnostics: dict[str, Any]
     return "\n".join(lines).rstrip() + "\n"
 
 
+def _exclusion_label(exclusion: dict[str, Any]) -> str:
+    if _field(exclusion, "reason_type") == "catalog_condition_unmet":
+        return "분석 제외(Catalog 조건 미충족)"
+    return "분석 제외"
+
+
 def _v4_event_markdown(events: list[dict[str, Any]], diagnostics: dict[str, Any]) -> str:
     facts = _field(diagnostics, "event_facts", default=[]) or []
     exclusions = _field(diagnostics, "event_exclusions", default=[]) or []
@@ -942,10 +948,10 @@ def _v4_event_markdown(events: list[dict[str, Any]], diagnostics: dict[str, Any]
             for item in sorted(event_facts, key=lambda value: str(_field(value, "fact_id") or "")):
                 lines.append(f"- {_escape(_field(item, 'observed_basis') or '')}")
             for item in event_exclusions:
-                lines.append(f"- 분석 제외: {_escape(_field(item, 'reason') or '')}")
+                lines.append(f"- {_exclusion_label(item)}: {_escape(_field(item, 'reason') or '')}")
         else:
             for item in event_exclusions:
-                lines.append(f"- 분석 제외: {_escape(_field(item, 'reason') or '')}")
+                lines.append(f"- {_exclusion_label(item)}: {_escape(_field(item, 'reason') or '')}")
             if not event_exclusions:
                 lines.append("- 저장된 사실 없음")
         lines.extend(["", "#### LNG·JKM 영향 경로"])

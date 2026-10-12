@@ -130,6 +130,7 @@ async def _analyze_event_with_retries(
     trace_context: TraceContext | None,
     selected_event_count: int = 1,
     open_question_budget: int | None = None,
+    parameter_axes: dict[str, str] | None = None,
 ) -> _EventAnalysisOutcome:
     event_id = int(event.mi_event_id)
     event_payload = event.model_dump()
@@ -151,6 +152,7 @@ async def _analyze_event_with_retries(
                             selected_event_count=selected_event_count,
                             open_question_budget=open_question_budget,
                             validation_feedback=feedback,
+                            parameter_axes=parameter_axes,
                         ),
                         trace_context=trace_context,
                         stage=f"event_impact_analysis:{event_id}",
@@ -217,6 +219,7 @@ class AnalyzeEventImpactsNode(BaseNode):
                     selected_event_count=len(state.events),
                     open_question_budget=question_budget,
                     trace_context=trace_context,
+                    parameter_axes=state.impact_parameter_axes,
                 )
                 for event, question_budget in zip(state.events, question_budgets, strict=True)
             ],
