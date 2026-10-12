@@ -202,7 +202,7 @@ Interpret Agent는 별도 설정 loader를 만들지 않고 공통 `Settings`를
 | --- | --- | --- |
 | `apps/common/configs/config.py` | YAML·환경변수를 읽는 schema, 기본값, 타입·범위 검증 | Agent 이미지에 포함되며 Neuro에서도 반드시 사용된다 |
 | `envs/config.yaml` | 로컬 실행 설정이자 `Dockerfile_interpret`가 이미지의 `/workdir/config.yaml`로 복사하는 기본 설정 | 외부 ConfigMap mount가 없을 때의 image fallback이다 |
-| `devops/k8s/interpret-configmap.yaml` | Neuro에 전달할 Interpret 전용 ConfigMap의 로컬 검토 사본 | 민감한 배포값을 포함할 수 있어 Git에서 제외하며, mount되면 `/workdir/config.yaml`을 대체한다 |
+| Neuro ConfigMap·Secret(저장소 외부 관리) | Interpret 전용 runtime 설정과 credential | Neuro 관리 화면에서 직접 관리하며, 저장소나 로컬 작업 사본을 source of truth로 두지 않는다 |
 | `devops/k8s/configmap.yaml` | 여러 Agent가 공유하는 일반 Kubernetes 예시 | Interpret 전용 Neuro 설정의 source of truth가 아니며 전용 설정 정리를 위해 수정하지 않는다 |
 
 `APP_CONFIG`는 실제 읽을 YAML 경로를 정한다. 현재 Interpret 이미지와 Kubernetes 예시는
@@ -278,7 +278,9 @@ flow가 VDB를 호출하지 않더라도 공통 `Settings`의 필수 호환 필�
 8. `apps/persistence/model_parameter/repository.py`: proposal 조회
 9. `apps/persistence/model_result/repository.py`: 모델 결과 가격 read-only SQL
 10. `apps/common/configs/config.py`: 공통 설정 schema·기본값·`APP_CONFIG` loader
-11. `devops/k8s/interpret-configmap.yaml`: Git에서 제외된 Neuro 설정 검토 사본
+
+Neuro runtime 설정은 저장소 파일이 아니라 Neuro 관리 화면에서 확인한다. 검토 목적으로 설정을 임시
+반출하더라도 저장소 안에 보관하지 않고 검토 직후 삭제한다.
 
 코드를 변경하기 전에는 [AGENTS.md](../../../AGENTS.md)와
 [Python conventions](../../../.claude/rules/python-conventions.md)를 함께 확인한다.

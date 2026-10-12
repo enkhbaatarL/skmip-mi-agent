@@ -363,9 +363,9 @@ LLM에도 이 context와 graph callback handler를 전달한다.
 app lifespan은 logging, Interpret Agent MLflow profile, ORM/DB schema validation, callback OAuth2 token
 pre-fetch를 수행한다. token pre-fetch가 실패해도 startup은 계속한다.
 
-Neuro의 외부 관리 설정은 `APP_CONFIG`가 가리키는 `/workdir/config.yaml`로 mount한다. 로컬 검토 사본
-`devops/k8s/interpret-configmap.yaml`은 Git에서 제외하며, 공용 `devops/k8s/configmap.yaml`을 Interpret 전용
-값으로 덮어쓰지 않는다.
+Neuro의 외부 관리 설정은 `APP_CONFIG`가 가리키는 `/workdir/config.yaml`로 mount한다. Interpret 전용
+ConfigMap·Secret은 Neuro 관리 화면을 source of truth로 삼고 저장소나 로컬 작업 사본으로 보관하지 않는다.
+공용 `devops/k8s/configmap.yaml`도 Interpret 전용 값으로 덮어쓰지 않는다.
 
 ## 실패와 복구 경계
 

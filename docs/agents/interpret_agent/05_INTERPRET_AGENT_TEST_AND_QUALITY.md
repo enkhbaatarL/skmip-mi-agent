@@ -75,11 +75,12 @@ METADATA_DB_PORT=3306 pytest tests/automated/test_interpret_tracing.py
 
 ## Interpret 전용 Neuro 설정 검토
 
-로컬 검토 사본은 `devops/k8s/interpret-configmap.yaml`이다. 실제 접속 정보와 credential을 포함할 수 있으므로
-Git에 커밋하지 않으며, 일반 CI도 이 파일의 존재에 의존하지 않는다. Neuro 반영 전에는 다음을 별도로 확인한다.
+Interpret 전용 ConfigMap·Secret은 Neuro 관리 화면에서 직접 관리하며 저장소나 로컬 작업 사본으로 보관하지
+않는다. 일반 CI도 외부 Neuro 설정의 존재에 의존하지 않는다. 검토를 위해 설정을 임시 반출해야 한다면 저장소
+밖의 보호된 임시 위치에서 확인하고 검토 직후 삭제한다. Neuro 반영 전에는 다음을 별도로 확인한다.
 
-1. ConfigMap 바깥 YAML과 `data.config.yaml` 안쪽 YAML이 모두 parse되는가.
-2. 안쪽 최상위 key가 모두 `apps/common/configs/config.py`의 `Settings` field인가.
+1. `APP_CONFIG`가 실제 mount 경로를 가리키고, mount된 설정 YAML이 parse되는가.
+2. 설정 YAML의 최상위 key가 모두 `apps/common/configs/config.py`의 `Settings` field인가.
 3. DB·model·callback secret 환경변수를 주입했을 때 `Settings` 생성이 성공하는가.
 4. `agents.interpret_agent`의 experiment, AIP app ID, tracing 활성화가 의도한 값인가.
 5. `callback_price_interpretations_path`가 backend 계약과 같고 `skip_callback` 실효값이 명확한가.
