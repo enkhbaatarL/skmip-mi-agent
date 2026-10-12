@@ -245,7 +245,13 @@ LLM 호출 설정은 다음과 같다.
 - `max_retries`는 명시하지 않아 공통 connector 기본값 2 사용
 - `llm_stream_enabled` 설정 전달
 - `llm_reasoning_effort` 설정 전달
+- `llm_structured_output_strict`에 따라 SDK Pydantic parsing 또는 기존 response format 사용
+- `llm_timeout_sec`, `http_connect_timeout`, `http_verify`, `http2`, connection limit 적용
+- `llm_concurrency`와 `http_max_concurrency` 공통 semaphore 적용
 - 실행 전체의 `TraceContext` 전달
+
+공통 `Settings`에 `llm_max_retries`가 존재하지만 현재 이 flow의 structured-output 호출에는 전달되지 않는다.
+따라서 해당 YAML 값을 바꿔도 Interpret retry 횟수는 바뀌지 않고 위 connector 기본값 2가 적용된다.
 
 ### LLM에 전달하는 근거
 
@@ -356,6 +362,10 @@ LLM에도 이 context와 graph callback handler를 전달한다.
 
 app lifespan은 logging, Interpret Agent MLflow profile, ORM/DB schema validation, callback OAuth2 token
 pre-fetch를 수행한다. token pre-fetch가 실패해도 startup은 계속한다.
+
+Neuro의 외부 관리 설정은 `APP_CONFIG`가 가리키는 `/workdir/config.yaml`로 mount한다. 로컬 검토 사본
+`devops/k8s/interpret-configmap.yaml`은 Git에서 제외하며, 공용 `devops/k8s/configmap.yaml`을 Interpret 전용
+값으로 덮어쓰지 않는다.
 
 ## 실패와 복구 경계
 

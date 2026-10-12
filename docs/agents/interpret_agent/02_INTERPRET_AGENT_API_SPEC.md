@@ -225,6 +225,12 @@ callback_base_url
 
 이 callback 수신 path는 Interpret Agent가 제공하는 endpoint가 아니라 외부 backend 계약이다.
 
+Interpret 전용 설정에서 callback 관련 필수 항목은 OAuth2 3종,
+`callback_base_url`, `callback_price_interpretations_path`, `skip_callback`이다.
+`callback_create_scenarios_path`, `callback_validate_scenarios_path`,
+`callback_create_signposts_path`, `callback_model_parameter_proposals_path`는 다른 Agent용이며 Interpret flow는 읽지
+않는다.
+
 공통 설정 `skip_callback=true`이면 callback connector는 HTTP 요청을 보내지 않고 skip 로그만 남긴다. 이 경우도
 Interpret Agent에는 결과를 대신 보관하거나 나중에 전송하는 row가 없다.
 

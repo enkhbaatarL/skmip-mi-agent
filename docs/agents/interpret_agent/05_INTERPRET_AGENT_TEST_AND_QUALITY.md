@@ -73,6 +73,22 @@ METADATA_DB_PORT=3306 pytest tests/automated/test_interpret_tracing.py
 `envs/config.yaml`의 `${METADATA_DB_PORT}` placeholder가 shell에서 이미 치환되는 환경이면 기존 값을 사용해도
 된다. 위 3306은 DB를 호출하지 않는 이 단위 test 묶음의 Settings parsing을 위한 기본값이다.
 
+## Interpret 전용 Neuro 설정 검토
+
+로컬 검토 사본은 `devops/k8s/interpret-configmap.yaml`이다. 실제 접속 정보와 credential을 포함할 수 있으므로
+Git에 커밋하지 않으며, 일반 CI도 이 파일의 존재에 의존하지 않는다. Neuro 반영 전에는 다음을 별도로 확인한다.
+
+1. ConfigMap 바깥 YAML과 `data.config.yaml` 안쪽 YAML이 모두 parse되는가.
+2. 안쪽 최상위 key가 모두 `apps/common/configs/config.py`의 `Settings` field인가.
+3. DB·model·callback secret 환경변수를 주입했을 때 `Settings` 생성이 성공하는가.
+4. `agents.interpret_agent`의 experiment, AIP app ID, tracing 활성화가 의도한 값인가.
+5. `callback_price_interpretations_path`가 backend 계약과 같고 `skip_callback` 실효값이 명확한가.
+6. MCP/RDB search, Scenario Group admin, `model_parameter_*`, 다른 callback path와 다른 Agent profile이 없는가.
+
+`envs/config.yaml`과 Neuro 값은 환경 목적이 달라 endpoint, stream mode, strict structured output, MLflow
+experiment·접속 주소가 다를 수 있다. 차이를 무조건 덮어쓰지 말고 승인된 Neuro 값을 유지하며, code가 읽는
+key와 타입 및 의도한 실효값만 대조한다.
+
 ## 자동 테스트가 확인하는 것
 
 ### `test_interpret_callback_contract.py`
