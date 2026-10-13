@@ -19,6 +19,7 @@ from apps.agents.scenario_group_agent.persistence.model_impact_lever_service imp
 from apps.common.exceptions.custom import MIBaseError
 from apps.persistence.model_impact_lever.repository import ModelImpactLeverRepository
 from apps.persistence.model_impact_lever.service import (
+    ModelImpactLeverService as SharedModelImpactLeverService,
     _hydrate_catalog,
     resolve_binding_support,
 )
@@ -196,3 +197,30 @@ def test_catalog_hydration_rejects_mixed_active_versions() -> None:
         _hydrate_catalog(repository, catalog_version="v4")
 
     assert "does not match the requested version" in caught.value.error_message
+
+
+def test_catalog_checksum_ignores_parameter_semantic_axes() -> None:
+    repository = _repository_from_v4_canonical()
+    definitions = repository.fetch_parameter_definitions_by_names([])
+    repository.fetch_parameter_definitions_by_names = lambda _names: [
+        {**definition, "semantic_axes": "slot=B:Year(YYYY, 2026~2030)"} for definition in definitions
+    ]
+
+    _catalog, _version, checksum = _hydrate_catalog(repository, catalog_version="v4")
+
+    # Stored Scenario Groups pin this checksum; slot metadata for prompts must not change it.
+    assert checksum == EXPECTED_0030_CHECKSUM
+
+
+def test_load_parameter_semantic_axes_maps_bound_parameters() -> None:
+    catalog, _version, _checksum = _hydrate_catalog(_repository_from_v4_canonical(), catalog_version="v4")
+    rows = [
+        {"canonical_parameter_name": "ShippingCost", "use_yn": "Y", "semantic_axes": "slot=B:Year(YYYY, 2026~2030)"},
+        {"canonical_parameter_name": "CDD", "use_yn": "N", "semantic_axes": None},
+    ]
+    with patch.object(ModelImpactLeverRepository, "fetch_parameter_definitions_by_names", return_value=rows) as fetch:
+        axes = SharedModelImpactLeverService(session=MagicMock()).load_parameter_semantic_axes(catalog)
+
+    requested = set(fetch.call_args.args[0])
+    assert {"ShippingCost", "HurricaneIntensity", "CDD"} <= requested
+    assert axes == {"ShippingCost": "slot=B:Year(YYYY, 2026~2030)", "CDD": ""}

@@ -1,0 +1,72 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: event-generate-agent-config
+data:
+  config.yaml: |
+    # Metadata database
+    METADATA_DB_TYPE: mysql
+    # 접속 정보는 Neuro Secret(event-generate-agent-env) 환경변수로 주입한다.
+
+    DB_CONNECTION_TIMEOUT_SECONDS: 10
+    READ_TIMEOUT_SECONDS: 30
+    IS_DB_ECHO_LOG: false
+    DB_POOL_SIZE: 5
+    DB_POOL_OVERFLOW: 10
+    DB_POOL_TIMEOUT_SECONDS: 30
+    POOL_RECYCLE_SECONDS: 1800
+    POOL_PRE_PING: true
+    IS_DB_EXPIRE_ON_COMMIT: false
+
+    # AI platform and models
+    ai_platform_host_url: https://devadxp.adotbiz.ai
+    api_key: ${MODEL_API_KEY}
+    model_endpoint: https://devadxp.adotbiz.ai/api/v1/gateway
+    model_api_key: ${MODEL_API_KEY}
+    model_api_deployment_name: "skmidev-gpt-5.5-20260424"
+    lightly_thinking_model_api_deployment_name: "skmidev-gpt-5.5-20260424"
+    deeply_thinking_model_api_deployment_name: "skmidev-gpt-5.5-20260424"
+    llm_timeout_sec: 310
+    llm_max_retries: 1
+    llm_concurrency: 10
+    llm_stream_enabled: false
+    llm_reasoning_effort: default
+    llm_structured_output_strict: true
+
+    # Web search (웹 검색 분기)
+    # 인증 키는 Secret 의 WEB_SEARCH_API_KEY 환경변수로 주입한다(환경변수가 YAML 보다 우선).
+    # 반복 검색 횟수·reasoning effort 는 flow 에서 호출 단위로 덮어쓴다(event_generate_agent/constants.py).
+    web_search_provider: responses
+    web_search_base_url: https://sk-mi-common-dev-oai-usea02-01.openai.azure.com/openai/v1
+    web_search_model: "skmidev-gpt-5.5-20260424"
+    web_search_context_size: medium
+    web_search_max_results: 10
+    web_search_score_threshold: 0.0
+    web_search_reasoning_effort: medium
+    web_search_tool_choice: required
+    web_search_timeout_sec: 310
+    web_search_max_retries: 2
+
+    # MI MCP server (기존 이벤트 검색 분기)
+    mi_mcp_base_url: http://40.82.137.178:14180/mcp
+    mi_mcp_timeout_sec: 60
+
+    # HTTP client
+    http_timeout: 60
+    http_connect_timeout: 10
+    http_verify: true
+    http2: true
+    http_max_connection: 100
+    http_max_keepalive: 20
+    http_max_concurrency: 20
+
+    # Event Generate Agent profile
+    agents:
+      event_generate_agent:
+        mlflow_experiment_name: event_generate_agent
+        aip_app_id: event_generate_agent
+        mlflow_tracing_enabled: true
+
+    # MLflow
+    mlflow_tracking_uri: "http://mlflow.mi-mlflow.svc.cluster.local:5000"
+    mlflow_langchain_run_tracer_inline: false

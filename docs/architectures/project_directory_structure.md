@@ -14,6 +14,7 @@ skmip-mi-agent/
 ├── main.py
 ├── model_param.py
 ├── interpret.py
+├── event_generate.py
 ├── apps/
 │   ├── agents/
 │   ├── common/
@@ -102,8 +103,16 @@ router / flow / node
 
 ## 현재 Agent 진입점
 
-| Agent | FastAPI 진입점 | 공식 문서 |
-| --- | --- | --- |
-| Scenario Group Agent | `main.py` | [`docs/agents/scenario_group_agent/`](../agents/scenario_group_agent/01_SCENARIO_GROUP_AGENT_OVERVIEW.md) |
-| Model Parameter Agent | `model_param.py` | [`docs/agents/model_parameter_agent/`](../agents/model_parameter_agent/01_MODEL_PARAMETER_AGENT_OVERVIEW.md) |
-| Interpret Agent | `interpret.py` | [`docs/agents/interpret_agent/`](../agents/interpret_agent/01_INTERPRET_AGENT_OVERVIEW.md) |
+Agent는 진입점별로 별도 이미지·배포 단위로 운영한다. Agent 전용 Dockerfile은 진입점 파일을 이미지의
+`main.py`로 복사하므로 컨테이너 실행 명령은 모두 `gunicorn main:app`이다.
+
+| Agent | FastAPI 진입점 | 외부 빌드 Dockerfile | 공식 문서 |
+| --- | --- | --- | --- |
+| Scenario Group Agent | `main.py` | `Dockerfile` (내부: `Dockerfile.internal`) | [`docs/agents/scenario_group_agent/`](../agents/scenario_group_agent/01_SCENARIO_GROUP_AGENT_OVERVIEW.md) |
+| Model Parameter Agent | `model_param.py` | `Dockerfile.model_param` | [`docs/agents/model_parameter_agent/`](../agents/model_parameter_agent/01_MODEL_PARAMETER_AGENT_OVERVIEW.md) |
+| Interpret Agent | `interpret.py` | `Dockerfile_interpret` | [`docs/agents/interpret_agent/`](../agents/interpret_agent/01_INTERPRET_AGENT_OVERVIEW.md) |
+| Event Generate Agent | `event_generate.py` | `Dockerfile_event_generate` (내부: `Dockerfile_event_generate.internal`) | [`docs/agents/event_generate_agent/`](../agents/event_generate_agent/01_EVENT_GENERATE_AGENT_ONBOARDING.md) |
+
+- 외부 빌드 Dockerfile은 공개 base image와 PyPI를, 내부(`*.internal`) Dockerfile은 내부 base image와 Nexus PyPI를 사용한다.
+- Event Generate Agent endpoint: `POST /events/generations` → `flows/generate_from_query`
+- `devops/k8s/`의 매니페스트는 참고용 예시다. SKPC dev/prod의 Deployment·Service·ConfigMap·Secret은 AMDP에서 관리한다.
