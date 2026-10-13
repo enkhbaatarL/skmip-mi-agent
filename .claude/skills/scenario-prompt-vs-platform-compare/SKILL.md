@@ -104,7 +104,7 @@ description: N개의 MI 이벤트 Markdown 파일로 플랫폼 v4 시나리오 �
    (DB 읽기만 함: L2 유형 조회)
 2. 같은 제목의 이벤트가 이미 있는지 SELECT로 확인한다. 이미 있으면 재사용할지 물어본다.
 3. 사용자에게 보여줄 것: 대상 DB(host:port/db), 이벤트별 L2·occurred_at, 값 매핑 규칙과 가정
-   (event_title = one_line_summary = H1, occurred_at 추론 근거, 스냅샷 미생성 → live 이벤트 사용).
+   (one_line_summary = H1, occurred_at 추론 근거, 스냅샷 미생성 → live 이벤트 사용).
 4. 승인 후 직접 실행하거나(`--execute`) 사용자가 실행한다. 새 `mi_event_id` 목록을 확보한다.
 
 ### 2단계. 플랫폼 생성 API 호출 (N회)
@@ -281,7 +281,7 @@ description: N개의 MI 이벤트 Markdown 파일로 플랫폼 v4 시나리오 �
 
 ```sql
 -- 이번 비교로 만든 이벤트
-SELECT mi_event_id, event_title FROM tmm_mi_mievent_m WHERE crt_usr_logn_id = '<tag>';
+SELECT mi_event_id, one_line_summary FROM tmm_mi_mievent_m WHERE crt_usr_logn_id = '<tag>';
 -- soft delete 예시 (사용자 승인 후)
 UPDATE tmm_mi_mievent_m SET del_yn = 'Y' WHERE crt_usr_logn_id = '<tag>';
 ```

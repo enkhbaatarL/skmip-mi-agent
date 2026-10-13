@@ -118,7 +118,7 @@ def main() -> int:
     if event_ids:
         # Source events (live rows) so structural_checks.py can compare selected Facts with key bullets offline.
         dump_json(out / "events.json", query(
-            "SELECT mi_event_id, event_title, one_line_summary, key_bullets_json, occurred_at FROM tmm_mi_mievent_m "
+            "SELECT mi_event_id, one_line_summary, key_bullets_json, occurred_at FROM tmm_mi_mievent_m "
             f"WHERE mi_event_id IN ({','.join(str(i) for i in event_ids)})"
         ))
     dump_json(out / "operations.json",

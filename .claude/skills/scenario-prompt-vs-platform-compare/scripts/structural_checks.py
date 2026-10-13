@@ -37,7 +37,7 @@ def load(run: Path, name: str) -> Any:
 def load_events(run: Path, event_ids: list[int]) -> dict[int, dict[str, Any]]:
     cached = load(run, "events.json")
     rows = cached or query(
-        "SELECT mi_event_id, event_title, one_line_summary, key_bullets_json FROM tmm_mi_mievent_m "
+        "SELECT mi_event_id, one_line_summary, key_bullets_json FROM tmm_mi_mievent_m "
         f"WHERE mi_event_id IN ({','.join(str(i) for i in event_ids)})"
     )
     events = {}
@@ -45,7 +45,9 @@ def load_events(run: Path, event_ids: list[int]) -> dict[int, dict[str, Any]]:
         bullets = as_json(row.get("key_bullets_json"))
         if isinstance(bullets, dict):
             bullets = bullets.get("bullets", [])
-        events[int(row["mi_event_id"])] = {"title": row.get("event_title"), "bullets": bullets or []}
+        # 이전 실행의 events.json에는 event_title만 있을 수 있다.
+        title = row.get("one_line_summary") or row.get("event_title")
+        events[int(row["mi_event_id"])] = {"title": title, "bullets": bullets or []}
     return events
 
 

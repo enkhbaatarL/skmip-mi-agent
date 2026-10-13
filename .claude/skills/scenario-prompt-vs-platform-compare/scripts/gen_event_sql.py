@@ -4,7 +4,7 @@ Usage:
   poetry run python gen_event_sql.py --events-dir DIR --out insert.sql [--tag compare_YYYYMMDD]
       [--occurred-at "키워드=YYYY-MM-DD" ...] [--order "키워드1,키워드2,..."] [--execute]
 
-- event_title / one_line_summary: markdown H1 (원문 short title is not in the markdown)
+- one_line_summary: markdown H1 (원문 short title is not in the markdown)
 - key_bullets_json: '### 핵심요약' bullets, detail_analysis: '### 상세분석' body
 - institution_view_synthesis: '### 기관 전망 종합 분석' paragraph (<=1000 chars)
 - latest/oldest_record_first_created: dates in the '## MI Records' table
@@ -104,7 +104,6 @@ def main() -> int:
         values = [
             str(l2),
             f"'{esc(str(event['title']))}'",
-            f"'{esc(str(event['title']))}'",
             f"'{esc(json.dumps({'bullets': event['bullets']}, ensure_ascii=False))}'",
             f"'{esc(str(event['detail']))}'",
             "NULL",
@@ -116,7 +115,7 @@ def main() -> int:
         ]
         lines.append(f"-- {event['title']}  (l2={l2} {event['l2_label']}, occurred_at={event['occurred_at']})")
         statements.append(
-            "INSERT INTO tmm_mi_mievent_m (event_type_l2_id, event_title, one_line_summary, key_bullets_json, "
+            "INSERT INTO tmm_mi_mievent_m (event_type_l2_id, one_line_summary, key_bullets_json, "
             "detail_analysis, tags_json, occurred_at, latest_record_first_created, oldest_record_first_created, "
             "institution_view_synthesis, signal_yn, scenario_suggest_yn, new_yn, crt_usr_logn_id, mod_usr_logn_id) "
             f"VALUES ({', '.join(values)})"
@@ -125,7 +124,7 @@ def main() -> int:
     lines += [
         "COMMIT;",
         "",
-        f"SELECT mi_event_id, event_type_l2_id, event_title, occurred_at FROM tmm_mi_mievent_m "
+        f"SELECT mi_event_id, event_type_l2_id, one_line_summary, occurred_at FROM tmm_mi_mievent_m "
         f"WHERE crt_usr_logn_id = '{esc(args.tag)}' ORDER BY mi_event_id;",
         "",
     ]
@@ -146,7 +145,7 @@ def main() -> int:
     finally:
         conn.close()
     rows = query(
-        "SELECT mi_event_id, event_title FROM tmm_mi_mievent_m WHERE crt_usr_logn_id=%s ORDER BY mi_event_id DESC LIMIT %s",
+        "SELECT mi_event_id, one_line_summary FROM tmm_mi_mievent_m WHERE crt_usr_logn_id=%s ORDER BY mi_event_id DESC LIMIT %s",
         (args.tag, len(events)),
     )
     ids = sorted(int(r["mi_event_id"]) for r in rows)
