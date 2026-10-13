@@ -2412,7 +2412,7 @@ def test_prepare_v4_fixes_analysis_as_of_for_the_run() -> None:
     assert prepared["impact_parameter_axes"] == {"HurricaneIntensity": "slot=B:Year(YYYY, 2026~2030), C:Month(1~12)"}
     assert prepared["analysis_as_of"] == "2026-08-07"
     assert [event.mi_event_id for event in prepared["events"]] == [202, 101]
-    load_active_catalog.assert_called_once_with(catalog_version="v4")
+    load_active_catalog.assert_called_once_with(catalog_version="v4.1")
 
 
 def test_v4_event_timeout_is_retried_without_blocking_the_batch() -> None:
