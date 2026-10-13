@@ -521,6 +521,7 @@ class SynthesizeV4ScenariosNode(BaseNode):
                 output_schema=V4ReadableScenarioSynthesisDraft,
                 system_prompt=V4_SCENARIO_SYSTEM_PROMPT,
                 user_prompt=build_v4_scenario_synthesis_user_prompt(
+                    analysis_as_of=state.analysis_as_of,
                     events=[event.model_dump() for event in state.events],
                     impact_analysis=state.analysis_draft.model_dump(),
                     dimension_definitions=[

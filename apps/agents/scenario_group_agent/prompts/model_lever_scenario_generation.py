@@ -702,6 +702,11 @@ def build_v4_dimension_design_user_prompt(
         "- 숫자·시점 판단 근거에 현재 판단에 유효한 수치·기간·잔여일이 있으면 question과 Choice에 반영합니다.\n"
         "  과거 목표일은 미래 가능성처럼 되돌리지 말고 현재 상태의 전제로 사용합니다. 새로운 수치 경계는\n"
         "  제공된 판단 근거가 실제 기준을 줄 때만 만들며, 근거가 없으면 비교 가능한 운영 상태로 표현합니다.\n"
+        "- 월평균·누적값 등 기간 지표의 Choice는 분석 기준일과 대상 기간을 함께 고려합니다. 제공된 관측값은\n"
+        "  공통 전제로 유지하고, 미관측 부분과 남은 기간의 변화가 전체 기간 지표에 미칠 수 있는 범위에서\n"
+        "  설계합니다. 전체 기간의 지표와 남은 기간만의 지표를 혼동하지 않습니다.\n"
+        "- 관측값이나 범위 산정 근거가 부족하면 임의의 숫자 경계를 만들지 말고, 입력 근거로 구분 가능한\n"
+        "  상태를 Choice로 사용합니다. 날짜가 지났다는 이유만으로 관측 결과를 추정하지 않습니다.\n"
         "- states는 `lever|direction|level|scope|timeWindow` 형식입니다.\n"
         f"  direction은 {StateDirection.prompt_values()} 중 하나이며 나머지는 짧은 자연어입니다.\n"
         "- why는 Choice의 근거이며 한 줄 안에서 `사실: … | 파생: … | 가정: … | 영향: …` 형식으로 320자 이내로\n"
@@ -889,6 +894,7 @@ def _render_dimension_matrix(
 
 def build_v4_scenario_synthesis_user_prompt(
     *,
+    analysis_as_of: str,
     events: list[dict[str, Any]],
     impact_analysis: dict[str, Any],
     dimension_definitions: list[dict[str, Any]],
@@ -903,6 +909,14 @@ def build_v4_scenario_synthesis_user_prompt(
     return (
         "## 목적\n"
         "공통 영향에 모든 Dimension 질문의 답과 필요한 Interaction을 더해 대표 JKM Scenario를 만듭니다.\n\n"
+        f"## 분석 기준일\n- {analysis_as_of}\n\n"
+        "## 시간 표현 규칙\n"
+        "- 아래 규칙은 그룹 description과 각 Scenario의 title, narrative, explanation에 모두 적용합니다.\n"
+        "- 과거·현재·미래는 분석 기준일을 기준으로 판단하고, Event 발생시각과 구분합니다.\n"
+        "- 대상 지역에서 이미 시작되거나 지난 올해의 계절·기간을 앞으로 도래할 것처럼 표현하지 않습니다.\n"
+        "  혼동 가능성이 있으면 연도·월을 명시합니다.\n"
+        "- Dimension에서 정한 대상 기간과 관측 사실을 유지하며, 날짜가 지났다는 이유만으로 예정된 일이\n"
+        "  실제로 발생했다고 단정하지 않습니다.\n\n"
         "## 그룹 설명의 근거가 되는 이벤트\n"
         f"{_render_group_metadata_event_cards(events)}\n\n"
         "## 모든 Scenario에 공통인 영향\n"
