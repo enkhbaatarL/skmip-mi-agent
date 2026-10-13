@@ -82,7 +82,7 @@ def _claim(claim_id: str, claim_type: ClaimType, **kwargs: Any) -> EventClaim:  
 
 
 def _draft(claims: list[EventClaim], severity: ScenarioSeverity | None = ScenarioSeverity.BASE) -> EventDraft:
-    return EventDraft(event_title_ko="테스트 이벤트", claims=claims, scenario_severity=severity)
+    return EventDraft(one_line_summary="테스트 이벤트", claims=claims, scenario_severity=severity)
 
 
 def _codes(validation: EventValidation, severity: IssueSeverity) -> list[str]:
@@ -428,7 +428,7 @@ class ValidateClaimsNodeTests(unittest.IsolatedAsyncioTestCase):
 class PersistGateTests(unittest.TestCase):
     def _target(self, validation: EventValidation | None) -> tuple[Any, str | None]:  # noqa: ANN401
         state = GenerateFromQueryState(
-            draft=EventDraft(event_title_ko="초안"),
+            draft=EventDraft(one_line_summary="초안"),
             validation=validation,
             type_assignment=EventTypeAssignment(event_type_l2_id=3),
         )
@@ -441,7 +441,7 @@ class PersistGateTests(unittest.TestCase):
 
     def test_blocked_or_unvalidated_draft_is_not_persisted(self) -> None:
         blocked = apply_claim_rules(
-            EventDraft(event_title_ko="충돌"),
+            EventDraft(one_line_summary="충돌"),
             verdicts=None,
             untracked=[],
             quantitative_issues=[],

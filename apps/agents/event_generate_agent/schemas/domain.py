@@ -116,7 +116,6 @@ class DraftEvidenceUsage(BaseModel):
 class EventDraft(BaseModel):
     """LLM이 생성한 이벤트 초안 1건(확정 전 상태)."""
 
-    event_title_ko: str = ""
     one_line_summary: str = ""
     detail_analysis: str = ""
     key_bullets: list[str] = Field(default_factory=list)

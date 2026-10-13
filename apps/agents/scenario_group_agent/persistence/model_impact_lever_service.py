@@ -46,3 +46,6 @@ class ModelImpactLeverService:
         return SharedModelImpactLeverService().load_active_catalog(
             catalog_version=catalog_version,
         )
+
+    def load_parameter_semantic_axes(self, levers: list[ModelImpactLeverPayload]) -> dict[str, str]:
+        return SharedModelImpactLeverService().load_parameter_semantic_axes(levers)

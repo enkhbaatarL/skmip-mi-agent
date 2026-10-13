@@ -1,7 +1,7 @@
 """이벤트 초안 생성 프롬프트 및 structured output schema.
 
 사용자 요청 문장과 토픽별로 정리한 근거(TopicEvidenceGroup)를 묶어 하나의 '이벤트'
-(제목/한줄요약/상세분석/key bullets)로 정규화한다.
+(한줄요약/상세분석/key bullets)로 정규화한다.
 프롬프트 빌더는 순수 함수(I/O 없음)로 유지한다.
 """
 
@@ -45,7 +45,7 @@ class EvidenceRefLLMItem(BaseModel):
 class DraftClaimLLMItem(BaseModel):
     claim_id: str = Field(description="이벤트 안에서 claim 을 식별하는 키(C1, C2, ...)")
     text: str = Field(
-        description="본문(제목·요약·bullet·상세분석)에 쓴 주장 1건. 사건·상태·수치·가격 방향 단위로 쪼갤 것",
+        description="본문(한 줄 요약·bullet·상세분석)에 쓴 주장 1건. 사건·상태·수치·가격 방향 단위로 쪼갤 것",
     )
     claim_type: ClaimType = Field(
         description="USER_ASSUMPTION=사용자 요청이 가정한 내용, EVIDENCED_FACT=근거로 확인된 사실, MODEL_INFERENCE=당신이 추론·가정한 내용",
@@ -59,14 +59,13 @@ class DraftClaimLLMItem(BaseModel):
 
 
 class EventDraftLLMItem(BaseModel):
-    # structured output 은 스키마 필드 순서대로 생성되므로, 분석을 먼저 쓰고 그 단정 수준에 맞춰 제목·요약을 쓰도록
-    # 상세분석 → bullet → 제목·요약 순으로 둔다.
+    # structured output 은 스키마 필드 순서대로 생성되므로, 분석을 먼저 쓰고 그 단정 수준에 맞춰 한 줄 요약을 쓰도록
+    # 상세분석 → bullet → 한 줄 요약 순으로 둔다.
     detail_analysis: str = Field(description="상세 분석(가장 먼저 작성)")
     key_bullets: list[str] = Field(default_factory=list, description="핵심 포인트 목록")
-    event_title_ko: str = Field(
-        description="이벤트 제목(서식 없는 일반 텍스트 한 문장). 상세 분석의 단정 수준을 넘지 말 것"
+    one_line_summary: str = Field(
+        description="이벤트 한 줄 요약(제목 역할, 서식 없는 일반 텍스트 한 문장). 상세 분석의 단정 수준을 넘지 말 것"
     )
-    one_line_summary: str = Field(description="한 줄 요약. 상세 분석의 조건·불확실성을 같은 수준으로 반영")
     tags: list[str] = Field(default_factory=list)
     occurred_at: str = Field(default="", description="이벤트 발생 시점(YYYY-MM-DD)")
     generation_rationale: str = Field(default="", description="사용자 요청과 근거로부터 이 이벤트를 구성한 이유")
@@ -161,20 +160,19 @@ CUSTOM_EVENT_FORMAT_SYSTEM = """**[역할 및 목적]**
 시스템은 claim 의 충격 묶음 수로 최소 강도를 다시 계산하므로, 묶음을 실제보다 적게 잡지 마십시오.
 
 **[본문과 검증 정보의 분리]**
-본문(제목·요약·bullet·상세분석)에는 이벤트 서술과 "(가정)", "stress 가정:" 같은 짧은 표시만 담으십시오.
+본문(한 줄 요약·bullet·상세분석)에는 이벤트 서술과 "(가정)", "stress 가정:" 같은 짧은 표시만 담으십시오.
 근거 키·출처, 근거와의 대조 설명("근거상 ~이나 본 시나리오는 ~"), 강도·충격 묶음 설명은 본문에 쓰지 말고
 `claims`, `scenario_severity`, `generation_rationale` 에만 담으십시오. 근거와의 차이는 시스템이 검증 결과로 따로 보여줍니다.
 
 **[본문 필드 및 문체 규칙]**
 - 한국어로 작성하고, 본문 서술 문장은 개조식 명사형 종결어미(~함, ~임, ~됨, ~음)만 사용하십시오.
-- **event_title_ko**: 가상 사건의 핵심을 담은 한 줄 제목 (50자 이내)
-- **one_line_summary**: `[가상 토픽] 가상 에피소드 전개 → 예상 시장 영향/방향` 형식 (100자 이내)
+- **one_line_summary**: 가상 사건의 핵심을 담은 한 줄 요약. 이벤트 제목으로 쓰임 (50자 이내)
 - **key_bullets**: 3~5개. 전체 항목 안에 아래 세 관점이 각각 1개 이상 포함되도록 하고, 중복 정보는 통합하십시오.
   - **(A) 사건의 최근 상태·업데이트** — 날짜, 주체, 발생 사실
   - **(B) Fundamental 영향** — 실물 수급·설비·물동량
   - **(C) 가격 방향** — 어느 지수(TTF, JKM, spread)가 어느 방향으로 움직이는지
-- **작성 순서**: `detail_analysis`로 분석을 먼저 정리한 뒤 `key_bullets`, `event_title_ko`, `one_line_summary`를 쓰십시오.
-  상세분석에서 확인한 조건·완충 효과·불확실성을 제목·요약·bullet에도 같은 단정 수준으로 반영하고, 분석보다 강하게 단정하지 마십시오.
+- **작성 순서**: `detail_analysis`로 분석을 먼저 정리한 뒤 `key_bullets`, `one_line_summary`를 쓰십시오.
+  상세분석에서 확인한 조건·완충 효과·불확실성을 한 줄 요약·bullet에도 같은 단정 수준으로 반영하고, 분석보다 강하게 단정하지 마십시오.
 - **detail_analysis**: 가상 사건과 그 시장 영향을 풀어쓴 설명입니다.
   아래 형식의 두 문단으로 쓰고, 각 문단은 bullet 없는 하나의 통글로 작성하십시오.
   `**가상 사건 요약:**\\n(사용자 요청에 따라 전개된 가상 상황 묘사)\\n\\n**LNG 시장 관점:**\\n(글로벌 공급망·물류·가격 프리미엄 등에 미치는 파급 효과)`
@@ -280,7 +278,7 @@ def _format_impact_chain(impact_chain: list[str] | None) -> str:
     return "\n".join(f"{index}. {step}" for index, step in enumerate(steps, start=1))
 
 
-CLAIM_OUTPUT_RULES = """- `claims`: 본문(제목·요약·bullet·상세분석)의 주장을 사건·상태·수치·가격 방향 단위로 빠짐없이 쪼개 나열하십시오.
+CLAIM_OUTPUT_RULES = """- `claims`: 본문(한 줄 요약·bullet·상세분석)의 주장을 사건·상태·수치·가격 방향 단위로 빠짐없이 쪼개 나열하십시오.
   시스템이 claim 마다 근거와 대조해 근거 지지 여부·충돌·시점을 다시 판정합니다.
   - `claim_type`: EVIDENCED_FACT 는 근거 사실에 직접 적힌 내용일 때만 쓰십시오. 근거 사실에서 추론하거나 수치를 늘리고 줄였으면
     MODEL_INFERENCE 이고, 사용자 요청이 가정한 내용은 USER_ASSUMPTION 입니다.
@@ -292,7 +290,7 @@ CLAIM_OUTPUT_RULES = """- `claims`: 본문(제목·요약·bullet·상세분석)
 - `scenario_severity`: [시나리오 강도와 충격 묶음] 기준으로 고르십시오.
 - 출력 직전 점검: 모든 claim 이 근거와 충돌하지 않는지, 기준일에 시점상 성립하는지, 연결된 수치끼리 산술적으로 맞는지,
   [추론 통제]를 지켰는지(반대 방향 효과·실행 제약을 고려했는지, 결론이 중간 고리보다 강하지 않은지,
-  제목·요약의 단정 수준이 상세분석과 같은지) 확인하고 어긋나면 본문과 claim 을 함께 고쳐서 출력하십시오."""
+  한 줄 요약의 단정 수준이 상세분석과 같은지) 확인하고 어긋나면 본문과 claim 을 함께 고쳐서 출력하십시오."""
 
 
 def _build_output_rules(*, today: str, language: str, max_events: int) -> str:
@@ -317,7 +315,7 @@ def _build_output_rules(*, today: str, language: str, max_events: int) -> str:
   - `evidence_title`: 해당 블록의 `제목:` 값을 그대로 옮기십시오.
   - `referenced_content`: 그 근거에서 가져온 구체적 사실·수치·날짜·주체를 원문 표현 기준 1~2문장으로 적으십시오.
     근거에 없는 내용을 적지 마십시오.
-  - `usage`: 그 내용을 이벤트의 어느 부분(제목/요약/bullet/상세분석)에 어떻게 반영했는지 한 문장으로 적으십시오."""
+  - `usage`: 그 내용을 이벤트의 어느 부분(한 줄 요약/bullet/상세분석)에 어떻게 반영했는지 한 문장으로 적으십시오."""
 
 
 def format_revision(draft: EventDraft | None, issues: list[ValidationIssue]) -> str:
@@ -333,8 +331,7 @@ def format_revision(draft: EventDraft | None, issues: list[ValidationIssue]) -> 
         "\n**[이전 초안 검증 결과 — 재작성 요청]**\n"
         "이전 초안이 아래 이슈로 검증을 통과하지 못했습니다. 이슈가 걸린 claim 과 본문 서술을 근거에 맞게 고치거나 빼고,\n"
         "이슈가 없는 부분은 유지해 이벤트를 다시 작성하십시오. 사용자 가정 자체가 근거와 충돌하는 이슈는 고칠 필요가 없습니다.\n\n"
-        f"### 이전 초안: {draft.event_title_ko}\n"
-        f"한 줄 요약: {draft.one_line_summary}\n"
+        f"### 이전 초안: {draft.one_line_summary}\n"
         f"key_bullets:\n{bullets}\n"
         f"상세 분석:\n{draft.detail_analysis}\n"
         f"claims:\n{format_claims(draft.claims)}\n"

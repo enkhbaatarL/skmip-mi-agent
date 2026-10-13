@@ -152,5 +152,34 @@ class ModelImpactLeverService:
         finally:
             session.close()
 
+    def load_parameter_semantic_axes(self, levers: list[ModelImpactLeverPayload]) -> dict[str, str]:
+        """Return each bound model parameter's semantic_axes (required slots and value ranges).
+
+        Kept outside the hydrated catalog so the catalog checksum pinned by stored Scenario Groups does not change.
+        """
+        parameter_names = [binding.parameter_name for lever in levers for binding in lever.parameter_bindings]
+        if not parameter_names:
+            return {}
+        if self._session is not None:
+            definitions = ModelImpactLeverRepository(session=self._session).fetch_parameter_definitions_by_names(
+                parameter_names,
+            )
+        else:
+            from apps.common.configs.database.sync_database.connection import (
+                get_sync_session,
+            )
+
+            session = get_sync_session()
+            try:
+                definitions = ModelImpactLeverRepository(session=session).fetch_parameter_definitions_by_names(
+                    parameter_names,
+                )
+            finally:
+                session.close()
+        return {
+            str(definition["canonical_parameter_name"]): str(definition.get("semantic_axes") or "")
+            for definition in definitions
+        }
+
 
 __all__ = ["ModelImpactLeverService", "resolve_binding_support"]

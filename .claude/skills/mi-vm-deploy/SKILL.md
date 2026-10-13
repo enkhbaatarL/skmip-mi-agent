@@ -1,6 +1,6 @@
 ---
 name: mi-vm-deploy
-description: MI agent 이미지를 로컬 repo에서 빌드해 skmidemoacr.azurecr.io에 push하고, 외부 데모 VM(40.82.137.178)의 Docker Compose .env IMAGE를 해당 태그로 변경한 뒤 app 서비스를 pull/recreate 하는 배포 작업에 사용. scenario, model-parameter, interpret agent를 지원한다. "scenario agent v0.0.16 빌드 후 외부 VM 배포", "model-parameter agent 이미지 push하고 demo vm compose 재시작", "interpret agent v0.0.2 외부 VM 배포", "외부 VM mi-agent-interpret 이미지 변경/재시작" 류 요청에 사용.
+description: MI agent 이미지를 로컬 repo에서 빌드해 skmidemoacr.azurecr.io에 push하고, 외부 데모 VM(40.82.137.178)의 Docker Compose .env IMAGE를 해당 태그로 변경한 뒤 app 서비스를 pull/recreate 하는 배포 작업에 사용. scenario, model-parameter, interpret, event-generate agent를 지원한다. "scenario agent v0.0.16 빌드 후 외부 VM 배포", "model-parameter agent 이미지 push하고 demo vm compose 재시작", "interpret agent v0.0.2 외부 VM 배포", "외부 VM mi-agent-interpret 이미지 변경/재시작", "event-generate agent v0.0.1 외부 VM 배포" 류 요청에 사용.
 ---
 
 # MI VM Deploy
@@ -20,6 +20,10 @@ description: MI agent 이미지를 로컬 repo에서 빌드해 skmidemoacr.azure
 - interpret Dockerfile: `Dockerfile_interpret`
 - interpret compose 경로: `/home/azureuser/mi/mi-agent-interpret`
 - interpret 외부 port: `8003`
+- event-generate 이미지 repo: `skmidemoacr.azurecr.io/mi-agent-event-generate`
+- event-generate Dockerfile: `Dockerfile_event_generate`
+- event-generate compose 경로: `/home/azureuser/mi/mi-agent-event-generate`
+- event-generate 외부 port: `8004`
 - 기본 platform: `linux/amd64`
 - 외부 VM host: `40.82.137.178`
 - 외부 VM user: `azureuser`
@@ -33,7 +37,7 @@ PEM 경로 우선순위는 `--pem <path>` > `MI_DEMO_VM_PEM` > `.claude/skills/m
 
 ## 입력
 
-- `AGENT`: 배포 대상. `scenario`, `model-parameter`, `interpret`. 사용자가 명시하지 않으면 `scenario`로 처리한다.
+- `AGENT`: 배포 대상. `scenario`, `model-parameter`, `interpret`, `event-generate`. 사용자가 명시하지 않으면 `scenario`로 처리한다.
 - `VERSION`: 배포 이미지 태그. 예: `v0.0.16`
 - `0.0.16`처럼 `v` 없이 들어온 버전은 script가 `v0.0.16`으로 정규화한다.
 - 사용자가 태그를 지정하지 않으면 빌드/배포를 진행하지 말고 태그를 먼저 확인한다.
@@ -67,6 +71,21 @@ Interpret agent:
 .claude/skills/mi-vm-deploy/scripts/build_push_deploy.sh \
   --agent interpret build-push-deploy v0.0.16
 ```
+
+Event-generate agent:
+
+```bash
+.claude/skills/mi-vm-deploy/scripts/build_push_deploy.sh \
+  --agent event-generate build-push-deploy v0.0.1
+```
+
+event-generate는 외부 VM에 compose 프로젝트(`/home/azureuser/mi/mi-agent-event-generate`의 `.env`,
+`config.yaml`, `docker-compose.yaml`)가 먼저 있어야 한다. 없으면 script가 `.env not found`로 중단되므로,
+최초 1회는 사용자가 interpret compose 프로젝트를 복사해 아래만 바꿔 준비한다.
+
+- `docker-compose.yaml`: `container_name: mi-agent-event-generate`, `ports: "8004:8000"`
+- `.env`: `IMAGE`, `METADATA_DB_*`, `MODEL_API_KEY`, `WEB_SEARCH_API_KEY`
+- `config.yaml`: `devops/k8s/event-generate-configmap.yaml`의 `config.yaml` 내용을 기준으로 VM 환경 값(DB, MLflow 등)에 맞게 조정
 
 스크립트가 수행하는 작업:
 
@@ -104,7 +123,7 @@ docker compose ps
 docker compose logs --tail=120 app
 ```
 
-`--agent interpret`일 때는 아래 값으로 같은 절차를 수행한다.
+`--agent interpret`일 때는 아래 값으로 같은 절차를 수행한다. `--agent event-generate`도 Dockerfile·이미지 repo·compose 경로만 바뀌고 절차는 같다.
 
 ```bash
 docker build --platform linux/amd64 --pull -f Dockerfile_interpret \
@@ -142,6 +161,8 @@ printf 'PEM=/path/to/key.pem\n' > .claude/skills/mi-vm-deploy/.local
   --dry-run --agent model-parameter build-push-deploy v0.0.16
 .claude/skills/mi-vm-deploy/scripts/build_push_deploy.sh \
   --dry-run --agent interpret build-push-deploy v0.0.16
+.claude/skills/mi-vm-deploy/scripts/build_push_deploy.sh \
+  --dry-run --agent event-generate build-push-deploy v0.0.1
 ```
 
 ### 분리 실행
@@ -185,11 +206,13 @@ Interpret agent 대상 분리 실행:
 .claude/skills/mi-vm-deploy/scripts/build_push_deploy.sh --agent model-parameter logs 120
 .claude/skills/mi-vm-deploy/scripts/build_push_deploy.sh --agent interpret status
 .claude/skills/mi-vm-deploy/scripts/build_push_deploy.sh --agent interpret logs 120
+.claude/skills/mi-vm-deploy/scripts/build_push_deploy.sh --agent event-generate status
+.claude/skills/mi-vm-deploy/scripts/build_push_deploy.sh --agent event-generate logs 120
 ```
 
 ## 옵션
 
-- `--agent <scenario|model-parameter|interpret>`: 배포 대상 agent 선택. 기본값은 `scenario`
+- `--agent <scenario|model-parameter|interpret|event-generate>`: 배포 대상 agent 선택. 기본값은 `scenario`
 - `--dockerfile <path>`: 기본 `Dockerfile` 대신 다른 Dockerfile 사용
 - `--platform <platform>`: 기본 `linux/amd64` 대신 다른 platform 사용
 - `--image-repo <repo>`: agent별 기본 ACR repo 대신 다른 repo 사용. 사용자가 명시하지 않으면 바꾸지 않는다.
@@ -202,7 +225,7 @@ Interpret agent 대상 분리 실행:
 
 완료 후 사용자에게 아래를 간결히 보고한다.
 
-- 대상 agent: `scenario`, `model-parameter`, `interpret`
+- 대상 agent: `scenario`, `model-parameter`, `interpret`, `event-generate`
 - 빌드/push한 최종 이미지
 - docker image inspect 결과의 OS/Architecture
 - 외부 VM `.env`의 최종 `IMAGE`
@@ -211,7 +234,7 @@ Interpret agent 대상 분리 실행:
 
 ## 안전 규칙
 
-- 이 skill은 외부 데모 VM의 `/home/azureuser/mi/mi-agent-scenario`, `/home/azureuser/mi/mi-agent-model-parameter`, `/home/azureuser/mi/mi-agent-interpret` compose 프로젝트만 변경한다.
+- 이 skill은 외부 데모 VM의 `/home/azureuser/mi/mi-agent-scenario`, `/home/azureuser/mi/mi-agent-model-parameter`, `/home/azureuser/mi/mi-agent-interpret`, `/home/azureuser/mi/mi-agent-event-generate` compose 프로젝트만 변경한다.
 - Docker registry 비밀번호, PEM 파일 내용, `.env`의 민감값은 출력하지 않는다.
 - `deploy`와 `build-push-deploy`는 원격 `.env` 수정과 컨테이너 재생성을 수행하므로, 사용자가 배포 또는 이미지 변경/재시작을 요청했을 때만 실행한다.
 - `docker push`가 실패하면 원격 compose 배포를 진행하지 않는다.

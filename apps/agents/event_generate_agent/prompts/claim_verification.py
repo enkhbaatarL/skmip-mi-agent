@@ -71,7 +71,7 @@ class ClaimVerificationLLMOutput(BaseModel):
     )
     reasoning_issues: list[str] = Field(
         default_factory=list,
-        description="claim 사이의 연결이 성립하지 않는 곳(중복 계산, 반대 방향 효과 누락, 제목·요약이 본문보다 단정적 등)과 그 이유",
+        description="claim 사이의 연결이 성립하지 않는 곳(중복 계산, 반대 방향 효과 누락, 한 줄 요약이 본문보다 단정적 등)과 그 이유",
     )
 
 
@@ -127,7 +127,7 @@ claim 의 종류(claim_type)마다 아래의 서로 다른 기준으로 판정�
 - 시점과 무관한 claim 은 true
 
 **[누락 claim(untracked_claims)]**
-- 제목·요약·bullet·상세분석의 사건·상태·수치·가격 방향 주장 중 [검증할 claim] 어디에도 해당하지 않는 것을 찾아, claim_type 을 정하고 위 기준으로 판정하십시오.
+- 한 줄 요약·bullet·상세분석의 사건·상태·수치·가격 방향 주장 중 [검증할 claim] 어디에도 해당하지 않는 것을 찾아, claim_type 을 정하고 위 기준으로 판정하십시오.
 
 **[수치 정합성(quantitative_issues)]**
 - 서로 연결된 수치가 산술적으로 맞는지 확인하십시오.
@@ -144,7 +144,7 @@ claim 의 종류(claim_type)마다 아래의 서로 다른 기준으로 판정�
 - 같은 영향을 여러 경로로 중복 계산함
 - 상방·하방 효과가 함께 있는데 한쪽만 반영해 순효과를 결론냄
 - 결론이 의존하는 핵심 중간 고리가 가정·약한 추론인데 결론을 확정적으로 서술함
-- 제목·요약·bullet 의 단정 수준이 상세분석에서 밝힌 조건·완충 효과보다 강함
+- 한 줄 요약·bullet 의 단정 수준이 상세분석에서 밝힌 조건·완충 효과보다 강함
 방향이 충분히 뒷받침되는 결론을 명확히 말한 것은 문제가 아닙니다. 모든 결론을 조건부로 만들라는 뜻이 아닙니다.
 
 **[작성 규칙]**
@@ -164,7 +164,6 @@ USER_PROMPT = """[사용자 요청 사항]
 {timeline}
 
 [검증할 이벤트]
-제목: {title}
 한 줄 요약: {summary}
 key_bullets:
 {bullets}
@@ -197,7 +196,6 @@ def build_messages(
         user_query=user_query.strip(),
         evidences=format_topic_groups(groups),
         timeline=format_timeline(fact_timeline),
-        title=draft.event_title_ko,
         summary=draft.one_line_summary,
         bullets="\n".join(f"- {bullet}" for bullet in draft.key_bullets) or "(없음)",
         detail=draft.detail_analysis,

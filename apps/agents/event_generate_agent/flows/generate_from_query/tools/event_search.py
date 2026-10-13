@@ -56,7 +56,7 @@ def _to_hit(summary: dict[str, Any], detail: dict[str, Any]) -> ExistingEventHit
 
     `detail` 이 비면(상세 조회 실패) 목록 정보만으로 만든다.
 
-    - `one_line_summary`: MCP 응답에 대응 필드가 없어 비워 둔다. 본문은
+    - `one_line_summary`: MCP 의 `eventName` 을 담는다(이벤트 제목 역할). 본문은
       `detail_analysis`(AI 분석)와 `key_bullets`(영향도 종합·기관 종합)가 담는다.
     - `event_type_l2_id`: MCP 는 `eventTypeLv2` 를 코드 문자열로만 주고
       tmm_mi_mievent_m 의 정수 id 는 주지 않으므로 None 이다. 이름만 옮긴다.
@@ -83,8 +83,7 @@ def _to_hit(summary: dict[str, Any], detail: dict[str, Any]) -> ExistingEventHit
 
     return ExistingEventHit(
         mi_event_id=int(summary["eventId"]),
-        event_title=_text(summary.get("eventName")) or _text(detail.get("eventName")),
-        one_line_summary="",
+        one_line_summary=_text(summary.get("eventName")) or _text(detail.get("eventName")),
         detail_analysis=_text(ai_insights.get("detailedAnalysis")),
         key_bullets=key_bullets,
         tags=tags,

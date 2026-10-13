@@ -48,7 +48,7 @@ class EventGenerationService:
         if event_type_l2_id is None:
             raise MIBaseError(
                 ErrorCode.INVALID_REQUEST,
-                detail=f"event_type_l2_id is required to persist an event: title={event.event_title_ko!r}",
+                detail=f"event_type_l2_id is required to persist an event: summary={event.one_line_summary!r}",
             )
 
         actor_id = str(user_id) if user_id is not None else DEFAULT_ACTOR_ID
@@ -58,7 +58,8 @@ class EventGenerationService:
             mi_event_id = repository.insert_event(
                 {
                     "event_type_l2_id": event_type_l2_id,
-                    "event_title": event.event_title_ko[:EVENT_TITLE_MAX_LENGTH],
+                    # 별도 제목을 생성하지 않으므로 NOT NULL 인 event_title 컬럼에도 one_line_summary 를 저장한다.
+                    "event_title": event.one_line_summary[:EVENT_TITLE_MAX_LENGTH],
                     "one_line_summary": event.one_line_summary[:ONE_LINE_SUMMARY_MAX_LENGTH],
                     "key_bullets_json": {"bullets": [str(bullet) for bullet in event.key_bullets]},
                     "detail_analysis": event.detail_analysis,

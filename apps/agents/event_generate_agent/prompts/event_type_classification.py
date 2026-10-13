@@ -62,13 +62,13 @@ SYSTEM_PROMPT = """
 [이벤트 초안]이 [이벤트 유형 카탈로그]의 어느 카테고리에 해당하는지 판단해 하나를 고릅니다.
 
 ### [분류 절차]
-1. 초안의 제목·요약·핵심 포인트를 읽고, 이 사건이 시장에 영향을 주는 핵심 동인(무엇이 수급·가격을 움직이는가)을 파악합니다.
+1. 초안의 한 줄 요약·핵심 포인트를 읽고, 이 사건이 시장에 영향을 주는 핵심 동인(무엇이 수급·가격을 움직이는가)을 파악합니다.
 2. 카탈로그의 각 카테고리 이름과 핵심 동인을 비교해 가장 가까운 카테고리 하나를 고릅니다.
 3. rationale 에 파악한 핵심 동인과 그 카테고리를 고른 이유를 한 문장으로 먼저 적고, event_type 에 카테고리 이름을 적습니다.
 
 ### [분류 원칙]
 * event_type 에는 카탈로그의 카테고리 이름을 글자 그대로 적습니다. 카탈로그에 없는 카테고리를 만들지 않습니다.
-* 제목에 나온 단어가 아니라 사건의 핵심 동인으로 판단합니다.
+* 한 줄 요약에 나온 단어가 아니라 사건의 핵심 동인으로 판단합니다.
 * 여러 카테고리에 걸치면 시장 영향이 가장 큰 동인의 카테고리를 고릅니다.
 * 어느 카테고리에도 맞지 않으면 event_type 을 null 로 둡니다.
 
@@ -92,7 +92,7 @@ def _format_catalog(choices: dict[str, EventTypeCatalogItem]) -> str:
 
 
 def _format_draft(draft: EventDraft, source_type_labels: list[str]) -> str:
-    lines = [f"제목: {draft.event_title_ko}", f"요약: {draft.one_line_summary}"]
+    lines = [f"요약: {draft.one_line_summary}"]
     if draft.key_bullets:
         lines.append("핵심: " + " / ".join(draft.key_bullets))
     if draft.tags:

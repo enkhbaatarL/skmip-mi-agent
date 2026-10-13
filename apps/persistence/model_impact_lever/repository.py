@@ -85,6 +85,7 @@ class ModelImpactLeverRepository(BaseSyncSQLRepository):
             {
                 "canonical_parameter_name": parameter.parameter_name,
                 "use_yn": parameter.use_yn,
+                "semantic_axes": parameter.semantic_axes,
             }
             for parameter in self.session.execute(stmt).scalars().all()
         ]
