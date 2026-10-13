@@ -95,16 +95,24 @@ def test_conflict_response_merges_existing_resource_identifiers() -> None:
     }
 
 
-def test_matching_event_set_does_not_block_new_group_creation() -> None:
+@pytest.mark.parametrize("second_user_id", [7, 8])
+@pytest.mark.parametrize("second_event_ids", [[3, 1, 2], [2, 1, 3]])
+def test_repeated_event_set_creates_independent_groups(
+    second_user_id: int,
+    second_event_ids: list[int],
+) -> None:
     session = Mock()
     group_repository = Mock()
-    group_repository.insert_group.return_value = 408
-    group_repository.fetch_by_id.return_value = SimpleNamespace(scenario_group_id=408)
+    group_repository.insert_group.side_effect = [408, 409]
+    group_repository.fetch_by_id.side_effect = [
+        SimpleNamespace(scenario_group_id=408),
+        SimpleNamespace(scenario_group_id=409),
+    ]
     event_repository = Mock()
     event_repository.lock_events.return_value = [1, 2, 3]
     event_repository.fetch_latest_snapshot_id.return_value = None
     operation_service = Mock()
-    expected = ScenarioGroupPayload(scenario_group_id=408)
+    requests = [([3, 1, 2], 7, "op-first"), (second_event_ids, second_user_id, "op-second")]
     connection_module = ModuleType("apps.common.configs.database.sync_database.connection")
     connection_module.get_sync_session = Mock(return_value=session)  # type: ignore[attr-defined]
 
@@ -123,41 +131,63 @@ def test_matching_event_set_does_not_block_new_group_creation() -> None:
             "ScenarioGroupOperationService",
             return_value=operation_service,
         ),
-        patch.object(ScenarioGroupPayload, "from_model", return_value=expected),
+        patch.object(
+            ScenarioGroupPayload,
+            "from_model",
+            side_effect=lambda group, relation: ScenarioGroupPayload(scenario_group_id=group.scenario_group_id),
+        ),
     ):
-        result = ScenarioGroupService().prepare_v4_multi_event_group(
-            events=[
-                {"mi_event_id": 3, "event_type_l2_id": 30},
-                {"mi_event_id": 1, "event_type_l2_id": 10},
-                {"mi_event_id": 2, "event_type_l2_id": 20},
-            ],
-            impact_catalog_version="catalog-v1",
-            impact_catalog_checksum="c" * 64,
-            user_id=7,
-            operation_id="op-new",
-        )
+        # 첫 작업을 완료 처리하지 않고 같은 Event 조합으로 다시 접수한다.
+        results = [
+            ScenarioGroupService().prepare_v4_multi_event_group(
+                events=[{"mi_event_id": event_id, "event_type_l2_id": event_id * 10} for event_id in event_ids],
+                impact_catalog_version="catalog-v1",
+                impact_catalog_checksum="c" * 64,
+                user_id=user_id,
+                operation_id=operation_id,
+            )
+            for event_ids, user_id, operation_id in requests
+        ]
 
-    assert result is expected
+    assert [result.scenario_group_id for result in results] == [408, 409]
     group_repository.fetch_event_set_candidates.assert_not_called()
     group_repository.fetch_event_ids_by_group_ids.assert_not_called()
-    group_repository.insert_group.assert_called_once()
-    operation_service.create_accepted_in_session.assert_called_once_with(
-        session,
-        scenario_group_id=408,
-        operation_id="op-new",
-        operation_type="create",
-        engine_version="v4",
-        user_id=7,
+    assert group_repository.insert_group.call_count == 2
+    assert [entry.args[0]["request_usr_id"] for entry in group_repository.insert_group.call_args_list] == [
+        7,
+        second_user_id,
+    ]
+    assert all(
+        entry.args[0]["event_set_hash"] == event_set_hash([1, 2, 3])
+        for entry in group_repository.insert_group.call_args_list
     )
-    session.commit.assert_called_once_with()
+    assert [
+        (entry.args[0]["scenario_group_id"], entry.args[0]["mi_event_id"], entry.args[0]["display_order"])
+        for entry in group_repository.insert_group_event.call_args_list
+    ] == [
+        (group_id, event_id, display_order)
+        for group_id, event_ids in [(408, [3, 1, 2]), (409, second_event_ids)]
+        for display_order, event_id in enumerate(event_ids, start=1)
+    ]
+    assert operation_service.create_accepted_in_session.call_args_list == [
+        call(
+            session,
+            scenario_group_id=group_id,
+            operation_id=operation_id,
+            operation_type="create",
+            engine_version="v4",
+            user_id=user_id,
+        )
+        for group_id, user_id, operation_id in [(408, 7, "op-first"), (409, second_user_id, "op-second")]
+    ]
+    group_repository.update_group.assert_not_called()
+    assert session.commit.call_count == 2
     session.rollback.assert_not_called()
 
 
 def test_group_links_operation_and_accepted_event_are_committed_atomically() -> None:
     session = Mock()
     group_repository = Mock()
-    group_repository.fetch_event_set_candidates.return_value = []
-    group_repository.fetch_event_ids_by_group_ids.return_value = {}
     group_repository.insert_group.return_value = 408
     created_model = SimpleNamespace(scenario_group_id=408)
     group_repository.fetch_by_id.return_value = created_model
