@@ -59,14 +59,14 @@ def event_hits_to_evidences(hits: list[ExistingEventHit], existing: list[Evidenc
     evidences: list[EvidenceItem] = []
     for hit in hits:
         counts[hit.topic_key] += 1
-        body_parts = [part for part in (hit.one_line_summary, hit.detail_analysis) if part]
+        body_parts = [hit.detail_analysis] if hit.detail_analysis else []
         body_parts.extend(hit.key_bullets)
         evidences.append(
             EvidenceItem(
                 evidence_key=f"{hit.topic_key}-E{counts[hit.topic_key]}",
                 origin=EvidenceOrigin.EXISTING_EVENT,
                 topic_key=hit.topic_key,
-                title=hit.event_title,
+                title=hit.one_line_summary,
                 content="\n".join(body_parts),
                 published_at=hit.occurred_at,
                 source_name=hit.event_type_l2_name or UNKNOWN_EVENT_SOURCE_NAME,

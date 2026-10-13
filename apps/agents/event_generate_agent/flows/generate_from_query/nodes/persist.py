@@ -29,13 +29,12 @@ def _persist_target(state: GenerateFromQueryState) -> tuple[GeneratedEventOut | 
         # 검증 error(근거 충돌·시점 불일치·검증 실패 등)가 있거나 검증 결과가 없으면 저장하지 않는다.
         # 사유는 finalize 가 검증 이슈로 따로 알리므로 여기서는 경고를 중복으로 남기지 않는다.
         if validation is None:
-            return None, f"'{draft.event_title_ko}' 는 검증 결과가 없어 저장하지 않았습니다."
+            return None, f"'{draft.one_line_summary}' 는 검증 결과가 없어 저장하지 않았습니다."
         return None, None
     event_type_l2_id = state.type_assignment.event_type_l2_id if state.type_assignment else None
     if event_type_l2_id is None:
-        return None, f"'{draft.event_title_ko}' 는 event type L2 분류 결과가 없어 저장하지 않았습니다."
+        return None, f"'{draft.one_line_summary}' 는 event type L2 분류 결과가 없어 저장하지 않았습니다."
     target = GeneratedEventOut(
-        event_title_ko=draft.event_title_ko,
         one_line_summary=draft.one_line_summary,
         detail_analysis=draft.detail_analysis,
         key_bullets=list(draft.key_bullets),

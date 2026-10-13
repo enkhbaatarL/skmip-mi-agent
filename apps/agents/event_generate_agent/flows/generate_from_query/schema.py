@@ -80,7 +80,6 @@ class ExistingEventHit(BaseModel):
     """기존 DB 이벤트 검색 결과 1건."""
 
     mi_event_id: int
-    event_title: str = ""
     one_line_summary: str = ""
     detail_analysis: str = ""
     key_bullets: list[str] = Field(default_factory=list)

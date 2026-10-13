@@ -166,7 +166,6 @@ def _to_draft(
     """
     is_edit = isinstance(item, edit_prompt.ExistingEventEditLLMItem)
     return EventDraft(
-        event_title_ko=item.event_title_ko.strip(),
         one_line_summary=item.one_line_summary.strip(),
         detail_analysis=item.detail_analysis.strip(),
         key_bullets=[bullet.strip() for bullet in item.key_bullets if bullet.strip()],
@@ -289,8 +288,8 @@ async def draft_events(
             return {"warnings": [f"검증 이슈를 반영한 초안 재작성에 실패했습니다: {exc!r}"]}
         return {"draft": None, "warnings": [f"이벤트 초안 생성에 실패했습니다: {exc!r}"]}
 
-    # 제목도 요약도 비면 뒷단이 쓸 수 없는 껍데기라 여기서 버린다. 출력이 여러 건이어도 첫 건만 쓴다.
-    items = [item for item in result.result.events if item.event_title_ko.strip() or item.one_line_summary.strip()]
+    # 한 줄 요약이 비면 뒷단이 쓸 수 없는 껍데기라 여기서 버린다. 출력이 여러 건이어도 첫 건만 쓴다.
+    items = [item for item in result.result.events if item.one_line_summary.strip()]
     draft = _to_draft(items[0], prompt_evidences, state) if items else None
 
     logger.info(
@@ -306,7 +305,7 @@ async def draft_events(
             f"| operation={draft.operation.value if draft.operation else None} | sources={draft.source_mi_event_ids} "
             f"| bullets={len(draft.key_bullets)} | evidences={[u.evidence_key for u in draft.evidence_usages]} "
             f"| claims={len(draft.claims)} | severity={draft.scenario_severity.value if draft.scenario_severity else None} "
-            f"| title={draft.event_title_ko!r}",
+            f"| summary={draft.one_line_summary!r}",
         )
 
     if draft is None:
@@ -348,7 +347,7 @@ def _to_assignment(
         []
         if event_type_l2_id is not None
         else [
-            f"'{draft.event_title_ko}' 의 event type 을 카탈로그에서 특정하지 못했습니다.",
+            f"'{draft.one_line_summary}' 의 event type 을 카탈로그에서 특정하지 못했습니다.",
         ]
     )
     return EventTypeAssignment(event_type_l2_id=event_type_l2_id, rationale=output.rationale.strip()), warnings
@@ -419,7 +418,7 @@ def _blocked_warning(state: GenerateFromQueryState) -> list[str]:
     """검증 error 로 저장하지 않았으면 그 사실만 알린다. 이슈 내용은 로그에만 남긴다."""
     if state.draft is None or state.validation is None or not state.validation.blocked:
         return []
-    return [f"'{state.draft.event_title_ko}' 는 검증 error 가 있어 저장하지 않았습니다."]
+    return [f"'{state.draft.one_line_summary}' 는 검증 error 가 있어 저장하지 않았습니다."]
 
 
 def _log_validation(state: GenerateFromQueryState) -> None:
@@ -428,7 +427,7 @@ def _log_validation(state: GenerateFromQueryState) -> None:
     if state.draft is None or validation is None:
         return
     logger.info(
-        f"[NODE][finalize] VALIDATION | title={state.draft.event_title_ko!r} | blocked={validation.blocked} "
+        f"[NODE][finalize] VALIDATION | summary={state.draft.one_line_summary!r} | blocked={validation.blocked} "
         f"| severity={validation.scenario_severity.value} | feasibility={validation.feasibility_status.value} "
         f"| clusters={validation.shock_clusters} | claims={len(validation.claims)} | issues={len(validation.issues)}",
     )
@@ -449,7 +448,6 @@ async def finalize(state: GenerateFromQueryState) -> dict[str, Any]:
     if draft is not None:
         events.append(
             GeneratedFromQueryEventOut(
-                event_title_ko=draft.event_title_ko,
                 one_line_summary=draft.one_line_summary,
                 detail_analysis=draft.detail_analysis,
                 key_bullets=list(draft.key_bullets),

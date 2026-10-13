@@ -1,10 +1,10 @@
-"""event_generate_agent 전용 ASGI 엔트리포인트(로컬 디버깅용).
+"""event_generate_agent 전용 ASGI 엔트리포인트.
 
-interpret.py 와 동일한 구성을 따르되, 아직 구현 중인 flow를 로컬에서 단독으로
-띄워 breakpoint를 걸 수 있도록 DB 스키마 검증 실패를 치명적으로 다루지 않는다.
+interpret.py 와 동일하게 Agent 단위로 별도 이미지(Dockerfile_event_generate)로 배포한다.
+이미지 안에서는 이 파일이 main.py 로 복사되어 `gunicorn main:app` 으로 실행된다.
 
-VSCode 디버그 구성이 주입하던 envs/.env, envs/config.yaml 을 직접 실행할 때도 그대로
-쓰도록 부트스트랩한다. 터미널에서 띄우면 uvicorn 의 --reload 가 정상 동작한다.
+로컬에서 터미널로 직접 띄울 때도 envs/.env, envs/config.yaml 을 쓰도록 부트스트랩한다.
+컨테이너에는 envs/.env 가 포함되지 않으므로(dockerignore) 운영에서는 영향이 없다.
 
     uvicorn event_generate:app --reload --port 8003
 """
@@ -58,14 +58,9 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     logger.info(f"Logging configured from settings | level={cfg.log_level.upper()}")
     setup_mlflow_tracing(cfg, agent_name=AGENT_NAME)
 
-    # 이벤트 생성 flow는 아직 DB 접근이 연결되지 않았으므로, 로컬 디버깅 시
-    # DB가 없더라도 서버가 뜨도록 검증 실패를 WARNING으로만 남긴다.
     logger.info("Validating ORM models against the database schema")
-    try:
-        await asyncio.to_thread(validate_schema, get_sync_engine(), APPLICATION_TABLES)
-        logger.info("ORM/DB schema validation completed")
-    except Exception as exc:
-        logger.warning(f"ORM/DB schema validation skipped | error={exc!r}")
+    await asyncio.to_thread(validate_schema, get_sync_engine(), APPLICATION_TABLES)
+    logger.info("ORM/DB schema validation completed")
 
     yield
 

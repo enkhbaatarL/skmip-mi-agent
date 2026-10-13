@@ -93,7 +93,7 @@ async def search_existing_events(state: GenerateFromQueryState) -> dict[str, Any
         for index, hit in enumerate(topic_hits, start=1):
             logger.debug(
                 f"[NODE][search_existing_events] EVENT | {topic.topic_key} #{index} | id={hit.mi_event_id} "
-                f"| occurred_at={hit.occurred_at} | type={hit.event_type_l2_name} | title={hit.event_title!r}",
+                f"| occurred_at={hit.occurred_at} | type={hit.event_type_l2_name} | summary={hit.one_line_summary!r}",
             )
         hits.extend(topic_hits)
 

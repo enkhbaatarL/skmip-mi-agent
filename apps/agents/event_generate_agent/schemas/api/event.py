@@ -14,7 +14,6 @@ from apps.agents.event_generate_agent.schemas.base import ApiModel
 class GeneratedEventOut(ApiModel):
     """생성된 이벤트 초안 1건."""
 
-    event_title_ko: str = ""
     one_line_summary: str = ""
     detail_analysis: str = ""
     key_bullets: list[str] = Field(default_factory=list)
