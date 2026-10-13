@@ -94,7 +94,7 @@ Scenario Group의 master다.
 | `scenario_count` | 활성 Scenario 수 |
 | `status`, `stage` | 업무 상태와 단계 |
 | `api_version`, `generation_strategy` | 생성 엔진 계약 |
-| `event_set_hash` | 순서와 무관한 Event 조합 중복 판정 |
+| `event_set_hash` | 순서와 무관한 Event 조합 식별 정보; 동일 조합의 새 그룹 생성을 차단하지 않음 |
 | `impact_catalog_version`, `impact_catalog_checksum` | v4 Lever catalog snapshot 식별자 |
 | `template_checksum` | legacy Template 호환 정보 |
 | `dimension_definitions` | Dimension·Value 정의 JSON |
@@ -117,8 +117,8 @@ Scenario Group과 Event의 N:M 관계이자 Event lineage 정본이다.
 | `scenario_dimension_template_id`, `template_checksum` | legacy Template lineage |
 | `display_order` | 요청 Event 표시 순서 |
 
-같은 Group 안의 Event는 중복될 수 없다. Event 조합 중복 검사는 hash만 믿지 않고 관계의 실제 Event 집합을
-다시 비교한다.
+같은 Group 안의 Event는 중복될 수 없다(`scenario_group_id`, `mi_event_id` 유일성). 같은 Event 또는 Event
+조합을 여러 Group에 연결할 수 있으며, 기존 Group의 소유자나 operation 상태에 관계없이 새 Group을 생성한다.
 
 ## 3. Scenario와 Signpost
 

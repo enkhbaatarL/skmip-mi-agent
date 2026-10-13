@@ -62,12 +62,12 @@ Content-Type: application/json
 
 - Event ID는 중복 없는 양의 정수 1~5개다.
 - 요청 배열 순서는 Event 표시 순서로 보존된다.
-- 중복 판정은 요청 순서와 무관한 Event ID 집합과 engine version을 사용한다.
+- 동일 Event 조합으로 반복 요청할 수 있다. 기존 그룹의 소유자나 작업 상태와 관계없이 요청마다 새 그룹과 operation을 생성한다.
 - 성공 응답은 HTTP 200, `Content-Type: text/event-stream`, `Cache-Control: no-cache`,
   `X-Accel-Buffering: no`다.
 - POST body가 필요하므로 브라우저에서는 기본 `EventSource`가 아니라 `fetch` streaming을 사용한다.
 
-요청 검증, Event 조회, 중복·소유권 확인이 실패하면 SSE가 아닌 JSON 오류를 반환한다. Client는 body를
+요청 검증이나 Event 조회 등 접수 준비가 실패하면 SSE가 아닌 JSON 오류를 반환한다. Client는 body를
 읽기 전에 status와 `Content-Type`을 확인한다.
 
 ### Client 권장 호출 순서
@@ -201,25 +201,26 @@ operation status는 `queued | running | succeeded | failed | interrupted`다. `q
 없으면 목록 또는 상세 응답의 `activeOperation`과 `latestOperation`으로 복원한다. 마지막 sequence를 모르면
 `Last-Event-ID: 0`으로 전체 이력을 replay하고 Client에서 중복을 제거한다.
 
-최초 POST의 `accepted`를 파싱하기 전에 연결이 끊겨 식별자를 모르는 경우에는 먼저 목록에서 active operation을
-찾는다. 찾을 수 없을 때만 동일한 `miEventIds`, `userId`로 한 번 다시 요청한다. 첫 요청이 접수된 상태라면
-409 `SCENARIO_GROUP_OPERATION_CONFLICT`, 이미 성공했다면 400 `SCENARIO_GROUP_ALREADY_CREATED` 응답의
-기존 식별자로 복구하고, 실제 접수되지 않았다면 새 operation이 생성된다. 무제한 자동 재시도는 하지 않는다.
+최초 POST의 `accepted`를 파싱하기 전에 연결이 끊겨 식별자를 모르는 경우에는 목록에서 요청 사용자, Event 조합,
+생성 시각과 operation을 확인한다. 동일 조합의 그룹이 여러 개일 수 있으므로 Event 조합만으로 기존 작업을
+확정하지 않는다. 식별한 기존 작업은 polling/SSE로 복구한다. 동일 POST를 재전송하면 별도 그룹과 operation이
+생성되므로 자동 재시도하지 않는다. 기존 작업을 식별할 수 없다면 추가 생성 여부를 사용자에게 확인한다.
 
 ### 중복 요청
 
 | 기존 상태 | 같은 사용자 | 다른 사용자 |
 | --- | --- | --- |
-| 동일 조합 operation이 실행 중 | 409 `SCENARIO_GROUP_OPERATION_CONFLICT` | 403 `SCENARIO_GROUP_OWNERSHIP_CONFLICT` |
-| 생성 성공, Confirmation 전 | 400 `SCENARIO_GROUP_ALREADY_CREATED` | 403 ownership conflict |
+| 동일 조합 operation이 실행 중 | 새 그룹 생성 허용 | 새 그룹 생성 허용 |
+| 생성 성공, Confirmation 전 | 새 그룹 생성 허용 | 새 그룹 생성 허용 |
 | `stage=completed` | 새 그룹 생성 허용 | 새 그룹 생성 허용 |
 | latest operation 실패·중단 | 새 그룹 생성 허용 | 새 그룹 생성 허용 |
 | soft delete됨 | 새 그룹 생성 허용 | 새 그룹 생성 허용 |
 
 오류 `data`에는 `error_code`, `error_name`, 가능한 `scenarioGroupId`, `operationId`가 포함된다. Client는
 `message` 문자열이 아니라 HTTP status와 `error_name`으로 분기한다. create POST는 멱등 API가 아니므로
-일반 timeout 뒤에는 자동 재시도하지 않고 operation·목록 증적을 먼저 확인한다. 식별자를 받기 전 연결이 끊긴
-경우에만 앞의 제한된 복구 절차를 사용한다.
+timeout이나 연결 끊김 뒤에는 자동 재시도하지 않고 앞의 operation·목록 조회 절차로 기존 작업을 확인한다.
+동일 Event 재사용 허용은 새 그룹 생성에 적용된다. 기존 그룹 변경의 소유권·작업 충돌 검사와 같은 그룹에
+생성 결과를 중복 저장하지 못하게 하는 검사는 유지한다.
 
 ## 2. 조회와 Presentation
 

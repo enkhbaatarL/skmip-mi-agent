@@ -33,7 +33,6 @@ from apps.persistence.scenario_group.repository import (
 from apps.persistence.scenario_group.schema import (
     ScenarioGroupPayload,
 )
-from apps.persistence.scenario_group_operation.models import MiScenarioGroupOperationModel
 from apps.persistence.scenario_group_operation.schema import ScenarioGroupOperationPayload
 from apps.persistence.signpost.repository import (
     SignpostRepository,
@@ -643,60 +642,6 @@ class ScenarioGroupService:
         finally:
             session.close()
 
-    @staticmethod
-    def _raise_for_event_set_conflict(
-        *,
-        groups: list[MiScenarioGroupModel],
-        event_ids_by_group_id: dict[int, list[int]],
-        active_operations: dict[int, MiScenarioGroupOperationModel],
-        requested_event_ids: list[int],
-        user_id: int,
-    ) -> None:
-        """동일 이벤트 조합으로 현재 진행 중(active)인 operation이 있을 때만 재생성을 막는다.
-
-        completed되지 않은(예: confirmation 대기) 과거 그룹은 더 이상 막지 않음 —
-        Event 내용이 계속 갱신되므로 동일 조합으로 다시 생성하는 것은 유효한 케이스.
-        """
-        requested_set = sorted(requested_event_ids)
-        exact_groups = [
-            group
-            for group in groups
-            if sorted(event_ids_by_group_id.get(int(group.scenario_group_id), [])) == requested_set
-        ]
-
-        for group in exact_groups:
-            group_id = int(group.scenario_group_id)
-            active_operation = active_operations.get(group_id)
-            if active_operation is not None:
-                ScenarioGroupService._raise_existing_group_conflict(
-                    group=group,
-                    operation=active_operation,
-                    user_id=user_id,
-                )
-
-    @staticmethod
-    def _raise_existing_group_conflict(
-        *,
-        group: MiScenarioGroupModel,
-        operation: MiScenarioGroupOperationModel,
-        user_id: int,
-    ) -> None:
-        group_id = int(group.scenario_group_id)
-        operation_id = str(operation.operation_id)
-        context: dict[str, Any] = {"scenarioGroupId": group_id, "operationId": operation_id}
-        same_owner = group.request_usr_id is not None and int(group.request_usr_id) == user_id
-        if not same_owner:
-            raise MIBaseError(
-                ErrorCode.SCENARIO_GROUP_OWNERSHIP_CONFLICT,
-                detail=f"Scenario group {group_id} is owned by another user",
-                context=context,
-            )
-        raise MIBaseError(
-            ErrorCode.SCENARIO_GROUP_OPERATION_CONFLICT,
-            detail=f"Scenario group {group_id} operation {operation_id} is still active",
-            context=context,
-        )
-
     def list_groups(
         self,
         *,
@@ -1134,27 +1079,7 @@ class ScenarioGroupService:
                         ErrorCode.ENTITY_NOT_FOUND,
                         detail=f"Events not found while preparing creation: {missing_event_ids}",
                     )
-                candidates = repository.fetch_event_set_candidates(
-                    engine_version="v4",
-                    event_set_hash=requested_event_set_hash,
-                    for_update=True,
-                )
-                candidate_group_ids = [int(group.scenario_group_id) for group in candidates]
-                from apps.persistence.scenario_group_operation.repository import (
-                    ScenarioGroupOperationRepository,
-                )
-
-                operation_repository = ScenarioGroupOperationRepository(session=session)
-                self._raise_for_event_set_conflict(
-                    groups=candidates,
-                    event_ids_by_group_id=repository.fetch_event_ids_by_group_ids(candidate_group_ids),
-                    active_operations=operation_repository.fetch_active_by_group_ids(
-                        candidate_group_ids,
-                        for_update=True,
-                    ),
-                    requested_event_ids=event_ids,
-                    user_id=user_id,
-                )
+            # 동일 Event 조합의 기존 작업과 관계없이 요청마다 새 그룹을 생성한다.
             scenario_group_id = repository.insert_group(
                 {
                     "request_usr_id": user_id,
