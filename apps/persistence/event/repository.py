@@ -17,6 +17,16 @@ from apps.persistence.event.models import (
 
 
 class EventRepository(BaseSyncSQLRepository):
+    def insert_event(self, payload: dict[str, Any]) -> int:
+        """tmm_mi_mievent_m 에 Event 1건을 insert하고 발급된 PK를 돌려준다.
+
+        commit은 호출하는 service 계층이 담당한다.
+        """
+        event = MiEventModel(**payload)
+        self.session.add(event)
+        self.session.flush()
+        return int(event.mi_event_id)
+
     def lock_events(self, mi_event_ids: list[int]) -> list[int]:
         """Lock active Event source rows in a deterministic order for create preparation."""
         if not mi_event_ids:
@@ -156,6 +166,29 @@ class EventRepository(BaseSyncSQLRepository):
             "level_2_code": l2.level_2_code,
             "level_2_label": l2.level_2_label,
         }
+
+    def list_event_types_l2(self) -> list[dict[str, Any]]:
+        """활성 Event Type L2 전체를 코드·한글명과 함께 조회한다.
+
+        분류 프롬프트에 넣을 카탈로그 용도라 L1 조인 없이 L2 컬럼만 읽는다.
+        """
+        stmt = (
+            select(
+                MiEventTypeL2Model.event_type_l2_id,
+                MiEventTypeL2Model.level_2_code,
+                MiEventTypeL2Model.level_2_label,
+            )
+            .where(MiEventTypeL2Model.del_yn == "N")
+            .order_by(MiEventTypeL2Model.event_type_l2_id)
+        )
+        return [
+            {
+                "event_type_l2_id": int(row.event_type_l2_id),
+                "level_2_code": row.level_2_code,
+                "level_2_label": row.level_2_label,
+            }
+            for row in self.session.execute(stmt).all()
+        ]
 
     def _apply_filters(
         self,

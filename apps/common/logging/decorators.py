@@ -247,6 +247,7 @@ def _mask_sensitive(kwargs: dict[str, Any]) -> dict[str, Any]:
 def log_connector(
     connector_type: str | None = None,
     *,
+    name: str | None = None,
     log_input: bool = True,
     log_output: bool = True,
     log_retry: bool = True,
@@ -255,6 +256,8 @@ def log_connector(
 
     Args:
         connector_type: Type identifier (LLM, HTTP, MCP, VDB, WEB).
+        name: 로그 태그로 쓸 이름. 미지정 시 함수명을 쓴다. 같은 인터페이스를 구현해
+            메서드명이 겹치는 구현체(예: web search provider)를 로그에서 구분할 때 지정한다.
         log_input: Whether to log input at DEBUG level.
         log_output: Whether to log output at DEBUG level.
         log_retry: Whether to log retry attempts at WARNING level.
@@ -269,7 +272,7 @@ def log_connector(
 
     def decorator(func: Callable[P, T]) -> Callable[P, T]:
         is_async = inspect.iscoroutinefunction(func)
-        conn_name = func.__name__
+        conn_name = name or func.__name__
         type_tag = f"[{connector_type}]" if connector_type else ""
 
         @functools.wraps(func)

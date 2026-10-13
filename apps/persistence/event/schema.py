@@ -20,4 +20,6 @@ class EventPayload(ApiModel):
     updated_at: str = ""
     language: str = "ko"
     occurred_at: str = ""
+    latest_record_first_created: str = ""
+    oldest_record_first_created: str = ""
     tags: list[str] = Field(default_factory=list)

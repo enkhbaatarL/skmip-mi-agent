@@ -112,6 +112,7 @@ def prepare_v4_multi_event_scenarios(
         "impact_levers": impact_levers,
         "impact_catalog_version": catalog_version,
         "impact_catalog_checksum": catalog_checksum,
+        "impact_parameter_axes": ModelImpactLeverService().load_parameter_semantic_axes(impact_levers),
         "user_id": payload.user_id,
         "analysis_as_of": _analysis_as_of(),
         "operation_id": operation_id,

@@ -99,8 +99,10 @@ class V4EventAnalysisExclusion(ApiModel):
     model_config = ConfigDict(extra="forbid")
 
     event_id: int = Field(gt=0)
-    reason_type: Literal["no_usable_fact", "no_material_impact"]
+    # catalog_condition_unmet: LNG 시장 영향은 있지만 Catalog Lever 조건(slot·Year 범위·비활성) 때문에 쓸 Lever가 없음
+    reason_type: Literal["no_usable_fact", "no_material_impact", "catalog_condition_unmet"]
     reason: str = Field(min_length=1)
+    blocked_lever_codes: list[str] = Field(default_factory=list)
 
 
 class V4LeverStepDraft(ApiModel):
@@ -289,6 +291,8 @@ class V4ReadableEventAnalysisDraft(ApiModel):
     impacts: list[V4ReadableEventImpact] = Field(default_factory=list, max_length=3)
     open_questions: list[V4ReadablePathQuestion] = Field(default_factory=list)
     excluded_because: str | None = Field(default=None, max_length=160)
+    excluded_reason: Literal["no_material_impact", "catalog_condition_unmet"] | None = None
+    blocked_levers: list[str] = Field(default_factory=list, max_length=3)
 
     @model_validator(mode="after")
     def validate_event_decision(self) -> V4ReadableEventAnalysisDraft:
@@ -306,6 +310,13 @@ class V4ReadableEventAnalysisDraft(ApiModel):
                 raise ValueError("Event with impacts cannot define excludedBecause")
         elif not self.excluded_because:
             raise ValueError("Event with facts but no impacts requires excludedBecause")
+        # Normalize instead of failing: an inconsistent reason/Lever pair does not change the analysis, and rejecting
+        # it forced a full LLM retry (2 of 27 calls in the 2026-10 path experiment).
+        if not (self.event_facts and self.excluded_because):
+            self.excluded_reason = None
+        if self.excluded_reason != "catalog_condition_unmet":
+            self.blocked_levers = []
+        self.blocked_levers = list(dict.fromkeys(self.blocked_levers))
         return self
 
 
@@ -713,6 +724,28 @@ def _parse_balance_effect(value: str, *, rationale: str) -> V4BalanceEffect | No
     return V4BalanceEffect(domain=domain, direction=direction, rationale=rationale)
 
 
+def _impact_route_signature(path: V4EventImpactPathDraft) -> frozenset[tuple[str, str, str, str]]:
+    return frozenset(
+        (step.lever_code, str(step.state_direction), _normalized(step.scope), _normalized(step.timing))
+        for step in path.lever_steps
+    )
+
+
+def _ensure_distinct_event_impacts(paths: list[V4EventImpactPathDraft]) -> None:
+    """Reject a split Impact that repeats another Impact's Lever, direction, scope and timing.
+
+    A Supporting Fact may open its own Impact on the same Lever, but only when the target, direction or timing differs;
+    otherwise it belongs in the existing Impact's evidence.
+    """
+    for index, path in enumerate(paths):
+        for earlier_index, earlier in enumerate(paths[:index]):
+            if _impact_route_signature(path) == _impact_route_signature(earlier):
+                raise ValueError(
+                    f"Impact {index + 1} repeats Impact {earlier_index + 1} with the same Lever, direction, scope and "
+                    "timing. Merge its evidence into that Impact, or state the different target, direction or timing.",
+                )
+
+
 def expand_v4_readable_event_analysis(
     readable: V4ReadableEventAnalysisDraft,
     *,
@@ -754,15 +787,19 @@ def expand_v4_readable_event_analysis(
         )
         for _ref, text in selected
     ]
-    reason_type: Literal["no_usable_fact", "no_material_impact"] | None = None
+    reason_type: Literal["no_usable_fact", "no_material_impact", "catalog_condition_unmet"] | None = None
     if readable.excluded_because:
-        reason_type = "no_material_impact" if readable.event_facts else "no_usable_fact"
+        if not readable.event_facts:
+            reason_type = "no_usable_fact"
+        else:
+            reason_type = readable.excluded_reason or "no_material_impact"
     exclusions = (
         [
             V4EventAnalysisExclusion(
                 event_id=event_id,
                 reason_type=reason_type,
                 reason=readable.excluded_because,
+                blocked_lever_codes=readable.blocked_levers,
             ),
         ]
         if readable.excluded_because is not None and reason_type is not None
@@ -796,6 +833,7 @@ def expand_v4_readable_event_analysis(
         )
     if paths and used_fact_ids != {fact.fact_id for fact in facts}:
         raise ValueError("every selected Event Fact must support at least one Impact")
+    _ensure_distinct_event_impacts(paths)
 
     retained_questions = (
         readable.open_questions[:open_question_limit] if open_question_limit is not None else readable.open_questions
@@ -1380,6 +1418,10 @@ def expand_v4_readable_scenario_synthesis(
     )
 
 
+# Exclusion reasons allowed for an Event that has usable Facts but no Impact paths.
+_FACT_EXCLUSION_REASON_TYPES = frozenset({"no_material_impact", "catalog_condition_unmet"})
+
+
 def finalize_v4_event_impact_analysis(
     draft: V4EventImpactAnalysisDraft,
     *,
@@ -1474,14 +1516,22 @@ def finalize_v4_event_impact_analysis(
         paths_by_event[path.event_id].append(hydrated)
 
     exclusion_by_event = {exclusion.event_id: exclusion for exclusion in draft.event_exclusions}
+    for exclusion in draft.event_exclusions:
+        unknown_blocked = sorted(set(exclusion.blocked_lever_codes) - set(catalog_by_code))
+        if unknown_blocked:
+            raise ValueError(
+                f"Event {exclusion.event_id} blockedLevers must be catalog Lever codes: {unknown_blocked}",
+            )
     for fact in draft.event_facts:
         exclusion = exclusion_by_event.get(fact.event_id)
-        if fact.fact_id not in used_fact_ids and (exclusion is None or exclusion.reason_type != "no_material_impact"):
+        if fact.fact_id not in used_fact_ids and (
+            exclusion is None or exclusion.reason_type not in _FACT_EXCLUSION_REASON_TYPES
+        ):
             raise ValueError(f"unused Event Fact requires a no_material_impact Event exclusion: {fact.fact_id}")
     for event_id in event_ids:
         if facts_by_event.get(event_id) and not paths_by_event.get(event_id):
             exclusion = exclusion_by_event.get(event_id)
-            if exclusion is None or exclusion.reason_type != "no_material_impact":
+            if exclusion is None or exclusion.reason_type not in _FACT_EXCLUSION_REASON_TYPES:
                 raise ValueError(
                     f"Event {event_id} with usable Facts but no paths requires a no_material_impact exclusion"
                 )

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.v4_budget import (
@@ -27,9 +28,9 @@ Event 한 건에서 LNG 시장에 필요한 핵심 사실 문장을 최대 3개 
 JKM 가격에 전달되는 영향 문장을 최대 3개 작성하십시오. eventFacts[0]은 반드시 Fact 후보 1번이고, impacts[0]에는 Event 제목과
 요약의 핵심 주제·상태·변화를 직접 반영하십시오. 영향 문장에는 JKM 방향과 기간을 포함하십시오.
 eventFacts는 Impact 근거가 되는 후보를 최대 3개까지 모두 선택하고, 중요한 근거를 개수를 줄이려고 빼지
-마십시오. impacts는 가급적 1~2개만 작성하고 의미적으로 필요한 경우에만 세 번째 항목을 추가하십시오.
-각 Impact의 evidence에는 그 경로를 뒷받침하는 선택 Fact를 모두 포함하십시오. 별도 전달 경로를 만드는
-Fact는 다른 Impact로 분리하십시오.
+마십시오. impacts는 Primary Impact와 별도 경로 Supporting Fact 수만큼 최대 3개 작성하십시오.
+각 Impact의 evidence에는 그 경로를 뒷받침하는 선택 Fact를 모두 포함하십시오. Primary Fact와 다른 대상·방향·시점의
+변화를 보여 주는 Supporting Fact는 같은 Lever라도 Primary Impact에 합치지 말고 다른 Impact로 분리하십시오.
 각 Impact의 leverStates 안에서는 같은 Lever code를 두 번 이상 사용하지 마십시오. 하나의 Lever가 여러 역할이나
 시점에 걸쳐 작동하더라도 가장 대표적인 role·direction·scope·timing 하나로 통합하십시오.
 Fact 후보 문장은 그대로 복사하십시오. 중요한 수치·기간과 분석 기준일을 함께 해석한 판단 근거는
@@ -136,16 +137,134 @@ def _render_impact_catalog(impact_levers: list[dict[str, Any]]) -> str:
     return "\n".join(sections)
 
 
-def build_v4_event_fact_candidates(event: dict[str, Any]) -> dict[str, str]:
-    """Create stable source sentences that the LLM can select without rephrasing."""
-    compact = CompactEventContext.from_event(event)
+def summarize_parameter_slots(semantic_axes: str | None) -> str:
+    """Reduce a model parameter's semantic_axes to its required slot names and value ranges.
+
+    e.g. "slot=B:Year(YYYY, 2026~2030), C:Country(국가명; basecase 예: …); value=F:…" -> "Year(YYYY, 2026~2030), Country"
+    """
+    text = re.sub(r"\s\([A-Za-z ]+\)", "", str(semantic_axes or ""))  # nested "(China)" in examples
+    # Parenthesized notes such as "(국가명; basecase 예: …)" contain ";" that would split the slot list.
+    text = re.sub(r"\(([^()]*?)(?:;[^()]*)\)", r"(\1)", text)
+    text = re.sub(r"\((?:[^()]*?(?:예:|basecase|개 )[^()]*)\)", "", text)
+    match = re.search(r"slot=(.*?)(?:;|,\s*value=|$)", text)
+    if match is None:
+        return ""
+    slots = re.sub(r"\b[A-Z]{1,2}:", "", match.group(1))  # workbook column letters
+    slots = re.sub(r"\((국가명|숫자)\)", "", slots)
+    return re.sub(r"\s+", " ", slots).strip(" ,")[:180]
+
+
+def _render_impact_catalog_with_slots(
+    impact_levers: list[dict[str, Any]],
+    parameter_axes: dict[str, str],
+) -> str:
+    """Render Levers by meaning plus the required slots of their bound model parameters.
+
+    The natural-language applicability_hint mixed binding slots, scope policy and runtime state, so the LLM
+    rejected Levers (or whole Events) on conditions it could not evaluate. Slots come from the parameter master.
+    """
+    grouped: dict[str, list[str]] = {domain: [] for domain in _IMPACT_DOMAINS}
+    for lever in sorted(
+        impact_levers,
+        key=lambda item: (str(item.get("domain") or ""), str(item.get("lever_code") or "")),
+    ):
+        domain = str(lever.get("domain") or "")
+        if domain not in grouped:
+            continue
+        line = f"- {lever.get('lever_code')}: {str(lever.get('description') or '').strip()[:100]}"
+        bindings = [binding for binding in lever.get("parameter_bindings") or [] if isinstance(binding, dict)]
+        if not bindings:
+            line += "\n  · binding 없음: 모델 입력 없이 Scenario 가격·시장 조건으로만 사용"
+        for binding in bindings:
+            name = str(binding.get("parameter_name") or "")
+            status = "사용 가능" if binding.get("support_status") == "executable" else "비활성(모델 입력 불가)"
+            slots = summarize_parameter_slots(parameter_axes.get(name)) or "정보 없음"
+            line += f"\n  · {name} [{status}] 필요 slot: {slots}"
+        grouped[domain].append(line)
+    return "\n".join(f"### {domain}\n" + "\n".join(lines) for domain, lines in grouped.items() if lines)
+
+
+# Event 갱신 bullet 중 "신규 근거에서 ... 확인되지 않음"처럼 결론이 미확인 진술인 문장.
+# "제시되지 않았으나, ... 요인임"처럼 뒤에 실질 해석이 이어지는 문장은 사실 후보로 유지한다.
+_UNCONFIRMED_STATEMENT_PATTERN = re.compile(
+    r"(?:"
+    r"(?:확인|제시|명시|포함|언급|공개)되지\s*않"
+    r"(?:음|았음|았다|는다|습니다|았습니다|아[^,]*(?:제한적|어려움|불가)(?:임|이다|입니다)?)?"
+    r"|(?:근거|업데이트)\s*부재(?:임|함)?"
+    r")\s*[.。]?\s*$",
+)
+
+
+# "…저점 수준으로 언급되었으며, 최신 수치는 확인되지 않음"처럼 앞 절에 관측 사실이 있는 혼합 문장을 찾기 위한 절 경계.
+# 명사 뒤 "나"(예: "피해나")와 구분하려고 용언 어미 형태만 본다.
+_CLAUSE_BOUNDARY_PATTERN = re.compile(r"(?:며|으나|았으나|었으나|였으나|했으나|지만|았고|었고|였고|했고)[,\s]")
+_ABSENCE_PATTERN = re.compile(r"되지\s*않|하지\s*않|부재|없")
+
+
+def _ends_with_unconfirmed(text: str) -> bool:
+    return bool(_UNCONFIRMED_STATEMENT_PATTERN.search(text.strip()))
+
+
+def is_v4_unconfirmed_statement(text: str) -> bool:
+    """Return whether a source sentence only states that something was not confirmed.
+
+    Mixed sentences whose leading clause carries an observed fact stay Fact candidates.
+    """
+    if not _ends_with_unconfirmed(text):
+        return False
+    boundaries = list(_CLAUSE_BOUNDARY_PATTERN.finditer(text))
+    if not boundaries:
+        return True
+    leading_clause = text[: boundaries[-1].start()]
+    return bool(_ABSENCE_PATTERN.search(leading_clause))
+
+
+def _v4_event_source_sentences(event: dict[str, Any]) -> list[str]:
     raw_facts = [
         text for item in event.get("key_facts") or event.get("key_bullets") or [] if (text := str(item).strip())
     ]
-    if not raw_facts:
-        raw_facts = [compact.summary or compact.title]
-    unique_facts = list(dict.fromkeys(fact for fact in raw_facts if fact))[:5]
-    return {f"f{index}": fact for index, fact in enumerate(unique_facts, start=1)}
+    return list(dict.fromkeys(raw_facts))
+
+
+def build_v4_event_fact_candidates(event: dict[str, Any]) -> dict[str, str]:
+    """Create stable source sentences that the LLM can select without rephrasing.
+
+    Statements that only say something was not confirmed are excluded from the candidates. They are not
+    shown as a separate prompt section either: listing them made the LLM read Catalog applicability more
+    strictly and drop Levers or whole Events. When the headline bullet itself is unconfirmed, the Event
+    summary becomes candidate 1 (the Primary Fact) so the Primary Fact stays on the Event's core topic
+    instead of promoting a background bullet.
+    """
+    compact = CompactEventContext.from_event(event)
+    sentences = _v4_event_source_sentences(event)
+    facts = [fact for fact in sentences if not is_v4_unconfirmed_statement(fact)]
+    headline = compact.summary or compact.title
+    # The headline uses the stricter check: a first bullet that ends on "확인되지 않음" is a status update,
+    # not the Event's core fact, even when an earlier clause mentions background facts.
+    if headline and (not facts or _ends_with_unconfirmed(sentences[0])):
+        facts = [headline, *(fact for fact in facts if fact != headline)]
+    return {f"f{index}": fact for index, fact in enumerate(facts[:5], start=1)}
+
+
+def _v4_event_time_lines(event: dict[str, Any], occurred_at: str) -> str:
+    """Render the Event time, falling back to the source record period when occurred_at is missing.
+
+    Most Events have no occurred_at, and "미제공" alone made the LLM reject Catalog Levers whose
+    applicability requires a Year·Month (e.g. us_gom_hurricane_disruption).
+    """
+    if occurred_at:
+        return f"- 발생시각: {occurred_at}\n"
+    oldest = str(event.get("oldest_record_first_created") or "")[:10]
+    latest = str(event.get("latest_record_first_created") or "")[:10]
+    if not (oldest or latest):
+        return "- 발생시각: 미제공\n"
+    period = f"{oldest} ~ {latest}" if oldest and latest and oldest != latest else (latest or oldest)
+    return (
+        "- 발생시각: 미제공\n"
+        f"- 관련 기록 기간: {period} (원문 기록 수집 시점)\n"
+        "  관련 기록 기간은 사건이 관측된 연도·월입니다. 사건의 시작점이나 잔여 기간 계산의 기준으로는\n"
+        "  쓰지 않습니다.\n"
+    )
 
 
 def _feedback(title: str, validation_feedback: str | None, instruction: str) -> str:
@@ -168,6 +287,7 @@ def build_model_lever_user_prompt(
     selected_event_count: int = 1,
     open_question_budget: int | None = None,
     validation_feedback: str | None = None,
+    parameter_axes: dict[str, str] | None = None,
 ) -> str:
     """Compatibility wrapper for the first v4 analysis prompt."""
     return build_v4_event_impact_analysis_user_prompt(
@@ -178,6 +298,7 @@ def build_model_lever_user_prompt(
         selected_event_count=selected_event_count,
         open_question_budget=open_question_budget,
         validation_feedback=validation_feedback,
+        parameter_axes=parameter_axes,
     )
 
 
@@ -195,6 +316,7 @@ def build_v4_event_impact_analysis_user_prompt(
     selected_event_count: int = 1,
     open_question_budget: int | None = None,
     validation_feedback: str | None = None,
+    parameter_axes: dict[str, str] | None = None,
 ) -> str:
     if len(events) != 1:
         detail = "v4 Event analysis requires exactly one Event"
@@ -227,7 +349,7 @@ def build_v4_event_impact_analysis_user_prompt(
         f"- ID: {compact.event_id}\n"
         f"- 제목: {compact.title[:120]}\n"
         f"- 요약: {compact.summary[:240]}\n"
-        f"- 발생시각: {compact.occurred_at or '미제공'}\n"
+        f"{_v4_event_time_lines(events[0], compact.occurred_at)}"
         f"- 분석 기준일: {analysis_as_of}\n\n"
         f"- 전체 선택 Event 수: {selected_event_count}\n\n"
         f"- 이번 Event openQuestions 목표·상한: {question_budget}개\n\n"
@@ -235,7 +357,7 @@ def build_v4_event_impact_analysis_user_prompt(
         f"{fact_lines}\n\n"
         f"{detail_section}"
         f"## 사용할 수 있는 Lever · catalog {catalog_version}\n"
-        f"{_render_impact_catalog(impact_levers)}\n\n"
+        f"{_render_impact_catalog_with_slots(impact_levers, parameter_axes or {})}\n\n"
         "## 이번 단계의 질문\n"
         "1. LNG 시장에 실질적인 영향을 주는 후보 문장은 무엇입니까?\n"
         "2. 그 사실은 어떤 Lever와 수급 경로를 거쳐 JKM에 영향을 줍니까?\n"
@@ -272,13 +394,16 @@ def build_v4_event_impact_analysis_user_prompt(
         "  핵심 주체·지표를 보존해 해당 변화가 Lever와 JKM으로 전달되는 대표 경로를 설명합니다.\n"
         "- impacts[].evidence에는 선택한 eventFacts를 1~3개 포함하며, 그 경로를 뒷받침하는 선택 Fact는 모두\n"
         "  넣습니다. 같은 Fact를 근거가 아닌 Impact에 억지로 넣지는 않습니다.\n"
-        "- impacts는 가급적 1~2개만 작성합니다. 세 번째 Impact는 서로 다른 Lever·방향·기간 또는 실질적인\n"
-        "  증폭·상쇄 경로를 앞의 Impact로 설명할 수 없을 때만 추가합니다.\n"
-        "  세 번째 Fact가 별도 주요 Lever, 반대 방향, 구분되는 기간 또는 독립 원인을 나타내면 별도 Impact로\n"
-        "  분리합니다. 선택한 모든 eventFact는 적어도 하나의 Impact evidence에 사용합니다.\n"
-        "- 동일 Event 안의 원인 → 전달 → 결과 관계는 별도 Impact로 쪼개지 말고 하나의 Impact 안에서\n"
-        "  driver → transmission → primary Lever step으로 표현합니다. JKM 방향·영향 기간·Lever 경로가\n"
-        "  독립적으로 달라 하나의 전달 경로로 설명할 수 있을 때만 추가 Impact를 만듭니다.\n"
+        "- Supporting Fact(eventFacts[1]·[2])마다 Primary Impact와의 관계를 먼저 판단합니다.\n"
+        "  1) 별도 경로 Fact: Primary Fact와 다른 대상(국가·지역·구매자·시설), 반대 방향, 구분되는 시점의 변화를\n"
+        "     보여 주는 Fact입니다. 같은 Lever를 쓰더라도 Primary Impact evidence에 합치지 말고 이 Fact를 근거로 하는\n"
+        "     별도 Impact를 만듭니다. 별도 Impact는 Primary Impact와 Lever, direction, scope, timing 중 하나 이상이\n"
+        "     달라야 하며, 그 차이를 analysis에 드러냅니다.\n"
+        "  2) 보강 Fact: Primary Fact와 같은 변화의 수치·관측일, 또는 같은 변화의 원인 → 전달 → 결과 단계를 설명하는\n"
+        "     Fact입니다. Primary Impact evidence에 넣고 driver → transmission → primary Lever step으로 표현합니다.\n"
+        "- impacts는 Primary Impact와 별도 경로 Fact 수만큼 작성하며 최대 3개입니다. 선택한 모든 eventFact는 적어도\n"
+        "  하나의 Impact evidence에 사용합니다.\n"
+        "- 같은 Event의 Impact끼리 Lever·direction·scope·timing이 모두 같으면 서버가 같은 경로로 보고 거부합니다.\n"
         "- leverStates는 Impact마다 가급적 1~2개만 작성하며 `lever|role|direction|scope|timing` 형식입니다.\n"
         "  driver·transmission·primary 세 단계가 모두 중요한 전달 경로일 때만 최대 3개를 작성합니다.\n"
         "  3개를 초과하는 후보가 있으면 실제 전달 경로를 가장 잘 설명하는 중요한 3개만 선택하고,\n"
@@ -313,11 +438,25 @@ def build_v4_event_impact_analysis_user_prompt(
         "- Impact는 이 Event의 핵심 주제가 직접 만드는 경로만 작성합니다. 후보나 상세 분석에 함께 언급된\n"
         "  다른 주제(예: 가격 스프레드 Event 안의 운임·선박 언급)는 다른 Event가 다룰 수 있으므로 별도 Impact나\n"
         "  열린 질문으로 만들지 말고, 필요하면 해당 Impact analysis 안의 전달 맥락으로만 씁니다.\n"
-        "- leverStates의 각 Lever는 위 catalog 설명의 적용 조건을 이 Event의 사실이 실제로 충족할 때만 씁니다.\n"
+        "- leverStates의 각 Lever는 다음 순서로 판단합니다.\n"
+        "  1) Lever 의미가 이 Event에서 실제로 관측된 상태 변화(차질·가동률·운임·수요·가격차 변화 등)와 맞는지 봅니다.\n"
+        "     위험·가능성·업데이트 부재만 있으면 binding 없는 price_only Lever를 쓰거나 그 단계를 생략합니다.\n"
+        "  2) binding이 있는 Lever는 대상 slot(Country, LNG Plant, Pipeline, From/To Country, Canal 등)이 사실에서\n"
+        "     확인되고 Year가 표시된 범위 안이면 씁니다. Month·Train·Demand Sub-Sector 같은 세부 slot이 없다는 이유만으로\n"
+        "     Lever를 버리거나 Event를 제외하지 않습니다. 세부 slot은 이후 Model Parameter 단계에서 채웁니다.\n"
+        "  3) binding parameter가 비활성이거나 사실의 Year가 범위 밖이면 그 Lever 대신 의미가 맞는 다른 Lever나\n"
+        "     price_only Lever를 씁니다.\n"
         "  출력 전에 Lever마다 정의와 사실을 다시 대조하고, 비슷해 보이지만 정의가 다른 Lever(예: 정책·제재가 없는\n"
         "  상업적 화물 재배분에 trade_restriction)는 쓰지 않습니다. 맞는 Lever가 없으면 그 단계를 생략합니다.\n"
         "- 모든 Impact에는 primary role step이 정확히 하나 있어야 합니다. driver·transmission만으로 Impact를 만들지 않습니다.\n"
-        "- 사용할 사실이 없거나 중요한 영향이 없을 때만 excludedBecause를 작성합니다.\n"
+        "- 사용할 사실이 없거나, 중요한 영향이 없거나, 영향은 있지만 쓸 수 있는 Lever가 없을 때만 excludedBecause를\n"
+        "  작성합니다. Fact를 선택한 Event를 제외하면 excludedReason을 함께 씁니다.\n"
+        "  · catalog_condition_unmet: LNG 시장 영향은 있지만 의미가 맞는 Lever를 위 규칙(대상 slot·Year 범위·비활성)\n"
+        "    때문에 쓸 수 없고, price_only Lever로도 영향 경로를 설명할 수 없어 제외할 때만 씁니다. price_only Lever로\n"
+        "    설명할 수 있으면 제외하지 말고 그 Lever로 Impact를 만듭니다. blockedLevers에 검토했지만 쓸 수 없었던\n"
+        "    Lever code를 최대 3개 그대로 복사합니다.\n"
+        "  · no_material_impact: 그 밖에 LNG 시장에 중요한 영향이 없을 때. blockedLevers는 비웁니다.\n"
+        "  사용할 Fact가 없어 eventFacts가 비어 있으면 excludedReason과 blockedLevers를 쓰지 않습니다.\n"
         f"{feedback}"
     )
 
@@ -338,7 +477,6 @@ def build_v4_interaction_analysis_user_prompt(
     path_cards_by_event: dict[int, list[str]] = {}
     event_order: list[int] = []
     event_path_counts: dict[int, int] = {}
-    seen_event_ids: set[object] = set()
     for path in impact_paths:
         event_id = int(path.get("event_id"))
         if event_id not in event_path_counts:
@@ -347,13 +485,9 @@ def build_v4_interaction_analysis_user_prompt(
         event_path_counts[event_id] += 1
         alias = f"E{event_id}-P{event_path_counts[event_id]}"
         lever_steps = path.get("lever_steps") or []
-        path_role = (
-            "Primary Impact"
-            if any(step.get("path_role") == "primary" for step in lever_steps)
-            or (not lever_steps and event_id not in seen_event_ids)
-            else "Supporting Impact"
-        )
-        seen_event_ids.add(event_id)
+        # impacts[0] of each Event is the Primary Impact. lever step path_role=primary marks the core
+        # Lever inside every Impact, so it cannot distinguish Primary from Supporting Impacts.
+        path_role = "Primary Impact" if event_path_counts[event_id] == 1 else "Supporting Impact"
         # Keep the copyable code separate from the readable state so the LLM does not
         # copy "code direction (scope, timing)" into openQuestions[].lever.
         lever_codes = ", ".join(dict.fromkeys(str(step.get("lever_code")) for step in lever_steps))
@@ -914,6 +1048,8 @@ __all__ = [
     "build_v4_group_title_user_prompt",
     "event_open_question_budgets",
     "event_open_question_recommendations",
+    "is_v4_unconfirmed_statement",
+    "summarize_parameter_slots",
     "build_v4_interaction_analysis_user_prompt",
     "build_v4_scenario_synthesis_user_prompt",
 ]

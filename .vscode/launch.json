@@ -59,6 +59,30 @@
       "console": "integratedTerminal"
     },
     {
+      "name": "[🗞️]event-generate: uvicorn (event_generate.py)",
+      "type": "debugpy",
+      "request": "launch",
+      "python": "${config:python.defaultInterpreterPath}",
+      "module": "uvicorn",
+      "args": [
+        "event_generate:app",
+        "--reload",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        "8003"
+      ],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "envFile": "${workspaceFolder}/envs/.env",
+      "env": {
+        "PYTHONPATH": "${workspaceFolder}:${env:PYTHONPATH}",
+        "APP_CONFIG": "${workspaceFolder}/envs/config.yaml",
+        "PYTHONUNBUFFERED": "1"
+      },
+      "justMyCode": false
+    },
+    {
       "name": "[🌱🌱]scenario-agent: gunicorn (main.py)",
       "type": "debugpy",
       "request": "launch",
