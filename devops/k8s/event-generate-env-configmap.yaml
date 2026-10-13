@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: event-generate-agent-env-config
+data:
+  APP_CONFIG: /workdir/config/config.yaml
+  APP_HOST: 0.0.0.0
+  APP_PORT: "8000"
+  LOG_LEVEL: DEBUG

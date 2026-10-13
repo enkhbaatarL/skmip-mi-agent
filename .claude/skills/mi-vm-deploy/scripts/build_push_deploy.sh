@@ -9,15 +9,19 @@ LOCAL_CONFIG="${SCRIPT_DIR}/../.local"
 SCENARIO_COMPOSE_DIR="/home/azureuser/mi/mi-agent-scenario"
 MODEL_PARAMETER_COMPOSE_DIR="/home/azureuser/mi/mi-agent-model-parameter"
 INTERPRET_COMPOSE_DIR="/home/azureuser/mi/mi-agent-interpret"
+EVENT_GENERATE_COMPOSE_DIR="/home/azureuser/mi/mi-agent-event-generate"
 SCENARIO_IMAGE_REPO="skmidemoacr.azurecr.io/mi-agent-scenario"
 MODEL_PARAMETER_IMAGE_REPO="skmidemoacr.azurecr.io/mi-agent-model-parameter"
 INTERPRET_IMAGE_REPO="skmidemoacr.azurecr.io/mi-agent-interpret"
+EVENT_GENERATE_IMAGE_REPO="skmidemoacr.azurecr.io/mi-agent-event-generate"
 SCENARIO_DOCKERFILE="Dockerfile"
 MODEL_PARAMETER_DOCKERFILE="Dockerfile.model_param"
 INTERPRET_DOCKERFILE="Dockerfile_interpret"
+EVENT_GENERATE_DOCKERFILE="Dockerfile_event_generate"
 SCENARIO_HOST_PORT=""
 MODEL_PARAMETER_HOST_PORT="8002"
 INTERPRET_HOST_PORT="8003"
+EVENT_GENERATE_HOST_PORT="8004"
 DEFAULT_PLATFORM="linux/amd64"
 DEFAULT_COMPOSE_SERVICE="app"
 
@@ -82,7 +86,7 @@ Commands:
   logs [tail]                  Show remote agent logs; default tail=120
 
 Options:
-  --agent <name>               Target agent: scenario (default), model-parameter, or interpret
+  --agent <name>               Target agent: scenario (default), model-parameter, interpret, or event-generate
   --pem <path>                 SSH PEM path. Defaults to MI_DEMO_VM_PEM, skill .local, or /Users/messiah/sk-mi-demo-vm-key.pem
   --dockerfile <path>          Dockerfile path. Defaults by agent
   --platform <platform>        Docker platform. Default: linux/amd64
@@ -211,8 +215,19 @@ configure_agent() {
       COMPOSE_DIR="$INTERPRET_COMPOSE_DIR"
       HOST_PORT="$INTERPRET_HOST_PORT"
       ;;
+    event-generate|event_generate|event-generate-agent|event_generate_agent|mi-agent-event-generate)
+      AGENT="event-generate"
+      if [[ -z "$IMAGE_REPO" ]]; then
+        IMAGE_REPO="$EVENT_GENERATE_IMAGE_REPO"
+      fi
+      if [[ -z "$DOCKERFILE" ]]; then
+        DOCKERFILE="$EVENT_GENERATE_DOCKERFILE"
+      fi
+      COMPOSE_DIR="$EVENT_GENERATE_COMPOSE_DIR"
+      HOST_PORT="$EVENT_GENERATE_HOST_PORT"
+      ;;
     *)
-      echo "ERROR: unsupported agent: $AGENT. Use scenario, model-parameter, or interpret." >&2
+      echo "ERROR: unsupported agent: $AGENT. Use scenario, model-parameter, interpret, or event-generate." >&2
       exit 2
       ;;
   esac

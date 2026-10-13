@@ -48,6 +48,7 @@ from apps.agents.scenario_group_agent.prompts.multi_event_scenario_generation im
 from apps.agents.scenario_group_agent.schemas.base import BaseNode
 from apps.common.exceptions.custom import MIBaseError
 from apps.common.tracing.context import TraceContext
+from apps.common.values.enums import ModelPreference
 from apps.common.values.error_codes import ErrorCode
 from apps.persistence.event.schema import EventPayload
 
@@ -130,6 +131,7 @@ async def invoke_stage_structured_output[T: BaseModel](
     trace_context: TraceContext | None,
     stage: str | None = None,
     reasoning_effort_override: ReasoningEffortOption | None = None,
+    preference: ModelPreference | None = None,
 ) -> T:
     from apps.common.configs.config import get_settings
     from apps.connectors.llm.llm_client import invoke_llm_structured_output
@@ -151,6 +153,7 @@ async def invoke_stage_structured_output[T: BaseModel](
         trace_context=stage_trace_context,
         stream=cfg.llm_stream_enabled,
         reasoning_effort=reasoning_effort_override or cfg.llm_reasoning_effort,
+        preference=preference,
     )
     return response.result
 

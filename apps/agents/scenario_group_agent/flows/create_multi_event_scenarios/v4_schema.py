@@ -29,6 +29,9 @@ from apps.persistence.model_impact_lever.schema import (
 from apps.persistence.scenario.schema import RelatedMarket
 
 
+MIN_V4_SCENARIO_PROBABILITY_SCORE = 5
+
+
 Materiality = Literal["high", "medium", "low"]
 BalanceDirection = Literal["increase", "decrease", "mixed", "unchanged"]
 BalanceWireValue = Literal[
@@ -96,8 +99,10 @@ class V4EventAnalysisExclusion(ApiModel):
     model_config = ConfigDict(extra="forbid")
 
     event_id: int = Field(gt=0)
-    reason_type: Literal["no_usable_fact", "no_material_impact"]
+    # catalog_condition_unmet: LNG 시장 영향은 있지만 Catalog Lever 조건(slot·Year 범위·비활성) 때문에 쓸 Lever가 없음
+    reason_type: Literal["no_usable_fact", "no_material_impact", "catalog_condition_unmet"]
     reason: str = Field(min_length=1)
+    blocked_lever_codes: list[str] = Field(default_factory=list)
 
 
 class V4LeverStepDraft(ApiModel):
@@ -286,6 +291,8 @@ class V4ReadableEventAnalysisDraft(ApiModel):
     impacts: list[V4ReadableEventImpact] = Field(default_factory=list, max_length=3)
     open_questions: list[V4ReadablePathQuestion] = Field(default_factory=list)
     excluded_because: str | None = Field(default=None, max_length=160)
+    excluded_reason: Literal["no_material_impact", "catalog_condition_unmet"] | None = None
+    blocked_levers: list[str] = Field(default_factory=list, max_length=3)
 
     @model_validator(mode="after")
     def validate_event_decision(self) -> V4ReadableEventAnalysisDraft:
@@ -303,6 +310,13 @@ class V4ReadableEventAnalysisDraft(ApiModel):
                 raise ValueError("Event with impacts cannot define excludedBecause")
         elif not self.excluded_because:
             raise ValueError("Event with facts but no impacts requires excludedBecause")
+        # Normalize instead of failing: an inconsistent reason/Lever pair does not change the analysis, and rejecting
+        # it forced a full LLM retry (2 of 27 calls in the 2026-10 path experiment).
+        if not (self.event_facts and self.excluded_because):
+            self.excluded_reason = None
+        if self.excluded_reason != "catalog_condition_unmet":
+            self.blocked_levers = []
+        self.blocked_levers = list(dict.fromkeys(self.blocked_levers))
         return self
 
 
@@ -517,7 +531,6 @@ class V4ExcludedScenarioCandidate(ApiModel):
 class V4ScenarioSynthesisResult(ApiModel):
     model_config = ConfigDict(extra="forbid")
 
-    group_title: str = Field(min_length=1)
     group_description: str = Field(min_length=1)
     scenarios: list[V4ScenarioCandidateDraft] = Field(min_length=3, max_length=5)
     excluded_scenarios: list[V4ExcludedScenarioCandidate] = Field(default_factory=list)
@@ -627,11 +640,6 @@ class V4ReadableScenarioSynthesisDraft(ApiModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    title: str = Field(
-        min_length=1,
-        max_length=120,
-        description="선택한 이벤트의 구체적인 대상·지역·지표·변화를 나타내는 시나리오 그룹 제목",
-    )
     description: str = Field(
         min_length=1,
         max_length=600,
@@ -644,6 +652,21 @@ class V4ReadableScenarioSynthesisDraft(ApiModel):
     )
     scenarios: list[V4ReadableScenario] = Field(min_length=3, max_length=5)
     excluded: list[V4ReadableExcludedScenarioCandidate] = Field(default_factory=list, max_length=2)
+
+
+class V4GroupTitleDraft(ApiModel):
+    """Group title written after scenarios are finalized, from their common premise and branching questions."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    title: str = Field(
+        min_length=1,
+        max_length=120,
+        description=(
+            "모든 시나리오가 공유하는 전제와 시나리오를 가르는 핵심 질문을 담은 20~45자 시나리오 그룹 제목. "
+            "특정 시나리오의 답이나 결말을 쓰지 않음"
+        ),
+    )
 
 
 class V4GenerationResult(ApiModel):
@@ -701,6 +724,28 @@ def _parse_balance_effect(value: str, *, rationale: str) -> V4BalanceEffect | No
     return V4BalanceEffect(domain=domain, direction=direction, rationale=rationale)
 
 
+def _impact_route_signature(path: V4EventImpactPathDraft) -> frozenset[tuple[str, str, str, str]]:
+    return frozenset(
+        (step.lever_code, str(step.state_direction), _normalized(step.scope), _normalized(step.timing))
+        for step in path.lever_steps
+    )
+
+
+def _ensure_distinct_event_impacts(paths: list[V4EventImpactPathDraft]) -> None:
+    """Reject a split Impact that repeats another Impact's Lever, direction, scope and timing.
+
+    A Supporting Fact may open its own Impact on the same Lever, but only when the target, direction or timing differs;
+    otherwise it belongs in the existing Impact's evidence.
+    """
+    for index, path in enumerate(paths):
+        for earlier_index, earlier in enumerate(paths[:index]):
+            if _impact_route_signature(path) == _impact_route_signature(earlier):
+                raise ValueError(
+                    f"Impact {index + 1} repeats Impact {earlier_index + 1} with the same Lever, direction, scope and "
+                    "timing. Merge its evidence into that Impact, or state the different target, direction or timing.",
+                )
+
+
 def expand_v4_readable_event_analysis(
     readable: V4ReadableEventAnalysisDraft,
     *,
@@ -742,15 +787,19 @@ def expand_v4_readable_event_analysis(
         )
         for _ref, text in selected
     ]
-    reason_type: Literal["no_usable_fact", "no_material_impact"] | None = None
+    reason_type: Literal["no_usable_fact", "no_material_impact", "catalog_condition_unmet"] | None = None
     if readable.excluded_because:
-        reason_type = "no_material_impact" if readable.event_facts else "no_usable_fact"
+        if not readable.event_facts:
+            reason_type = "no_usable_fact"
+        else:
+            reason_type = readable.excluded_reason or "no_material_impact"
     exclusions = (
         [
             V4EventAnalysisExclusion(
                 event_id=event_id,
                 reason_type=reason_type,
                 reason=readable.excluded_because,
+                blocked_lever_codes=readable.blocked_levers,
             ),
         ]
         if readable.excluded_because is not None and reason_type is not None
@@ -784,6 +833,7 @@ def expand_v4_readable_event_analysis(
         )
     if paths and used_fact_ids != {fact.fact_id for fact in facts}:
         raise ValueError("every selected Event Fact must support at least one Impact")
+    _ensure_distinct_event_impacts(paths)
 
     retained_questions = (
         readable.open_questions[:open_question_limit] if open_question_limit is not None else readable.open_questions
@@ -1373,11 +1423,14 @@ def expand_v4_readable_scenario_synthesis(
             ),
         )
     return V4ScenarioSynthesisResult(
-        group_title=readable.title,
         group_description=readable.description,
         scenarios=scenarios,
         excluded_scenarios=excluded_scenarios,
     )
+
+
+# Exclusion reasons allowed for an Event that has usable Facts but no Impact paths.
+_FACT_EXCLUSION_REASON_TYPES = frozenset({"no_material_impact", "catalog_condition_unmet"})
 
 
 def finalize_v4_event_impact_analysis(
@@ -1474,14 +1527,22 @@ def finalize_v4_event_impact_analysis(
         paths_by_event[path.event_id].append(hydrated)
 
     exclusion_by_event = {exclusion.event_id: exclusion for exclusion in draft.event_exclusions}
+    for exclusion in draft.event_exclusions:
+        unknown_blocked = sorted(set(exclusion.blocked_lever_codes) - set(catalog_by_code))
+        if unknown_blocked:
+            raise ValueError(
+                f"Event {exclusion.event_id} blockedLevers must be catalog Lever codes: {unknown_blocked}",
+            )
     for fact in draft.event_facts:
         exclusion = exclusion_by_event.get(fact.event_id)
-        if fact.fact_id not in used_fact_ids and (exclusion is None or exclusion.reason_type != "no_material_impact"):
+        if fact.fact_id not in used_fact_ids and (
+            exclusion is None or exclusion.reason_type not in _FACT_EXCLUSION_REASON_TYPES
+        ):
             raise ValueError(f"unused Event Fact requires a no_material_impact Event exclusion: {fact.fact_id}")
     for event_id in event_ids:
         if facts_by_event.get(event_id) and not paths_by_event.get(event_id):
             exclusion = exclusion_by_event.get(event_id)
-            if exclusion is None or exclusion.reason_type != "no_material_impact":
+            if exclusion is None or exclusion.reason_type not in _FACT_EXCLUSION_REASON_TYPES:
                 raise ValueError(
                     f"Event {event_id} with usable Facts but no paths requires a no_material_impact exclusion"
                 )
@@ -1875,12 +1936,45 @@ def _validate_scenarios(
         combination = tuple(sorted(fallback.dimension_values.items()))
         combination_owners[combination] = f"fallback({direction})"
         contributions = [
-            scores[next(value for value in dimension_by_id[dimension_id].values if value.value_id == value_id).pressure_contribution]
+            scores[next(value for value in dimension_by_id[dimension_id].values
+                        if value.value_id == value_id).pressure_contribution]
             for dimension_id, value_id in fallback.dimension_values.items()
         ]
         scenarios.append(fallback)
         contribution_by_scenario[id(fallback)] = contributions
         deltas[id(fallback)] = sum(contributions) - base_sum
+
+    # pressure_band 슬롯은 방향당 2개(strong_X/X)뿐이라, Base 대비 같은 방향에 3개 이상 몰리면
+    # 전부 다른 band를 줄 수 없다. 이 경우 가장 극단적인(= |delta| 큰) 2개만 생성 Scenario로
+    # 남기고, 나머지는 excludedScenarios로 돌린다 — 이미 선택된 같은 방향 Scenario보다 압력이
+    # 약해 독립적인 검토 가치가 낮다고 보는 것으로, LLM이 LOW_DISTINCTIVENESS로 직접 제외하는
+    # 것과 같은 개념을 서버가 기계적으로 적용한다. 재시도 없이 그 자리에서 유효한 결과를 만든다.
+    for sign, direction_label in ((1, "bullish"), (-1, "bearish")):
+        same_direction = [
+            scenario
+            for scenario in scenarios
+            if not scenario.baseline_yn and deltas[id(scenario)] * sign > 0
+        ]
+        if len(same_direction) <= 2:
+            continue
+        same_direction.sort(key=lambda scenario: abs(deltas[id(scenario)]), reverse=True)
+        for excess in same_direction[2:]:
+            scenarios.remove(excess)
+            logger.warning(
+                f"[SCENARIO][_validate_scenarios] EXCESS_EXCLUDED | direction={direction_label} | "
+                f"title={excess.title!r} | delta={deltas[id(excess)]}"
+            )
+            excluded_scenarios.append(
+                V4ExcludedScenarioCandidate(
+                    pressure_band=excess.pressure_band,
+                    reason_code="LOW_DISTINCTIVENESS",
+                    reason=(
+                        "Base 대비 같은 방향으로 이미 선택된 Scenario보다 압력이 약해 "
+                        "독립적인 검토 가치가 낮습니다."
+                    ),
+                    dimension_values=dict(excess.dimension_values),
+                )
+            )
 
     for scenario in scenarios:
         delta = deltas[id(scenario)]
@@ -1897,6 +1991,7 @@ def _validate_scenarios(
 
     # strong band가 겹치면(동일 임계값을 여러 시나리오가 동시에 넘으면), Base 대비 편차의 절댓값이
     # 가장 큰 시나리오만 strong을 유지하고 나머지는 같은 방향의 완화된 band로 내린다(상대적 극단성 순서는 보존).
+    # 위에서 방향당 최대 2개로 줄였으므로 이 완화만으로 항상 해소된다.
     for strong_band, moderate_band in (("strong_bullish", "bullish"), ("strong_bearish", "bearish")):
         holders = [scenario for scenario in scenarios if scenario.pressure_band == strong_band]
         if len(holders) > 1:
@@ -1904,8 +1999,8 @@ def _validate_scenarios(
             for demoted in holders[1:]:
                 demoted.pressure_band = moderate_band
 
-    # 안전망: 위 완화 로직으로도 band 중복이 해소되지 않으면(예: 같은 방향에 3개 이상 몰린 경우)
-    # 에러를 발생시켜 기존 재시도 메커니즘이 다른 조합을 다시 생성하도록 한다.
+    # 안전망: 위 로직으로도 band 중복이 해소되지 않으면(설계상 발생해선 안 되는 경우) 에러를
+    # 발생시켜 기존 재시도 메커니즘이 다른 조합을 다시 생성하도록 한다.
     non_base_bands = [scenario.pressure_band for scenario in scenarios if not scenario.baseline_yn]
     if len(set(non_base_bands)) != len(non_base_bands):
         raise ValueError(
@@ -1967,6 +2062,7 @@ def _normalize_v4_probability_scores(scenarios: list[V4ScenarioCandidate]) -> No
 def finalize_v4_generation_result(
     synthesis: V4ScenarioSynthesisResult,
     *,
+    group_title: str,
     group_summary: str,
     impact_analysis: V4EventImpactAnalysisResult,
     dimension_design: V4DimensionDesignResult,
@@ -1979,26 +2075,84 @@ def finalize_v4_generation_result(
         )
         for scenario in synthesis.scenarios
     ]
+    # LLM의 상대 점수를 합계 100인 정수 백분율로 바꾼다.
+    # 5% 제외 기준은 이 정규화된 점수에 적용한다.
     _normalize_v4_probability_scores(finalized_scenarios)
+
+    # 원본 제외 목록을 복사한 뒤, 이번에 제외할 후보를 추가한다.
+    # 복사하는 이유는 원본 synthesis가 직접 변경되는 것을 막기 위해서다.
+    excluded_scenarios = [candidate.model_copy(deep=True) for candidate in synthesis.excluded_scenarios]
+    retained_scenarios: list[V4ScenarioCandidate] = []
+
+    for scenario in finalized_scenarios:
+        if scenario.probability_score >= MIN_V4_SCENARIO_PROBABILITY_SCORE:
+            # 정확히 5%인 후보도 생성 목록에 유지한다.
+            retained_scenarios.append(scenario)
+            continue
+
+        # 위에서 continue하지 않은, 5% 미만인 후보만 여기서 제외 기록을 남긴다.
+        excluded_scenarios.append(
+            V4ExcludedScenarioCandidate(
+                pressure_band=scenario.pressure_band,
+                reason_code="LOW_PROBABILITY",
+                reason=(
+                    f"정규화된 발생 가능성 {scenario.probability_score:g}%가 "
+                    f"최소 기준 {MIN_V4_SCENARIO_PROBABILITY_SCORE}%보다 낮아 제외했습니다."
+                ),
+                dimension_values=dict(scenario.dimension_values),
+            ),
+        )
+
+    # 후보를 제외한 경우에만 남은 후보들의 점수 합계를 다시 100으로 맞춘다.
+    if len(retained_scenarios) != len(finalized_scenarios):
+        _normalize_v4_probability_scores(retained_scenarios)
+
+    # 이후 검증과 저장에는 유지하기로 한 후보만 전달한다.
+    finalized_scenarios = retained_scenarios
+
+    # 기존 검증에서 조합을 확인하고 baseline·pressure band·역할을 결정한다.
+    # 이 과정에서 fallback이 추가되거나 초과 후보가 제외될 수 있다.
     scenario_count_before_validation = len(finalized_scenarios)
     _validate_scenarios(
         finalized_scenarios,
-        synthesis.excluded_scenarios,
+        excluded_scenarios,
         dimension_definitions=dimension_design.dimension_definitions,
         impact_analysis=impact_analysis,
     )
-    if len(finalized_scenarios) != scenario_count_before_validation:
-        # _validate_scenarios가 Base 대비 양방향 보장을 위해 fallback Scenario를 추가했다면,
-        # probability_score 합계가 100을 넘어서므로 최종 목록으로 다시 정규화한다.
-        _normalize_v4_probability_scores(finalized_scenarios)
+
+    # 하나를 추가하고 하나를 제외하면 개수는 같아도 점수 합계가 달라질 수 있다.
+    # 개수 또는 합계가 바뀐 경우에만 최종 목록의 점수를 다시 정규화한다.
+    if (
+        len(finalized_scenarios) != scenario_count_before_validation
+        or sum(scenario.probability_score for scenario in finalized_scenarios) != 100
+    ):
+        # 정수로 나누고 남은 점수를 배분할 때, 나머지가 같으면 앞의 후보가 우선한다.
+        # 기존 baseline이 동률 후보보다 낮아지지 않도록 baseline을 먼저 배치한다.
+        # 새 목록을 정렬하므로 finalized_scenarios의 표시 순서는 바뀌지 않는다.
+        _normalize_v4_probability_scores(
+            sorted(finalized_scenarios, key=lambda scenario: not scenario.baseline_yn),
+        )
+
+    # 최초 필터 이후에도 검증 함수가 낮은 점수의 fallback을 추가할 수 있다.
+    # 최종 목록에 5% 미만이 있으면 저장하지 않고 기존 합성 재시도로 보낸다.
+    if any(scenario.probability_score < MIN_V4_SCENARIO_PROBABILITY_SCORE for scenario in finalized_scenarios):
+        raise ValueError(
+            "Final probabilityScore must be >= "
+            f"{MIN_V4_SCENARIO_PROBABILITY_SCORE}% for every scenario. "
+            "Regenerate combinations with both bearish and bullish directions "
+            "relative to the baseline; do not artificially raise probabilities."
+        )
+
+    # 최종 생성 개수 3~5개 조건은 기존 결과 스키마에서 검사한다.
+    # 여기서 발생하는 ValidationError도 기존 합성 재시도 경로에서 처리된다.
     result = V4GenerationResult(
-        group_title=synthesis.group_title,
+        group_title=group_title,
         group_summary=group_summary,
         group_description=synthesis.group_description,
         impact_analysis=impact_analysis,
         dimension_definitions=dimension_design.dimension_definitions,
         scenarios=finalized_scenarios,
-        excluded_scenarios=synthesis.excluded_scenarios,
+        excluded_scenarios=excluded_scenarios,
         excluded_dimensions=dimension_design.excluded_dimensions,
         validation_warnings=[
             *impact_analysis.validation_warnings,
@@ -2076,6 +2230,7 @@ __all__ = [
     "V4EventImpactPathDraft",
     "V4ExcludedScenarioCandidate",
     "V4GenerationResult",
+    "V4GroupTitleDraft",
     "V4InteractionUncertainty",
     "V4LeverState",
     "V4LeverStateDraft",

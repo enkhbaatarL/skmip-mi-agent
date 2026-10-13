@@ -120,12 +120,14 @@ flowchart LR
 prepare transaction은 다음을 함께 처리한다.
 
 1. `miEventIds` 1~5개와 Event 존재 여부를 확인한다.
-2. Event 원본 row를 정렬된 ID 순으로 잠그고 같은 Event 조합을 재검사한다.
+2. Event 원본 row를 정렬된 ID 순으로 잠그고 활성 Event 존재 여부를 재확인한다.
 3. 빈 Scenario Group, Event 관계, queued create operation, `accepted` event를 저장한다.
 4. lifespan task runner에 operation producer를 등록한다.
 
-요청 순서는 Event 관계의 `display_order`와 graph 입력에 보존한다. 중복 점유용 `event_set_hash`는 정렬된
-Event ID 집합과 api version으로 계산한다.
+요청 순서는 Event 관계의 `display_order`와 graph 입력에 보존한다. `event_set_hash`는 정렬된 Event ID 목록의
+버전이 지정된 표현(`v1:[...]`)을 해시한 조합 식별 정보이며 생성 차단에 사용하지 않는다. 엔진 버전은 별도
+`api_version`에 저장한다. 동일 Event 조합의 기존 그룹에 `queued|running` 작업이 있어도 요청마다 새 그룹과
+operation을 생성한다. Event row 잠금은 접수 transaction 동안만 유지하며 긴 생성 작업 동안 유지하지 않는다.
 
 ### v4 graph
 
@@ -145,7 +147,8 @@ flowchart TD
     F --> G[Dimension·Value lineage 검증]
     G --> H[Scenario 합성]
     H --> I[조합·pressure·확률 검증]
-    I --> J[일괄 persistence]
+    I --> K[그룹 제목 생성]
+    K --> J[일괄 persistence]
 ```
 
 #### 1. Event impact 분석
@@ -217,7 +220,8 @@ LLM은 ID나 source lineage를 만들지 않는다. 서버가 catalog와 검증�
 #### 4. Scenario 합성
 
 검증된 Dimension choice와 interaction으로 3~5개의 고유 조합을 선택한다. 각 Scenario는 title, narrative,
-Dimension value 조합, JKM `pressureBand`, 근거, role, 상대 확률 가중치를 가진다.
+Dimension value 조합, JKM `pressureBand`, 근거, role, 상대 확률 가중치를 가진다. 이 호출은 그룹 description만
+만들고 그룹 제목은 만들지 않는다.
 
 서버는 다음을 최종화한다.
 
@@ -231,10 +235,41 @@ Dimension value 조합, JKM `pressureBand`, 근거, role, 상대 확률 가중�
 `baselineYn=Y`는 미래 사실 확정이나 기관 합의를 의미하지 않는다. 생성 기준시점에서 가장 지지되는 작업
 가정이며, 대안 View의 lineage를 제거하는 해소 판정으로 사용하지 않는다.
 
+생성 후보의 확률을 합계 100인 정수 점수로 정규화한 뒤, 5 미만인 후보는
+`LOW_PROBABILITY` 사유와 함께 제외 목록으로 이동한다. 정확히 5인 후보는 유지한다.
+후보가 제외되면 남은 후보의 확률을 다시 정규화한다.
+
+조합 검증 후 후보 개수가 달라졌거나 점수 합계가 100이 아니면 재정규화한다.
+정수 배분의 나머지가 같은 경우 기존 baseline을 우선한다.
+
+자동 추가된 fallback을 포함해 최종 점수가 5 미만인 후보가 있으면 기존 합성
+재시도 경로로 이동한다. 최종 생성 개수는 기존 결과 스키마의 3~5개 조건을 따른다.
+재시도 한도를 소진하면 생성 작업이 실패한다.
+
 TTF·HH 관련성이 명확한 경우만 `relatedMarkets`에 보조 근거를 둔다. JKM 근거는 `pressureRationale`이
 정본이며 시장별 별도 price direction을 생성하지 않는다.
 
-#### 5. Persistence와 Presentation projection
+#### 5. 그룹 제목 생성
+
+`generate_v4_group_title`은 최종화된 Scenario를 기준으로 그룹 제목을 만든다. 제목은 그룹의 모든 Scenario를
+대표해야 하므로 특정 Scenario의 답이나 결말이 아니라 공통 전제와 Scenario를 가르는 핵심 질문을 담는다.
+
+1. 서버가 제목 초점을 고른다(`select_v4_group_title_focus`).
+   - 핵심 분기: 생성된 Scenario들이 서로 다른 `pressureContribution`의 value를 고른 Dimension.
+     `price_only`는 제외하고, 같은 `primaryLeverCode`는 하나만 쓰며, 최대 2개다.
+   - 공통 전제: 핵심 분기가 1개일 때만, 모든 Scenario가 같은 방향(0 제외)을 고른 Dimension.
+2. 제목 전용 structured-output 호출(stage `group_title`)에 분기·전제의 질문(`description`)과 출처 Event의
+   제목·요약·태그만 전달한다. 공통 영향·Interaction 문구와 value(답)는 전달하지 않는다. 20~45자, `{공통 전제} 속 {핵심 질문의
+   대상} 여부/폭/시점/지속성` 형태이며 지표 변경·지역명 묶음·결말 단정·Event 나열을 금지한다.
+   짧은 출력이므로 `ModelPreference.SPEED` 모델과 `llm_v4_group_title_reasoning_effort`(기본 `low`)를 쓴다.
+3. 핵심 분기의 출처 Event 토큰이 제목에 없으면 feedback과 함께 제목만 다시 만든다(최초 포함 최대 3회).
+   모두 실패하거나 호출이 실패하면 출처 Event 라벨로 만든 결정적 제목(`{출처 Event 라벨}에 따른 JKM 시나리오`)을 쓴다.
+   제목 생성 실패는 create 실패로 이어지지 않는다.
+
+finalize 단계는 Event 라벨 기반 임시 제목을 두고 이 노드가 확정한다. 진행 이벤트 phase는
+`scenario_synthesis`를 그대로 사용한다.
+
+#### 6. Persistence와 Presentation projection
 
 검증이 끝난 결과만 service 호출 한 번으로 Scenario Group과 Scenario에 저장한다. graph 진행 중에는
 검증 경계마다 operation의 `presentation_snapshot`을 갱신하고 revision을 증가시킨 뒤 `section_ready`를

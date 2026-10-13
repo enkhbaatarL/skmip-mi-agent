@@ -22,7 +22,7 @@ api_key: ${MODEL_API_KEY}
 
 model_endpoint: https://aip-stg.sktai.io/api/v1/gateway
 model_api_key: ${MODEL_API_KEY}
-model_api_deployment_name: "skmidev-gpt-5.5-20260424"
+model_api_deployment_name: "skmidev-gpt-5.6-sol-skgas"
 lightly_thinking_model_api_deployment_name: "skmidev-gpt-5.5-20260424"
 deeply_thinking_model_api_deployment_name: "skmidev-gpt-5.5-20260424"
 llm_timeout_sec: 310
@@ -30,7 +30,24 @@ llm_max_retries: 1
 llm_concurrency: 10
 llm_stream_enabled: true
 llm_reasoning_effort: default
+llm_verbosity: high
 llm_structured_output_strict: true
+
+# Web search
+web_search_provider: "responses,tavily"
+web_search_base_url: https://sk-mi-common-dev-oai-usea02-01.openai.azure.com/openai/v1
+web_search_model: "skmidev-gpt-5.5-20260424"
+web_search_context_size: medium
+web_search_max_results: 10
+web_search_score_threshold: 0.0
+web_search_reasoning_effort: medium
+web_search_tool_choice: required
+web_search_timeout_sec: 310
+web_search_max_retries: 2
+
+# MI MCP server
+mi_mcp_base_url: http://40.82.137.178:14180/mcp
+mi_mcp_timeout_sec: 60
 
 # HTTP client
 http_timeout: 60
@@ -358,6 +375,10 @@ agents:
   interpret_agent:
     mlflow_experiment_name: interpret_agent_local
     aip_app_id: interpret_agent
+    mlflow_tracing_enabled: true
+  event_generate_agent:
+    mlflow_experiment_name: event_generate_agent_local
+    aip_app_id: event_generate_agent
     mlflow_tracing_enabled: true
   default:
     mlflow_experiment_name: mi_agent_local

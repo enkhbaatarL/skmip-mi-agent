@@ -24,6 +24,7 @@ from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.v4_node
     AnalyzeEventImpactsNode,
     AnalyzeEventInteractionsNode,
     DesignModelLeverDimensionsNode,
+    GenerateV4GroupTitleNode,
     SynthesizeV4ScenariosNode,
     fail_v4_generation,
     finalize_v4_scenarios,
@@ -111,6 +112,7 @@ def prepare_v4_multi_event_scenarios(
         "impact_levers": impact_levers,
         "impact_catalog_version": catalog_version,
         "impact_catalog_checksum": catalog_checksum,
+        "impact_parameter_axes": ModelImpactLeverService().load_parameter_semantic_axes(impact_levers),
         "user_id": payload.user_id,
         "analysis_as_of": _analysis_as_of(),
         "operation_id": operation_id,
@@ -127,6 +129,7 @@ def _build_graph() -> Runnable:
     builder.add_node("validate_model_lever_dimensions", validate_v4_dimensions)
     builder.add_node("synthesize_v4_scenarios", SynthesizeV4ScenariosNode())
     builder.add_node("finalize_v4_scenarios", finalize_v4_scenarios)
+    builder.add_node("generate_v4_group_title", GenerateV4GroupTitleNode())
     builder.add_node("persist_generation", persist_v4_generation)
     builder.add_node("fail_generation", fail_v4_generation)
 
@@ -139,6 +142,7 @@ def _build_graph() -> Runnable:
     builder.add_conditional_edges("validate_model_lever_dimensions", route_after_v4_dimensions)
     builder.add_edge("synthesize_v4_scenarios", "finalize_v4_scenarios")
     builder.add_conditional_edges("finalize_v4_scenarios", route_after_v4_scenarios)
+    builder.add_edge("generate_v4_group_title", "persist_generation")
     builder.add_edge("persist_generation", END)
     builder.add_edge("fail_generation", END)
     return builder.compile()

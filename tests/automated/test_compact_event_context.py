@@ -244,13 +244,13 @@ def test_v4_prompt_matches_fact_path_analysis_contract() -> None:
         "eventFacts[0]은 Primary Fact",
         "impacts[0]은 Primary Impact",
         "반드시 후보 1번(Event 제목·요약의 핵심 문장)",
-        "서로 다른 Lever·방향·기간",
+        "같은 Lever를 쓰더라도 Primary Impact evidence에 합치지 말고",
         "decisionBasis는 Primary Fact나 Primary Impact를 대신할 수 없습니다",
         "Primary Impact의 규모·기간·회복 시점",
         "impacts.analysis",
         "eventFacts는 Impact의 근거가 되는 후보를 최대 3개까지 모두 선택",
         "impacts[].evidence에는 선택한 eventFacts를 1~3개 포함하며",
-        "impacts는 가급적 1~2개만 작성",
+        "impacts는 Primary Impact와 별도 경로 Fact 수만큼 작성하며 최대 3개",
         "leverStates",
         "openQuestions",
         "decisionBasis",
@@ -261,8 +261,10 @@ def test_v4_prompt_matches_fact_path_analysis_contract() -> None:
     assert "impactLeverId" not in prompt
     assert "분석 기준일: 2026-08-07" in prompt
     assert "### demand" in prompt
-    assert "- weather_demand: 한파·폭염의 강도와 지속 기간이 수요를 바꿀 때 선택" in prompt
-    assert "기온 변화에 따른 LNG 수요" not in prompt
+    # Lever는 자연어 적용 조건이 아니라 의미 + binding parameter의 필요 slot으로 표시한다.
+    assert "- weather_demand: 기온 변화에 따른 LNG 수요" in prompt
+    assert "한파·폭염의 강도와 지속 기간이 수요를 바꿀 때 선택" not in prompt
+    assert "· demand_weather [사용 가능] 필요 slot: 정보 없음" in prompt
     assert "factStatus" not in prompt
     assert "confidence" not in prompt
     assert "selectionHint" not in prompt
@@ -332,6 +334,34 @@ def test_v4_interaction_prompt_marks_first_path_per_event_as_primary() -> None:
     assert "역할: Primary Impact" in p3
     assert prompt.index("[E101-P1]") < prompt.index("[E101-P2]") < prompt.index("[E202-P1]")
     assert "실제 추가 효과가 있을 때만" in prompt
+
+
+def test_v4_interaction_prompt_ignores_primary_lever_role_for_impact_role() -> None:
+    def _path(event_id: int, mechanism: str) -> dict[str, object]:
+        return {
+            "event_id": event_id,
+            "mechanism": mechanism,
+            "lever_steps": [
+                {
+                    "lever_code": "weather_demand",
+                    "path_role": "primary",
+                    "state_direction": "increase",
+                    "scope": "동북아",
+                    "timing": "단기",
+                },
+            ],
+            "materiality": "high",
+        }
+
+    prompt = build_v4_interaction_analysis_user_prompt(
+        impact_paths=[_path(101, "첫 Event 대표 경로"), _path(101, "첫 Event 보조 경로"), _path(202, "둘째 경로")],
+    )
+
+    p2 = prompt.split("### [E101-P2]", maxsplit=1)[1].split("## Event 202", maxsplit=1)[0]
+    p3 = prompt.split("### [E202-P1]", maxsplit=1)[1]
+
+    assert "역할: Supporting Impact" in p2
+    assert "역할: Primary Impact" in p3
 
 
 def test_v4_interaction_prompt_separates_copyable_lever_code_from_state() -> None:
@@ -447,6 +477,7 @@ def test_v4_scenario_prompt_blocks_interaction_already_covered_by_dimension() ->
         impact_analysis=_analysis_with_interaction_question(),
         dimension_definitions=dimensions,
         validation_warnings=[],
+        analysis_as_of="2026-08-07",
     )
 
     d1 = prompt.split("### [D1]", maxsplit=1)[1].split("### [D2]", maxsplit=1)[0]

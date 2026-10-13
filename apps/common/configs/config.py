@@ -11,6 +11,7 @@ from pathlib import Path
 import re
 from typing import Annotated, Any, Literal
 
+from pydantic import AliasChoices, BaseModel, Field, SecretStr, computed_field, field_validator, model_validator
 from pydantic import BaseModel, Field, SecretStr, field_validator, model_validator
 from pydantic_settings import (
     BaseSettings,
@@ -111,7 +112,7 @@ class ModelParameterResourceStorageConfig(BaseModel):
     access_key_id: SecretStr = Field(default=SecretStr(""))
     secret_access_key: SecretStr = Field(default=SecretStr(""))
     local_root: str = Field(default="/tmp/skmip/model-parameter-resources")  # noqa: S108
-    connect_timeout_seconds: float = Field(default=10.0, gt=0)
+    connect_timeout_seconds: float = Field(default=50.0, gt=0)
     read_timeout_seconds: float = Field(default=60.0, gt=0)
     max_attempts: int = Field(default=3, ge=1)
     bootstrap_timeout_seconds: float = Field(default=420.0, gt=0)
@@ -220,8 +221,67 @@ class Settings(BaseSettings):
         "high",
         "xhigh",
     ] = "low"
+    # v4 group title is a short headline written after scenarios; it runs on the SPEED model with low reasoning.
+    llm_v4_group_title_reasoning_effort: Literal[
+        "default",
+        "none",
+        "minimal",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+    ] = "low"
     llm_verbosity: Literal["default", "low", "medium", "high"] = "default"
     llm_structured_output_strict: bool = Field(default=False)
+
+    # Web search
+    # 활성 provider. WebSearchProviderFactory 의 분기 키이며, 콤마로 여러 개를 나열하면
+    # 같은 질의를 provider 전부로 검색하고 결과를 합친다. 예: "responses,tavily"
+    web_search_provider: str = Field(default="responses")
+
+    # 비워두면 model_endpoint / model_api_key / model_api_deployment_name 를 그대로 사용한다.
+    # base_url 은 envs/.env 의 WEB_SEARCH_API 로도 주입한다.
+    web_search_base_url: str = Field(
+        default="",
+        validation_alias=AliasChoices("web_search_base_url", "web_search_api"),
+    )
+    web_search_api_key: str = Field(default="")
+    web_search_model: str = Field(default="")
+    web_search_context_size: Literal["low", "medium", "high"] = "medium"
+    web_search_max_results: int = Field(default=1, ge=0)
+    web_search_include_domains: list[str] = Field(default_factory=list)
+    web_search_exclude_domains: list[str] = Field(default_factory=list)
+    web_search_score_threshold: float = Field(default=0.0)
+    web_search_reasoning_effort: (
+        Literal[
+            "none",
+            "minimal",
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+        ]
+        | None
+    ) = "medium"
+    web_search_tool_choice: Literal["auto", "required"] = "required"
+    web_search_max_tool_calls: int | None = Field(default=None, ge=1)
+    # 미설정 시 llm_timeout_sec
+    web_search_timeout_sec: float | None = Field(default=None, gt=0)
+    web_search_max_retries: int = Field(default=2, ge=0)
+
+    # Tavily
+    tavily_api_key: str = Field(default="")
+    tavily_search_depth: Literal["basic", "advanced"] = "advanced"
+    tavily_max_results: int = Field(default=1, ge=1)
+    tavily_include_domains: list[str] = Field(default_factory=list)
+    tavily_exclude_domains: list[str] = Field(default_factory=list)
+    tavily_score_threshold: float = Field(default=0.5)
+
+    # MI MCP server
+    # MI Platform next-gen API 를 MCP tool 로 감싼 `mi-next-gen-mcp-server` 의 엔드포인트.
+    # 비워 두면 MCP 기반 이벤트 조회(search_existing_events)가 호출 단계에서 실패한다.
+    mi_mcp_base_url: str = Field(default="")
+    mi_mcp_timeout_sec: float = Field(default=60.0, gt=0)
 
     # Model parameter proposal
     model_parameter_proposal_flow_release: str = Field(default="v4.1.7", min_length=1)
