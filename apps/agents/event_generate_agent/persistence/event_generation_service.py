@@ -7,9 +7,9 @@ from typing import Any
 
 from apps.agents.event_generate_agent.constants import (
     DEFAULT_ACTOR_ID,
-    EVENT_CREATOR_ID,
-    EVENT_TITLE_MAX_LENGTH,
+    EVENT_ACTOR_ID_PREFIX,
     ONE_LINE_SUMMARY_MAX_LENGTH,
+    SEARCH_TEXT_MAX_LENGTH,
 )
 from apps.agents.event_generate_agent.schemas.api.event import ConfirmedEventOut, GeneratedEventOut
 from apps.common.exceptions.custom import MIBaseError
@@ -51,22 +51,24 @@ class EventGenerationService:
                 detail=f"event_type_l2_id is required to persist an event: summary={event.one_line_summary!r}",
             )
 
-        actor_id = str(user_id) if user_id is not None else DEFAULT_ACTOR_ID
+        actor_id = f"{EVENT_ACTOR_ID_PREFIX}{user_id if user_id is not None else DEFAULT_ACTOR_ID}"
         session = get_sync_session()
         try:
             repository = EventRepository(session=session)
             mi_event_id = repository.insert_event(
                 {
                     "event_type_l2_id": event_type_l2_id,
-                    # 별도 제목을 생성하지 않으므로 NOT NULL 인 event_title 컬럼에도 one_line_summary 를 저장한다.
-                    "event_title": event.one_line_summary[:EVENT_TITLE_MAX_LENGTH],
+                    # one_line_summary 는 (삭제된 event_title 을 대체하는) 제목, search_text 는 요약 컬럼이다.
+                    # 별도 제목을 생성하지 않으므로 두 컬럼 모두 one_line_summary 를 저장한다.
+                    # ORM 에 매핑되지 않은 신규 컬럼은 insert 에서 빠지므로 NULL(또는 DB 기본값)로 채워진다.
                     "one_line_summary": event.one_line_summary[:ONE_LINE_SUMMARY_MAX_LENGTH],
+                    "search_text": event.one_line_summary[:SEARCH_TEXT_MAX_LENGTH],
                     "key_bullets_json": {"bullets": [str(bullet) for bullet in event.key_bullets]},
                     "detail_analysis": event.detail_analysis,
                     "tags_json": ({"tags": [str(tag) for tag in event.tags]} if event.tags else None),
                     "occurred_at": _parse_occurred_at(event.occurred_at),
                     "new_yn": "Y",
-                    "crt_usr_logn_id": EVENT_CREATOR_ID,
+                    "crt_usr_logn_id": actor_id,
                     "mod_usr_logn_id": actor_id,
                 },
             )

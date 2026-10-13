@@ -57,15 +57,17 @@ class AuditColumnsMixin:
 
 
 class MiEventContentColumnsMixin:
-    event_title: Mapped[str] = mapped_column(
+    # 기존 event_title 컬럼은 삭제되고 one_line_summary 가 제목 역할을 대신한다.
+    # 기존 one_line_summary 에 담던 요약은 search_text 에 저장한다.
+    search_text: Mapped[str] = mapped_column(
         sqlalchemy.String(500, collation="utf8mb4_bin"),
         nullable=False,
-        comment="이벤트 제목",
+        comment="검색용 요약 텍스트",
     )
     one_line_summary: Mapped[str] = mapped_column(
         sqlalchemy.String(300, collation="utf8mb4_bin"),
         nullable=False,
-        comment="한줄 요약",
+        comment="한줄 요약 (이벤트 제목)",
     )
     key_bullets_json: Mapped[Any] = mapped_column(
         sqlalchemy.JSON,

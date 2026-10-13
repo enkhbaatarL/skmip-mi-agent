@@ -32,8 +32,8 @@ def test_event_repository_builds_context_from_operational_wrapper_shape() -> Non
     event = SimpleNamespace(
         mi_event_id=1116,
         event_type_l2_id=3,
-        event_title="EemsEnergyTerminal 확장 cFID 발표",
-        one_line_summary="중장기 수입능력 확대 요인",
+        one_line_summary="EemsEnergyTerminal 확장 cFID 발표",
+        search_text="중장기 수입능력 확대 요인",
         key_bullets_json={"bullets": ["조건부 최종투자결정을 발표함.", "인허가 취득을 전제로 함."]},
         detail_analysis="상세 분석은 prompt context에 사용하지 않음.",
         tags_json={"tags": ["EemsEnergyTerminal", "Gasunie", "Vopak"]},

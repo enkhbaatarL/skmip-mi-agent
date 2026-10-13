@@ -54,13 +54,13 @@ MAX_DRAFT_REVISIONS = 1
 
 # --- tmm_mi_mievent_m 저장 제약 ---
 
-# event_title 컬럼 길이(VARCHAR(500)).
-EVENT_TITLE_MAX_LENGTH = 500
+# search_text 컬럼 길이(VARCHAR(500)).
+SEARCH_TEXT_MAX_LENGTH = 500
 
 # one_line_summary 컬럼 길이(VARCHAR(300)).
 ONE_LINE_SUMMARY_MAX_LENGTH = 300
 
-# mod_usr_logn_id 기본값(요청에 user_id가 없을 때).
-DEFAULT_ACTOR_ID = "system"
-# crt_usr_logn_id 는 요청 user_id 와 무관하게 항상 이 값으로 저장한다.
-EVENT_CREATOR_ID = "user"
+# 요청에 user_id가 없을 때 쓰는 기본 사용자 ID.
+DEFAULT_ACTOR_ID = "user"
+# crt_usr_logn_id·mod_usr_logn_id 는 MCP 경유 생성임을 구분하도록 "mcp_{user_id}" 형식으로 저장한다.
+EVENT_ACTOR_ID_PREFIX = "mcp_"

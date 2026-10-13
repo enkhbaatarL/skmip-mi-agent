@@ -110,8 +110,8 @@ def test_nullable_proposal_and_v3_relations_round_trip_in_disposable_mysql(
             MiEventModel(
                 mi_event_id=101,
                 event_type_l2_id=11,
-                event_title="이벤트 A",
-                one_line_summary="요약 A",
+                one_line_summary="이벤트 A",
+                search_text="요약 A",
                 key_bullets_json=["A"],
                 detail_analysis="상세 A",
                 tags_json=["supply"],
@@ -119,8 +119,8 @@ def test_nullable_proposal_and_v3_relations_round_trip_in_disposable_mysql(
             MiEventModel(
                 mi_event_id=102,
                 event_type_l2_id=12,
-                event_title="이벤트 B",
-                one_line_summary="요약 B",
+                one_line_summary="이벤트 B",
+                search_text="요약 B",
                 key_bullets_json=["B"],
                 detail_analysis="상세 B",
                 tags_json=["supply"],

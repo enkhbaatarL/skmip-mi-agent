@@ -204,7 +204,7 @@ class EventRepository(BaseSyncSQLRepository):
     ) -> Select[tuple[Any]] | Select[tuple[MiEventModel]]:
         if keyword:
             like = f"%{keyword.strip()}%"
-            stmt = stmt.where(or_(MiEventModel.event_title.like(like), MiEventModel.one_line_summary.like(like)))
+            stmt = stmt.where(or_(MiEventModel.one_line_summary.like(like), MiEventModel.search_text.like(like)))
         if status == "new":
             stmt = stmt.where(MiEventModel.new_yn == "Y")
         elif status == "updated":
@@ -245,8 +245,9 @@ class EventRepository(BaseSyncSQLRepository):
         return {
             "mi_event_id": str(event.mi_event_id),
             "event_type_l2_id": int(event.event_type_l2_id),
-            "event_title_ko": event.event_title or "",
-            "one_line_summary": event.one_line_summary or "",
+            # event_title 컬럼은 one_line_summary 로 대체되고, 기존 요약은 search_text 에 담긴다.
+            "event_title_ko": event.one_line_summary or "",
+            "one_line_summary": event.search_text or "",
             "key_bullets": [
                 str(item).strip()
                 for item in self._parse_json_list(event.key_bullets_json, wrapper_key="bullets")
@@ -280,8 +281,9 @@ class EventRepository(BaseSyncSQLRepository):
         source_record_ids = [int(record.mi_record_id) for record in event.record_maps if record.mi_record_id]
         return {
             "mi_event_id": str(event.mi_event_id),
-            "event_title_ko": event.event_title or "",
-            "one_line_summary": event.one_line_summary or "",
+            # event_title 컬럼은 one_line_summary 로 대체되고, 기존 요약은 search_text 에 담긴다.
+            "event_title_ko": event.one_line_summary or "",
+            "one_line_summary": event.search_text or "",
             "key_bullets": [
                 str(item).strip()
                 for item in self._parse_json_list(event.key_bullets_json, wrapper_key="bullets")
@@ -309,8 +311,8 @@ class EventRepository(BaseSyncSQLRepository):
         payload.update(
             {
                 "mi_event_id": int(event.mi_event_id),
-                "title": event.event_title or "",
-                "event_title": event.event_title or "",
+                "title": event.one_line_summary or "",
+                "event_title": event.one_line_summary or "",
                 "event_time": event.occurred_at.isoformat() if event.occurred_at else "",
                 "latest_record_first_created": event.latest_record_first_created.isoformat()
                 if event.latest_record_first_created
@@ -368,8 +370,8 @@ class EventRepository(BaseSyncSQLRepository):
         return {
             "mi_event_id": str(snapshot.mi_event_id),
             "event_type_l2_id": int(snapshot.event_type_l2_id),
-            "event_title_ko": snapshot.event_title or "",
-            "one_line_summary": snapshot.one_line_summary or "",
+            "event_title_ko": snapshot.one_line_summary or "",
+            "one_line_summary": snapshot.search_text or "",
             "key_bullets": [
                 str(item).strip()
                 for item in self._parse_json_list(snapshot.key_bullets_json, wrapper_key="bullets")
