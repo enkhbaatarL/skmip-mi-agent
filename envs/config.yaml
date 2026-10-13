@@ -34,7 +34,7 @@ llm_verbosity: high
 llm_structured_output_strict: true
 
 # Web search
-web_search_provider: "responses,tavily"
+web_search_provider: "responses"
 web_search_base_url: https://sk-mi-common-dev-oai-usea02-01.openai.azure.com/openai/v1
 web_search_model: "skmidev-gpt-5.5-20260424"
 web_search_context_size: medium

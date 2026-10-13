@@ -1,7 +1,7 @@
 """search_web 노드 — 웹 검색으로 이벤트 생성 근거를 수집한다.
 
 검색 자체는 WebSearchProviderFactory 가 설정(`web_search_provider`)으로 고른 provider
-(Responses API / Tavily)들이 수행하고, 이 노드는 질의 x provider fan-out 과 flow 도메인
+(Responses API)들이 수행하고, 이 노드는 질의 x provider fan-out 과 flow 도메인
 타입(WebDocument → EvidenceItem) 변환만 담당한다. provider 응답은 범용 dict 이므로 flow 전용 schema 로의
 변환은 이 층에 둔다.
 
@@ -108,13 +108,13 @@ def _to_documents(
     """Provider 응답 1건을 WebDocument 목록으로 정규화한다.
 
     Responses API provider 는 인용(url_citation) 단위로 결과를 주므로 문서 1건 =
-    인용된 URL 1건이며, content 는 그 URL 이 뒷받침하는 본문 구간이다. Tavily 는 검색
-    결과 1건이 곧 문서 1건이다. score 기준은 provider 마다 달라 각자의 임계값을 쓴다.
+    인용된 URL 1건이며, content 는 그 URL 이 뒷받침하는 본문 구간이다. score 기준은
+    provider 마다 달라 각자의 임계값을 쓴다.
 
     Args:
         payload: provider.search() 응답. `results`(문서 목록)와 `answer`(요약 본문)를 읽는다.
         query: 이 응답을 만든 검색 질의. 인용 없는 요약 문서의 제목으로도 쓴다.
-        provider_name: 응답을 만든 provider 키(예: "responses", "tavily").
+        provider_name: 응답을 만든 provider 키(예: "responses").
         score_threshold: 이 값보다 score 가 낮은 결과는 버린다.
 
     """
@@ -133,7 +133,7 @@ def _to_documents(
                 url=url,
                 title=str(item.get("title") or "").strip(),
                 content=str(item.get("content") or "").strip(),
-                # Responses provider 는 발행일을 주지 않는다. Tavily 는 줄 때만 채워진다.
+                # Responses provider 는 발행일을 주지 않는다. 발행일을 주는 provider 일 때만 채워진다.
                 published_at=str(item.get("published_date") or "").strip(),
                 source_name=_source_name(url),
                 score=score,
@@ -209,8 +209,7 @@ def _provider_overrides(provider: WebSearchProvider, include_domains: list[str] 
     """검색 1건에 넘길 provider 별 호출 단위 override 를 만든다.
 
     Responses API 웹 검색은 질의 1건 안에서 모델이 검색을 반복하는 에이전트 루프라 반복 횟수와
-    reasoning effort 를 이 flow 에서만 제한한다. Tavily 는 남은 kwargs 를 요청 바디로 그대로 보내므로
-    Responses 전용 옵션을 넘기지 않는다.
+    reasoning effort 를 이 flow 에서만 제한한다. 다른 provider 에는 Responses 전용 옵션을 넘기지 않는다.
     """
     overrides: dict[str, Any] = {} if include_domains is None else {"include_domains": include_domains}
     if isinstance(provider, ResponsesWebSearchProvider):

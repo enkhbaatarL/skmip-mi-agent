@@ -8,12 +8,10 @@ from apps.common.configs.config import BaseSettings, get_settings
 from apps.common.logging.logger_config import logger
 from apps.connectors.web.base import WebSearchProvider
 from apps.connectors.web.provider import ResponsesWebSearchProvider
-from apps.connectors.web.tavily_provider import TavilySearchProvider
 
 
 class WebSearchProviderFactory:
     _providers: dict[str, type[WebSearchProvider]] = {
-        # "tavily": TavilySearchProvider,
         "responses": ResponsesWebSearchProvider,
         # Future providers can be added here:
         # "bing": BingSearchProvider,
@@ -37,7 +35,7 @@ class WebSearchProviderFactory:
 
     @classmethod
     def parse_provider_names(cls, raw: str) -> list[str]:
-        """``"responses,tavily"`` 형태의 설정값을 provider 키 목록으로 정규화한다.
+        """``"responses"`` 또는 ``"responses,bing"`` 형태의 설정값을 provider 키 목록으로 정규화한다.
 
         나열 순서가 곧 검색 결과 병합 우선순위다.
         """
@@ -68,18 +66,6 @@ class WebSearchProviderFactory:
                 "timeout_sec": settings.web_search_timeout_sec,
                 "max_retries": settings.web_search_max_retries,
             }
-        # if provider_type == "tavily":
-        #     if not settings.tavily_api_key:
-        #         msg = "tavily provider 를 사용하려면 TAVILY_API_KEY 가 필요합니다."
-        #         raise ValueError(msg)
-        #     return {
-        #         "api_key": settings.tavily_api_key,
-        #         "search_depth": settings.tavily_search_depth,
-        #         "max_results": settings.tavily_max_results,
-        #         "include_domains": settings.tavily_include_domains,
-        #         "exclude_domains": settings.tavily_exclude_domains,
-        #         "score_threshold": settings.tavily_score_threshold,
-        #     }
 
         msg = (
             f"No configuration mapping for provider: {provider_type}. "

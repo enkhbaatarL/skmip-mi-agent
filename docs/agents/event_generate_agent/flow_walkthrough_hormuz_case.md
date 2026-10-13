@@ -118,7 +118,7 @@ classify_route ─► plan_search ─┬─► search_web ───────�
 - **입력**: `query_plan.topics[].web_queries`, 기간
 - **출력**: `web_documents[]` (각 항목에 `topic_key`, `provider`)
 - **이번 결과**: 질의 6개 × provider 1개 = 검색 6회 → 인용 43건 수집 → 토픽별 URL dedup → **21건 채택(토픽당 7건)**. registry 범위에서 모든 토픽이 결과를 얻어 재검색 없음.
-- ⚠️ `tavily` 는 `config.yaml` 에 있으나 factory 에서 주석 처리돼 `PROVIDER_INIT_FAILED` ERROR 로그 후 제외됨 → 실제 provider 는 `responses` 하나.
+- (해결됨) 실행 당시 `tavily` 가 `config.yaml` 에 남아 `PROVIDER_INIT_FAILED` ERROR 로그 후 제외됐다. 이후 Tavily provider 를 제거하고 설정을 `responses` 단독으로 정리했다.
 - ⚠️ **웹 문서 `content` 가 본문이 아니라 인용 표식뿐**: 예) `T1-W1.content = "([eia.gov](https://www.eia.gov/todayinenergy/detail.php?id=65584))"`. 자세한 원인은 §4.
 
 ### ④ merge_evidence — 공통 근거로 정규화 (0.0s, LLM 없음)
@@ -252,7 +252,7 @@ classify_route ─► plan_search ─┬─► search_web ───────�
    → 웹 근거 21건은 사실상 **제목만** 전달됨. T2 found=false, T1 사실이 대부분 기존 이벤트(E)에서 나온 것, 초안이 웹 근거를 1건만 쓴 것이 이 영향으로 보임.
    → 방향: 인용 구간 앞의 문장(또는 해당 문단)을 snippet 으로 잡거나, 인용이 있어도 `answer` 를 별도 근거로 남기기.
 
-2. **Tavily 미동작**: factory 에서 주석 처리됐는데 `config.yaml` 의 `web_search_provider: "responses,tavily"` 는 그대로라 매 요청 ERROR 로그. 의도한 비활성화면 설정에서도 빼는 게 맞음.
+2. **Tavily 미동작** (해결됨): Tavily provider 를 제거하고 `web_search_provider` 를 `"responses"` 로 정리했다.
 
 3. **T2(북서유럽 한파·둔켈플라우테) 근거 0건인데 보완 검색 없음**: `both` 는 폴백 대상이 아니라 그대로 진행. 1번 문제가 해결되면 달라질 수 있으나, `both` 에서도 빈 토픽만 웹 비제한 재검색하는 등의 보완을 검토할 만함.
 

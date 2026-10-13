@@ -235,7 +235,7 @@ class Settings(BaseSettings):
 
     # Web search
     # 활성 provider. WebSearchProviderFactory 의 분기 키이며, 콤마로 여러 개를 나열하면
-    # 같은 질의를 provider 전부로 검색하고 결과를 합친다. 예: "responses,tavily"
+    # 같은 질의를 provider 전부로 검색하고 결과를 합친다. 예: "responses"
     web_search_provider: str = Field(default="responses")
 
     # 비워두면 model_endpoint / model_api_key / model_api_deployment_name 를 그대로 사용한다.
@@ -268,13 +268,6 @@ class Settings(BaseSettings):
     web_search_timeout_sec: float | None = Field(default=None, gt=0)
     web_search_max_retries: int = Field(default=2, ge=0)
 
-    # Tavily
-    tavily_api_key: str = Field(default="")
-    tavily_search_depth: Literal["basic", "advanced"] = "advanced"
-    tavily_max_results: int = Field(default=1, ge=1)
-    tavily_include_domains: list[str] = Field(default_factory=list)
-    tavily_exclude_domains: list[str] = Field(default_factory=list)
-    tavily_score_threshold: float = Field(default=0.5)
 
     # MI MCP server
     # MI Platform next-gen API 를 MCP tool 로 감싼 `mi-next-gen-mcp-server` 의 엔드포인트.
