@@ -398,7 +398,8 @@ catalog checksum이 바뀌면 parameter master와 Lever catalog를 한 transacti
 JSON shape을 변경하지 않으며 provenance와 미지원 진단은 내부 state, trace,
 validation warning 또는 실패 detail에만 둔다. runtime allow-list 적용도 DB·canonical·Lever
 catalog와 workbook artifact를 변경하지 않으며, versioned resource config와 startup validation은
-`extend16-v8`/`new-bc-v7` 계약으로 갱신한다. Scenario Group Agent를 포함한
+`extend16-v8`/`new-bc-v8` 계약으로 갱신한다. `new-bc-v8`은 ID 13·14 matrix target을
+최종 workbook과 동일한 `G:CL` 84개월 범위로 제한하고 mgmt v0044 master와 정합화한다. Scenario Group Agent를 포함한
 다른 Agent와 confirmation flow는 기존 동작을 유지한다.
 
 ## 12. Model Parameter v4 LLM 입출력 예시

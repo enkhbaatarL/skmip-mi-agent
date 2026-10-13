@@ -12,6 +12,9 @@
 | proposal capability | `extend16-v7` 당시 기준 | `extend16-v8` |
 | workbook contract | `new-bc-v7` | `new-bc-v7`, 변경 없음 |
 
+> 위 workbook 행은 v4.1 conditional-binding 출시 당시의 비교 기록이다. 현재 runtime은 후속
+> `new-bc-v8`을 사용하며, `new-bc-v2` packaged baseline digest와 ID 13·14의 matrix 종료 열 `G:CL`을 함께 고정했다. 활성 MI Base는 Object Storage workbook의 실제 digest에 같은 구조 계약을 적용한다.
+
 v4.1은 기존 v4.0 행을 수정하지 않고 `tmm_mi_model_impact_lever_m`에 같은 21개 Lever의 새 version 행을
 side-by-side로 추가한다. 신규 Scenario Group만 설정의 `scenario_group_v4_impact_catalog_version=v4.1`을 사용한다.
 기존 Group은 저장된 v4.0 version/checksum으로 계속 hydrate한다. migration 정본은 sibling mgmt의 0036이다.
@@ -54,7 +57,8 @@ workbook/LUT와 공개 API/DB schema를 그대로 둔다. 변경 범위는 propo
   active binding만 검토하며 다른 Lever나 legacy mapping을 scan하지 않는다.
 - Step2는 parent 전체 영향이 명시된 경우에만 child를 확장한다. 대상이 유일하고 기간만 모호하면 가장 이른 exact
   현재·미래 기간 한 건을 복구하며, 과거 월·PowerMix·LNG Plant/Train 증적 대상에는 적용하지 않는다.
-- Step2/Step3 schema·semantic·좌표 오류는 재호출하지 않는다. transient 오류만 호출 단위 retry 대상이며 Scenario
+- Step2/Step3의 완결 JSON schema·semantic·좌표 오류는 재호출하지 않는다. timeout·transport·retryable HTTP와
+  `EOF while parsing`으로 확인된 불완전 JSON만 호출 단위 retry 대상이며 Scenario
   전체 outer retry는 없다.
 - Step3은 active 16종별 variation policy를 prompt와 서버 계산에 함께 적용하고, 모든 slot의 대상·기간·근거 유형·
   인과 경로·기준값·계산·가정·불확실성을 rationale에 명시한다. 구조화 근거가 없거나 선언 방향과 실제 값 방향이
@@ -229,8 +233,9 @@ v4.1.1부터 proposal-only runner는 Scenario `FAIL`을 격리해 같은 명시 
 resource/context/catalog/input fingerprint, in-flight proposal 또는 persistence integrity 변경은 `BLOCKED`로 분류해
 campaign 전체를 즉시 중단한다. Scenario 전체 proposal/DB write의 outer retry는 없다.
 
-Step1.5·Step2·Step3 내부 LLM 호출만 timeout·transport·HTTP 408/425/429/5xx에 대해 기본 최대 2회 시도한다.
-semantic empty, schema invalid, exact 좌표 불일치, basecase 동일값은 자동 재시도하지 않는다. 이는 Parameter Agent
+Step1.5·Step2·Step3 내부 LLM 호출만 timeout·transport·HTTP 408/425/429/5xx와
+`EOF while parsing`으로 확인된 불완전 JSON에 대해 기본 최대 2회 시도한다.
+semantic empty, 완결 JSON의 schema invalid, exact 좌표 불일치, basecase 동일값은 자동 재시도하지 않는다. 이는 Parameter Agent
 운영 Flow의 validation & transient retry 개선이며, 실패한 Scenario를 다시 실행하는 보충 실행과 다르다.
 확정적 코드 수정 효과로 이미 실패한 동일 Scenario를 다시 호출하면 최초 증적·수정 항목·새 revision을 남긴
 `post-fix re-test`로 구분한다.

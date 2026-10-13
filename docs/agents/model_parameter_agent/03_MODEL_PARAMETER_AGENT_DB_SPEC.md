@@ -17,7 +17,9 @@
 > v1/v3 신규 proposal은 `GDP`, `PMI`, `PowerMix`, `Temperature`, `LiqUtilAdjustment` 이름 allow-list를
 > 유지한다. v4는 ID `{4, 6, 7, 8, 11, 12, 13, 14, 15, 16, 17, 18, 20, 22, 23, 24}`과 name/target이
 > capability contract와 일치해야 한다.
-> 정상 0032 canonical DB에서는 이 응용 계층 확장으로 master·mapping, Lever catalog/checksum, canonical/workbook을 변경하지 않는다.
+> 정상 0032 canonical DB에서는 이 응용 계층 확장으로 master·mapping, Lever catalog/checksum을 변경하지 않는다.
+> 후속 mgmt v0044는 schema·활성 집합·binding을 건드리지 않고 ID 13·14의
+> `basecase_value_end_col`만 최종 workbook과 같은 `CL`로 정합화한다.
 
 ## 1. 핵심 테이블을 한 문장으로 이해하기
 
@@ -73,8 +75,8 @@ Agent는 live DB에서 사용 중이며 삭제되지 않은 항목만 읽는다.
 | `Temperature` | Demand / WeatherAdjustment | 국가, 연도, 월 | 행마다 정해진 열을 읽음 |
 | `Population` | Demand / GDPPopulationAdjustment | 국가, 연도 | 행마다 정해진 열을 읽음 |
 | `HurricaneIntensity` | Supply / {USA}Hurricanes | 연도, 월 | 행마다 정해진 열을 읽음 |
-| `LiqProdAdjustment` | Supply / LiqProdAdjustment | 국가, LNG 플랜트·트레인, 연도, 월 | 가로로 펼쳐진 월별 값을 읽음 |
-| `LiqUtilAdjustment` | Supply / LiqUtilAdjustment | 국가, LNG 플랜트·트레인, 연도, 월 | 가로로 펼쳐진 월별 값을 읽음 |
+| `LiqProdAdjustment` | Supply / LiqProdAdjustment | 국가, LNG 플랜트·트레인, 연도, 월 | `G:CL`의 84개 월 열을 읽음 |
+| `LiqUtilAdjustment` | Supply / LiqUtilAdjustment | 국가, LNG 플랜트·트레인, 연도, 월 | `G:CL`의 84개 월 열을 읽음 |
 | `PipelineAdjustment` | Supply / PipelineAdjustment | 파이프라인, From·To 국가, 연도, 월 | 행마다 정해진 열을 읽음 |
 | `SupplyDisruption` | Supply / ProductionAdjustment | 국가, 연도, 월 | 행마다 정해진 열을 읽음 |
 | `User-Adjusted Gas Demand` | Demand / DemandOutputOverwrite | 국가, 연도, 월, 수요 하위부문 | Basecase exact slot만 사용 |
@@ -109,6 +111,10 @@ canonical에서 다음 필드를 파라미터별로 대조하고, capability·wo
 DB의 `basecase_*`는 기준값을 **읽는 위치**, `model_*`는 결과를 **쓰는 위치**다. 두 위치가 다를 수 있으므로
 시트명 유사성으로 합치거나 과거 이름을 대입하지 않는다. 현재 대표 예시는 다음과 같다.
 
+ID 13·14는 `matrix_time_columns` target이며 `basecase_year_row=7`, `basecase_month_row=8`,
+`basecase_period_row=9`, `basecase_value_start_col=G`, `basecase_value_end_col=CL`이다. `G:CL`은
+2025-01~2031-12의 84개월이고 `CM:DA`에는 유효 월 header가 없다.
+
 | Parameter | 기준값 원본 | 최종 쓰기 대상 | 금지되는 해석 |
 |---|---|---|---|
 | `PipelineAdjustment` | Supply `BCPipeline` | Supply `PipelineAdjustment` / `table1` | From/To 축을 생략하거나 원본 시트에 쓰는 것으로 해석 |
@@ -136,8 +142,9 @@ DB의 `basecase_*`는 기준값을 **읽는 위치**, `model_*`는 결과를 **�
 
 DB migration 정본은 sibling `skmip-mi-agent-mgmt`다. 외부개발 DB의 신규 Scenario Group용 active catalog는
 `v4.1`, checksum은 `7f4ef0b7aa60efb550b9175654fd82350f0c293debf880a9180e7e935db54d69`이다.
-이 Agent release는 master를 변경하지 않고 기존 v4.0 옆에 같은 Lever Full Set 21행과 conditional binding을
-추가하므로 mgmt 0036 migration과 exact match해야 한다.
+v4.1 Lever rollout은 master를 변경하지 않고 기존 v4.0 옆에 같은 Lever Full Set 21행과 conditional binding을
+추가하므로 mgmt 0036 migration과 exact match해야 한다. 별도 mgmt v0044는 master ID 13·14의 종료 열을
+`DA`에서 `CL`로 바꾸며 나머지 master·mapping·Lever 행은 보존한다.
 기존 이름의 두 canonical과 `apply_model_parameter_v4.py`/정적 SQL은 0029 역사 릴리스 증적으로 보존하며 0030
 적용에 재사용하지 않는다. v1/v3 mapping은 `scripts/model_parameter/model-parameter-canonical-v1.json` 중
 `dimension_mappings`만 정본으로 사용한다. parameter 0030 successor에 상속된 128행 mapping payload는 0029
@@ -256,7 +263,9 @@ stateDiagram-v2
 `ABSTAINED`와 `FAILED`는 모두 `proposal_parameters=[]`을 저장한다. `ABSTAINED`는 기존 `error_code`에
 `ABSTAINED_*` 사유 코드를, `error_message`에 사용자 표시용 두 줄 안내를 저장한다. `FAILED`는 기존
 `ErrorCode` 이름과 실패 안내를 저장한다. 즉 플랫폼 B.E는 `status`로 보류/실패를 먼저 구분하고,
-`error_code`로 세부 원인을 판별하면 된다. `ABSTAINED`는 확정 대상이 아니며 후속 모델 실행 입력에서도 제외한다.
+`error_code`로 세부 원인을 판별하면 된다. 전체 공개 보류·실패 코드와 내부 진단 코드의 구분은
+[API 오류 코드 표](02_MODEL_PARAMETER_AGENT_API_SPEC.md#4-오류를-받았을-때-확인할-것)를 따른다.
+`ABSTAINED`는 확정 대상이 아니며 후속 모델 실행 입력에서도 제외한다.
 
 운영 DB의 `status` CHECK 제약에도 `ABSTAINED`를 추가해야 한다. 이 DDL 마이그레이션의 source of truth는
 형제 저장소 `skmip-mi-agent-mgmt`이며, Agent 배포보다 먼저 적용한다. 허용 상태는

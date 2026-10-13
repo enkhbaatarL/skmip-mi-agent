@@ -1,0 +1,171 @@
+{
+  "schema_version": 8,
+  "release_id": "new-bc-v8",
+  "extends": "model-parameter-workbook-contract-v7.json",
+  "resource_directory": "basecase_v4/new-bc-v2",
+  "workbooks": {
+    "demand": {
+      "filename": "Demand Model_Input.xlsm",
+      "sha256": "5cef06326a2e72eaddf66b94d2b4ea42dafe7184703c9d3bfac78e1c8f27bf75"
+    },
+    "supply": {
+      "filename": "Supply Model_Input.xlsm",
+      "sha256": "c5ab906edf807dbf2707a9e13d7146a92c7490f054fed1b7d3d42afd4312824e"
+    },
+    "trade": {
+      "filename": "Trade Model_Input.xlsm",
+      "sha256": "8274fc25be1a89dac8e57eda64d84593576d7a71524d4b46de035da300cf6f8e"
+    }
+  },
+  "parameters": {
+    "LiqProdAdjustment": {
+      "proposal_policy": {
+        "mode": "conditional",
+        "may_abstain": true,
+        "evidence_required": ["Plant", "Train", "YearMonth", "DirectProductionOverride"]
+      },
+      "reference_source": {
+        "workbook_role": "supply",
+        "sheet": "BCLiquefaction",
+        "range": "B:N",
+        "parser": "liquefaction_production_rows",
+        "header_row": 7,
+        "data_start_row": 8,
+        "columns": {
+          "Year": "B",
+          "Month": "C",
+          "Period": "D",
+          "Country": "E",
+          "Plant Name": "F",
+          "Plant Train": "G",
+          "Infra Life Cycle": "H",
+          "Monthly Capacity (MTPM)": "I",
+          "LNG plant utilisation %": "N"
+        },
+        "column_headers": {
+          "Monthly Capacity (MTPM)": "LNG train capacity (Million tonnes LNG per month)"
+        },
+        "key_axes": ["Country", "LNG Plant", "LNG Plant Train", "Year", "Month"],
+        "metadata_axes": ["Period", "Life Cycle Category", "Nameplate Capacity (MTPA)"],
+        "value_field": "Monthly LNG production",
+        "reference_unit": "Mt LNG/month",
+        "value_semantics": "absolute_final_production",
+        "expected_record_count": 23820
+      },
+      "write_target": {
+        "workbook_role": "supply",
+        "sheet": "LiqProdAdjustment",
+        "table": "table1",
+        "layout": "matrix_time_columns",
+        "header_row": 10,
+        "data_start_row": 11,
+        "columns": {
+          "Country": "B",
+          "LNG Plant": "C",
+          "LNG Plant Train": "D",
+          "Life Cycle Category": "E",
+          "Nameplate Capacity (MTPA)": "F",
+          "value_start": "G",
+          "value_end": "CL",
+          "year_row": "7",
+          "month_row": "8",
+          "period_row": "9"
+        },
+        "key_axes": ["Country", "LNG Plant", "LNG Plant Train", "Year", "Month"],
+        "metadata_axes": ["Period", "Life Cycle Category", "Nameplate Capacity (MTPA)"],
+        "value_field": "Production (Mt LNG/month)",
+        "write_unit": "Mt LNG/month",
+        "value_semantics": "absolute_final_production",
+        "observed_record_count": 33348,
+        "row_policy": "existing_exact",
+        "metadata_authority": "write_target"
+      },
+      "constraints": {
+        "minimum": 0.0,
+        "maximum": null,
+        "atomic_group_axes": [],
+        "vector_axis": null,
+        "vector_members": [],
+        "sum": null,
+        "sum_tolerance": null,
+        "require_complete_vector": false,
+        "direct_evidence_required": true
+      }
+    },
+    "LiqUtilAdjustment": {
+      "proposal_policy": {
+        "mode": "conditional",
+        "may_abstain": true,
+        "evidence_required": ["Plant", "Train", "YearMonth", "DirectOperationalDisruption"]
+      },
+      "reference_source": {
+        "workbook_role": "supply",
+        "sheet": "BCLiquefaction",
+        "range": "B:N",
+        "parser": "fixed_rows",
+        "header_row": 7,
+        "data_start_row": 8,
+        "columns": {
+          "Year": "B",
+          "Month": "C",
+          "Period": "D",
+          "Country": "E",
+          "Plant Name": "F",
+          "Plant Train": "G",
+          "Infra Life Cycle": "H",
+          "Monthly Capacity (MTPM)": "I",
+          "LNG plant utilisation %": "N"
+        },
+        "column_headers": {
+          "Monthly Capacity (MTPM)": "LNG train capacity (Million tonnes LNG per month)"
+        },
+        "transforms": {},
+        "key_axes": ["Country", "LNG Plant", "LNG Plant Train", "Year", "Month"],
+        "metadata_axes": ["Period", "Life Cycle Category", "Nameplate Capacity (MTPA)"],
+        "value_field": "LNG plant utilisation %",
+        "reference_unit": "fraction",
+        "value_semantics": "absolute_final_utilization",
+        "expected_record_count": 23820
+      },
+      "write_target": {
+        "workbook_role": "supply",
+        "sheet": "LiqUtilAdjustment",
+        "table": "table1",
+        "layout": "matrix_time_columns",
+        "header_row": 10,
+        "data_start_row": 11,
+        "columns": {
+          "Country": "B",
+          "LNG Plant": "C",
+          "LNG Plant Train": "D",
+          "Life Cycle Category": "E",
+          "Nameplate Capacity (MTPA)": "F",
+          "value_start": "G",
+          "value_end": "CL",
+          "year_row": "7",
+          "month_row": "8",
+          "period_row": "9"
+        },
+        "key_axes": ["Country", "LNG Plant", "LNG Plant Train", "Year", "Month"],
+        "metadata_axes": ["Period", "Life Cycle Category", "Nameplate Capacity (MTPA)"],
+        "value_field": "Utilization Rate",
+        "write_unit": "fraction",
+        "value_semantics": "absolute_final_utilization",
+        "observed_record_count": 33348,
+        "row_policy": "existing_exact",
+        "metadata_authority": "write_target"
+      },
+      "constraints": {
+        "minimum": 0.0,
+        "maximum": null,
+        "atomic_group_axes": [],
+        "vector_axis": null,
+        "vector_members": [],
+        "sum": null,
+        "sum_tolerance": null,
+        "require_complete_vector": false,
+        "direct_evidence_required": true
+      }
+    }
+  }
+}

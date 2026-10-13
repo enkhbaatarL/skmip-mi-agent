@@ -48,7 +48,7 @@ from apps.common.exceptions.custom import MIBaseError
 
 ROOT_DIR = Path(__file__).resolve().parents[2]
 CONTRACT_PATH = (
-    ROOT_DIR / "apps/agents/model_parameter_agent/resources/contracts/model-parameter-workbook-contract-v7.json"
+    ROOT_DIR / "apps/agents/model_parameter_agent/resources/contracts/model-parameter-workbook-contract-v8.json"
 )
 V1_CONTRACT_PATH = (
     ROOT_DIR / "apps/agents/model_parameter_agent/resources/contracts/model-parameter-workbook-contract-v1.json"
@@ -187,9 +187,7 @@ def test_existing_exact_basecase_only_source_to_output_alignment(
     assert parameter.write_target.write_unit == expected_unit
     assert parameter.reference_source.value_semantics == parameter.write_target.value_semantics
     assert all(record.value >= 0 for record in records)
-    assert {record.canonical_key for record in records} <= {
-        target_slot.canonical_key for target_slot in target_slots
-    }
+    assert {record.canonical_key for record in records} <= {target_slot.canonical_key for target_slot in target_slots}
 
 
 def test_regional_production_appendable_source_to_output_alignment(
@@ -213,11 +211,29 @@ def test_regional_production_appendable_source_to_output_alignment(
     assert all(record.value >= 0 for record in records)
 
 
-def test_contract_locks_v7_read_only_scope_targets_and_policies() -> None:
+def test_contract_locks_v8_read_only_scope_targets_and_policies() -> None:
     contract = load_workbook_contract()
 
-    assert contract.schema_version == 7
-    assert contract.release_id == "new-bc-v7"
+    assert contract.schema_version == 8
+    assert contract.release_id == "new-bc-v8"
+    assert contract.resource_directory == "basecase_v4/new-bc-v2"
+    assert {
+        role: (artifact.filename, artifact.sha256)
+        for role, artifact in contract.workbooks.items()
+    } == {
+        "demand": (
+            "Demand Model_Input.xlsm",
+            "5cef06326a2e72eaddf66b94d2b4ea42dafe7184703c9d3bfac78e1c8f27bf75",
+        ),
+        "supply": (
+            "Supply Model_Input.xlsm",
+            "c5ab906edf807dbf2707a9e13d7146a92c7490f054fed1b7d3d42afd4312824e",
+        ),
+        "trade": (
+            "Trade Model_Input.xlsm",
+            "8274fc25be1a89dac8e57eda64d84593576d7a71524d4b46de035da300cf6f8e",
+        ),
+    }
     assert contract.capability == "read_only_proposal"
     assert contract.api_version == "v4"
     assert contract.generation_strategy == "multi_event_model_lever_dimensions"
@@ -263,6 +279,8 @@ def test_contract_locks_v7_read_only_scope_targets_and_policies() -> None:
     assert liq_util.reference_source.transforms == {}
     assert liq_util.write_target.row_policy == "existing_exact"
     assert liq_util.write_target.metadata_authority == "write_target"
+    assert liq_util.write_target.columns["value_start"] == "G"
+    assert liq_util.write_target.columns["value_end"] == "CL"
 
     pipeline = contract.parameters["PipelineAdjustment"]
     assert pipeline.reference_source.parser == "annual_rows_to_months"
@@ -305,6 +323,8 @@ def test_contract_locks_v7_read_only_scope_targets_and_policies() -> None:
     assert liq_prod.reference_source.reference_unit == "Mt LNG/month"
     assert liq_prod.write_target.row_policy == "existing_exact"
     assert liq_prod.write_target.metadata_authority == "write_target"
+    assert liq_prod.write_target.columns["value_start"] == "G"
+    assert liq_prod.write_target.columns["value_end"] == "CL"
     assert liq_prod.constraints.minimum == 0
     assert liq_prod.constraints.direct_evidence_required is True
 
@@ -480,7 +500,7 @@ def test_authoritative_sources_preserve_representative_values_and_power_vector(
 ) -> None:
     gdp = _record_for(reference_bundle, "GDP", ("United States", 2026))
     assert gdp.value == pytest.approx(0.020638022790823538)
-    assert gdp.reference_id.startswith("new-bc-v7:demand:BCInput:U")
+    assert gdp.reference_id.startswith("new-bc-v8:demand:BCInput:U")
     assert gdp.diagnostics == ("value_transform=gdp_year_over_year_growth",)
 
     pmi = _record_for(reference_bundle, "PMI", ("China", 2026, 1))

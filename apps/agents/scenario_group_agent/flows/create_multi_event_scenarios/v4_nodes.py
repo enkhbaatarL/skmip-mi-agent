@@ -22,11 +22,18 @@ from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.nodes i
 from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.state import (
     V4MultiEventGenerationState,
 )
+from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.v4_group_title import (
+    V4GroupTitleFocus,
+    events_for_dimensions,
+    select_v4_group_title_focus,
+)
 from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.v4_schema import (
     V4DimensionDesignDraft,
     V4DimensionDesignResult,
     V4EventImpactAnalysisDraft,
     V4EventImpactAnalysisResult,
+    V4GenerationResult,
+    V4GroupTitleDraft,
     V4ReadableDimensionDesignDraft,
     V4ReadableEventAnalysisDraft,
     V4ReadableInteractionAnalysisDraft,
@@ -45,11 +52,13 @@ from apps.agents.scenario_group_agent.persistence.scenario_group_service import 
 from apps.agents.scenario_group_agent.prompts.model_lever_scenario_generation import (
     V4_DIMENSION_SYSTEM_PROMPT,
     V4_EVENT_IMPACT_SYSTEM_PROMPT,
+    V4_GROUP_TITLE_SYSTEM_PROMPT,
     V4_INTERACTION_SYSTEM_PROMPT,
     V4_SCENARIO_SYSTEM_PROMPT,
     build_v4_dimension_design_user_prompt,
     build_v4_event_fact_candidates,
     build_v4_event_impact_analysis_user_prompt,
+    build_v4_group_title_user_prompt,
     build_v4_interaction_analysis_user_prompt,
     build_v4_scenario_synthesis_user_prompt,
     event_open_question_budgets,
@@ -58,9 +67,16 @@ from apps.agents.scenario_group_agent.schemas.base import BaseNode
 from apps.agents.scenario_group_agent.utils.scenario_group_summary import (
     build_scenario_group_event_summary,
 )
+from apps.agents.scenario_group_agent.utils.scenario_group_title import (
+    build_fallback_group_title,
+    find_events_missing_from_group_title,
+    format_group_title_missing_events,
+)
 from apps.common.configs.config import get_settings
 from apps.common.exceptions.custom import MIBaseError
+from apps.common.logging.logger_config import logger
 from apps.common.tracing.context import TraceContext
+from apps.common.values.enums import ModelPreference
 from apps.common.values.error_codes import ErrorCode
 from apps.persistence.event.schema import EventPayload
 from apps.persistence.model_impact_lever.schema import ModelImpactLeverPayload
@@ -114,6 +130,7 @@ async def _analyze_event_with_retries(
     trace_context: TraceContext | None,
     selected_event_count: int = 1,
     open_question_budget: int | None = None,
+    parameter_axes: dict[str, str] | None = None,
 ) -> _EventAnalysisOutcome:
     event_id = int(event.mi_event_id)
     event_payload = event.model_dump()
@@ -135,6 +152,7 @@ async def _analyze_event_with_retries(
                             selected_event_count=selected_event_count,
                             open_question_budget=open_question_budget,
                             validation_feedback=feedback,
+                            parameter_axes=parameter_axes,
                         ),
                         trace_context=trace_context,
                         stage=f"event_impact_analysis:{event_id}",
@@ -201,6 +219,7 @@ class AnalyzeEventImpactsNode(BaseNode):
                     selected_event_count=len(state.events),
                     open_question_budget=question_budget,
                     trace_context=trace_context,
+                    parameter_axes=state.impact_parameter_axes,
                 )
                 for event, question_budget in zip(state.events, question_budgets, strict=True)
             ],
@@ -502,6 +521,7 @@ class SynthesizeV4ScenariosNode(BaseNode):
                 output_schema=V4ReadableScenarioSynthesisDraft,
                 system_prompt=V4_SCENARIO_SYSTEM_PROMPT,
                 user_prompt=build_v4_scenario_synthesis_user_prompt(
+                    analysis_as_of=state.analysis_as_of,
                     events=[event.model_dump() for event in state.events],
                     impact_analysis=state.analysis_draft.model_dump(),
                     dimension_definitions=[
@@ -558,6 +578,8 @@ def finalize_v4_scenarios(state: V4MultiEventGenerationState) -> dict[str, Any]:
     try:
         finalized, coverage = finalize_v4_generation_result(
             state.scenario_draft,
+            # 그룹 제목은 다음 generate_v4_group_title 노드가 확정하며, 여기서는 이벤트 라벨 기반 임시 제목을 둔다.
+            group_title=build_fallback_group_title(state.events),
             group_summary=build_scenario_group_event_summary(state.events),
             impact_analysis=state.analysis_draft,
             dimension_design=state.dimension_draft,
@@ -590,10 +612,84 @@ def finalize_v4_scenarios(state: V4MultiEventGenerationState) -> dict[str, Any]:
 
 def route_after_v4_scenarios(state: V4MultiEventGenerationState) -> str:
     if state.finalized_result is not None and state.parameter_coverage is not None and state.scenario_error is None:
-        return "persist_generation"
+        return "generate_v4_group_title"
     if state.scenario_retryable and state.scenario_attempt < MAX_STAGE_ATTEMPTS:
         return "synthesize_v4_scenarios"
     return "fail_generation"
+
+
+MAX_GROUP_TITLE_ATTEMPTS = 3
+
+
+async def generate_v4_group_title(
+    result: V4GenerationResult,
+    *,
+    events: list[EventPayload],
+    trace_context: TraceContext | None,
+) -> str:
+    """Title the group by its common premise and the questions that split its scenarios.
+
+    분기 질문의 출처 이벤트가 제목에 드러나지 않으면 제목만 다시 만들고, 끝까지 실패하면 결정적 제목을 쓴다.
+    """
+    focus: V4GroupTitleFocus = select_v4_group_title_focus(
+        result.dimension_definitions,
+        [scenario.dimension_values for scenario in result.scenarios],
+    )
+    focus_dimensions = [*focus.branching, *([focus.premise] if focus.premise else [])]
+    focus_events = events_for_dimensions(focus_dimensions, events) or list(events)
+    branching_events = events_for_dimensions(focus.branching, events)
+    title: str | None = None
+    feedback: str | None = None
+    for attempt in range(1, MAX_GROUP_TITLE_ATTEMPTS + 1):
+        try:
+            draft: V4GroupTitleDraft = await invoke_stage_structured_output(
+                output_schema=V4GroupTitleDraft,
+                system_prompt=V4_GROUP_TITLE_SYSTEM_PROMPT,
+                user_prompt=build_v4_group_title_user_prompt(
+                    events=[event.model_dump() for event in focus_events],
+                    branching_dimensions=[item.model_dump() for item in focus.branching],
+                    premise_dimension=focus.premise.model_dump() if focus.premise else None,
+                    previous_title=title,
+                    validation_feedback=feedback,
+                ),
+                trace_context=trace_context,
+                stage="group_title",
+                reasoning_effort_override=get_settings().llm_v4_group_title_reasoning_effort,
+                # 짧은 제목 한 줄이라 가벼운 모델을 쓴다(기본 모델은 low에서도 추론 토큰이 수백 개 발생).
+                preference=ModelPreference.SPEED,
+            )
+        except Exception as exc:
+            # 제목 생성 실패로 시나리오 생성 전체를 실패시키지 않는다.
+            logger.warning(f"[NODE][generate_v4_group_title] FAILED | attempt={attempt} | error={exc!r}")
+            break
+        title = draft.title
+        missing = find_events_missing_from_group_title(title, branching_events)
+        if not missing:
+            return title
+        feedback = format_group_title_missing_events(missing)
+        logger.warning(
+            f"[NODE][generate_v4_group_title] RETRY | attempt={attempt} | title={title!r} | "
+            f"missing_event_ids={[item.mi_event_id for item in missing]}"
+        )
+    fallback = build_fallback_group_title(focus_events)
+    logger.warning(f"[NODE][generate_v4_group_title] FALLBACK | title={title!r} | fallback={fallback!r}")
+    return fallback
+
+
+class GenerateV4GroupTitleNode(BaseNode):
+    async def run(
+        self,
+        state: V4MultiEventGenerationState,
+        runtime: Runtime[TraceContext] | None = None,
+    ) -> dict[str, Any]:
+        if state.finalized_result is None:
+            return {}
+        title = await generate_v4_group_title(
+            state.finalized_result,
+            events=state.events,
+            trace_context=runtime.context if runtime is not None else None,
+        )
+        return {"finalized_result": state.finalized_result.model_copy(update={"group_title": title})}
 
 
 def persist_v4_generation(state: V4MultiEventGenerationState) -> dict[str, Any]:

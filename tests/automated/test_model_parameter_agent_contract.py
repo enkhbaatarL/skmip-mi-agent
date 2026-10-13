@@ -14,6 +14,7 @@ import unittest
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 from fastapi.routing import APIRoute
+from pydantic import ValidationError
 import pytest
 
 from apps.agents.model_parameter_agent.api import router as model_parameter_router
@@ -4020,6 +4021,94 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
         assert result.retry_reasons == ("TimeoutError",)
         assert result.retry_delays_seconds == (0.6,)
         sleep.assert_awaited_once_with(0.6)
+
+    async def test_incomplete_structured_json_retries_once_and_records_reason(self) -> None:
+        with pytest.raises(ValidationError) as caught:
+            LLMValueProposalResponse.model_validate_json(
+                '{"parameter_adjustments":[{"candidate_key":"truncated',
+            )
+        incomplete_json_error = caught.value
+        calls = 0
+
+        async def fake_invoke(**_kwargs):  # noqa: ANN003
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise MIBaseError(
+                    ErrorCode.LLM_INVALID_RESPONSE_ERROR,
+                    detail="invalid structured response",
+                ) from incomplete_json_error
+            return SimpleNamespace(result="ok", usage=None, model="quality-model")
+
+        fake_module = types.ModuleType("apps.connectors.llm.llm_client")
+        fake_module.invoke_llm_structured_output = fake_invoke
+        settings = SimpleNamespace(
+            llm_stream_enabled=True,
+            llm_reasoning_effort="default",
+            llm_timeout_sec=310,
+            http_connect_timeout=10,
+            model_parameter_transient_retry_max_attempts=2,
+            model_parameter_transient_retry_base_delay_seconds=0.0,
+            model_parameter_transient_retry_max_jitter_seconds=0.0,
+        )
+        with (
+            patch.dict(sys.modules, {"apps.connectors.llm.llm_client": fake_module}),
+            patch.object(proposal_nodes, "get_settings", return_value=settings),
+            patch.object(proposal_nodes.asyncio, "sleep", new=AsyncMock()) as sleep,
+        ):
+            result = await proposal_nodes._invoke_structured(
+                output_schema=LLMValueProposalResponse,
+                messages=[{"role": "user", "content": "test"}],
+                model_name="test-model",
+            )
+
+        assert calls == 2
+        assert result.result == "ok"
+        assert result.attempt_count == 2
+        assert result.retry_count == 1
+        assert result.retry_reasons == ("LLM_INCOMPLETE_JSON",)
+        assert result.retry_delays_seconds == (0.0,)
+        sleep.assert_awaited_once_with(0.0)
+
+    async def test_non_eof_json_syntax_error_is_never_retried(self) -> None:
+        with pytest.raises(ValidationError) as caught:
+            LLMValueProposalResponse.model_validate_json('{"parameter_adjustments":,}')
+        malformed_json_error = caught.value
+        calls = 0
+
+        async def fake_invoke(**_kwargs):  # noqa: ANN003
+            nonlocal calls
+            calls += 1
+            raise MIBaseError(
+                ErrorCode.LLM_INVALID_RESPONSE_ERROR,
+                detail="invalid structured response",
+            ) from malformed_json_error
+
+        fake_module = types.ModuleType("apps.connectors.llm.llm_client")
+        fake_module.invoke_llm_structured_output = fake_invoke
+        settings = SimpleNamespace(
+            llm_stream_enabled=True,
+            llm_reasoning_effort="default",
+            llm_timeout_sec=310,
+            http_connect_timeout=10,
+            model_parameter_transient_retry_max_attempts=2,
+            model_parameter_transient_retry_base_delay_seconds=0.0,
+            model_parameter_transient_retry_max_jitter_seconds=0.0,
+        )
+        with (
+            patch.dict(sys.modules, {"apps.connectors.llm.llm_client": fake_module}),
+            patch.object(proposal_nodes, "get_settings", return_value=settings),
+            patch.object(proposal_nodes.asyncio, "sleep", new=AsyncMock()) as sleep,
+        ):
+            with self.assertRaises(MIBaseError):
+                await proposal_nodes._invoke_structured(
+                    output_schema=LLMValueProposalResponse,
+                    messages=[{"role": "user", "content": "test"}],
+                    model_name="test-model",
+                )
+
+        assert calls == 1
+        sleep.assert_not_awaited()
 
     async def test_semantic_llm_failure_is_never_retried(self) -> None:
         calls = 0

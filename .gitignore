@@ -61,8 +61,9 @@ logs/
 .env.*
 !.env.example
 .vscode/settings.json
-# Neuro-managed Interpret secrets/config must never be committed.
+# Neuro-managed Agent secrets/config must never be committed.
 devops/k8s/interpret-configmap.yaml
+devops/k8s/model-parameter-configmap.yaml
 
 # =========================
 # Local database / temp files

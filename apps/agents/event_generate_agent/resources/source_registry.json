@@ -1,0 +1,363 @@
+{
+  "registry_version": "v0.12.1",
+  "sources": [
+    {
+      "source_id": "WMO",
+      "domains": [
+        "wmo.int"
+      ],
+      "type": "intergovernmental",
+      "default_priority": 100
+    },
+    {
+      "source_id": "NOAA_CPC",
+      "domains": [
+        "cpc.ncep.noaa.gov"
+      ],
+      "type": "government",
+      "default_priority": 100
+    },
+    {
+      "source_id": "JMA",
+      "domains": [
+        "data.jma.go.jp",
+        "jma.go.jp"
+      ],
+      "type": "government",
+      "default_priority": 95
+    },
+    {
+      "source_id": "IEA",
+      "domains": [
+        "iea.org"
+      ],
+      "type": "intergovernmental",
+      "default_priority": 100
+    },
+    {
+      "source_id": "EIA",
+      "domains": [
+        "eia.gov"
+      ],
+      "type": "government",
+      "default_priority": 100
+    },
+    {
+      "source_id": "IMF",
+      "domains": [
+        "imf.org"
+      ],
+      "type": "intergovernmental",
+      "default_priority": 100
+    },
+    {
+      "source_id": "UN_DESA",
+      "domains": [
+        "population.un.org",
+        "un.org"
+      ],
+      "type": "intergovernmental",
+      "default_priority": 100
+    },
+    {
+      "source_id": "SP_GLOBAL_PMI",
+      "domains": [
+        "spglobal.com"
+      ],
+      "type": "primary_index_provider",
+      "default_priority": 85
+    },
+    {
+      "source_id": "GIIGNL",
+      "domains": [
+        "giignl.org"
+      ],
+      "type": "industry_association_primary",
+      "default_priority": 85
+    },
+    {
+      "source_id": "ICIS",
+      "domains": [
+        "icis.com"
+      ],
+      "type": "industry_news_analytics",
+      "default_priority": 70
+    },
+    {
+      "source_id": "NOAA_NCEI",
+      "domains": [
+        "ncei.noaa.gov"
+      ],
+      "type": "government_climate_observation_archive",
+      "default_priority": 100
+    },
+    {
+      "source_id": "ECMWF",
+      "domains": [
+        "ecmwf.int"
+      ],
+      "type": "intergovernmental_weather_forecast_centre",
+      "default_priority": 100
+    },
+    {
+      "source_id": "COPERNICUS_C3S",
+      "domains": [
+        "climate.copernicus.eu",
+        "cds.climate.copernicus.eu"
+      ],
+      "type": "regional_government_climate_service",
+      "default_priority": 100
+    },
+    {
+      "source_id": "CMA",
+      "domains": [
+        "cma.gov.cn"
+      ],
+      "type": "government_meteorological_agency",
+      "default_priority": 95
+    },
+    {
+      "source_id": "KMA",
+      "domains": [
+        "weather.go.kr"
+      ],
+      "type": "government_meteorological_agency",
+      "default_priority": 95
+    },
+    {
+      "source_id": "TAIWAN_CWA",
+      "domains": [
+        "cwa.gov.tw"
+      ],
+      "type": "government_meteorological_agency",
+      "default_priority": 95
+    },
+    {
+      "source_id": "WORLD_BANK",
+      "domains": [
+        "worldbank.org"
+      ],
+      "type": "multilateral_development_bank",
+      "default_priority": 100
+    },
+    {
+      "source_id": "OECD",
+      "domains": [
+        "oecd.org"
+      ],
+      "type": "intergovernmental_economic_statistics",
+      "default_priority": 100
+    },
+    {
+      "source_id": "ADB",
+      "domains": [
+        "adb.org"
+      ],
+      "type": "multilateral_development_bank",
+      "default_priority": 95
+    },
+    {
+      "source_id": "CHINA_NBS",
+      "domains": [
+        "stats.gov.cn"
+      ],
+      "type": "national_statistics_office",
+      "default_priority": 100
+    },
+    {
+      "source_id": "JAPAN_STATISTICS",
+      "domains": [
+        "stat.go.jp"
+      ],
+      "type": "national_statistics_office",
+      "default_priority": 100
+    },
+    {
+      "source_id": "KOSTAT",
+      "domains": [
+        "kostat.go.kr"
+      ],
+      "type": "national_statistics_office",
+      "default_priority": 100
+    },
+    {
+      "source_id": "TAIWAN_DGBAS",
+      "domains": [
+        "dgbas.gov.tw"
+      ],
+      "type": "national_statistics_office",
+      "default_priority": 100
+    },
+    {
+      "source_id": "GECF",
+      "domains": [
+        "gecf.org"
+      ],
+      "type": "intergovernmental_gas_forum",
+      "default_priority": 90
+    },
+    {
+      "source_id": "ENERGY_INSTITUTE",
+      "domains": [
+        "energyinst.org"
+      ],
+      "type": "industry_statistical_primary",
+      "default_priority": 90
+    },
+    {
+      "source_id": "EMBER",
+      "domains": [
+        "ember-energy.org"
+      ],
+      "type": "independent_energy_data_provider",
+      "default_priority": 85
+    },
+    {
+      "source_id": "CHINA_NEA",
+      "domains": [
+        "nea.gov.cn"
+      ],
+      "type": "government_energy_agency",
+      "default_priority": 100
+    },
+    {
+      "source_id": "JAPAN_METI",
+      "domains": [
+        "meti.go.jp"
+      ],
+      "type": "government_energy_ministry",
+      "default_priority": 100
+    },
+    {
+      "source_id": "KOREA_MOTIE",
+      "domains": [
+        "motie.go.kr"
+      ],
+      "type": "government_energy_ministry",
+      "default_priority": 100
+    },
+    {
+      "source_id": "TAIWAN_MOEA",
+      "domains": [
+        "moea.gov.tw"
+      ],
+      "type": "government_energy_ministry",
+      "default_priority": 100
+    },
+    {
+      "source_id": "FERC",
+      "domains": [
+        "ferc.gov"
+      ],
+      "type": "government_energy_regulator",
+      "default_priority": 100
+    },
+    {
+      "source_id": "US_DOE",
+      "domains": [
+        "energy.gov"
+      ],
+      "type": "government_energy_department",
+      "default_priority": 100
+    },
+    {
+      "source_id": "IGU",
+      "domains": [
+        "igu.org"
+      ],
+      "type": "industry_association_primary",
+      "default_priority": 85
+    },
+    {
+      "source_id": "GIE",
+      "domains": [
+        "gie.eu"
+      ],
+      "type": "infrastructure_operator_association_primary",
+      "default_priority": 85
+    },
+    {
+      "source_id": "NOAA_NHC",
+      "domains": [
+        "nhc.noaa.gov"
+      ],
+      "type": "government_tropical_cyclone_forecast_centre",
+      "default_priority": 100
+    },
+    {
+      "source_id": "BSEE",
+      "domains": [
+        "bsee.gov"
+      ],
+      "type": "government_offshore_energy_regulator",
+      "default_priority": 100
+    },
+    {
+      "source_id": "AUSTRALIA_DISR",
+      "domains": [
+        "industry.gov.au"
+      ],
+      "type": "government_resources_department",
+      "default_priority": 100
+    },
+    {
+      "source_id": "QATARENERGY",
+      "domains": [
+        "qatarenergy.qa",
+        "qatarenergylng.qa"
+      ],
+      "type": "national_energy_company_primary",
+      "default_priority": 85
+    },
+    {
+      "source_id": "NLNG",
+      "domains": [
+        "nlng.com",
+        "nigerialng.com"
+      ],
+      "type": "lng_project_operator_primary",
+      "default_priority": 85
+    },
+    {
+      "source_id": "SONATRACH",
+      "domains": [
+        "sonatrach.com"
+      ],
+      "type": "national_energy_company_primary",
+      "default_priority": 80
+    },
+    {
+      "source_id": "NOVATEK",
+      "domains": [
+        "novatek.ru"
+      ],
+      "type": "lng_project_operator_primary",
+      "default_priority": 80
+    },
+    {
+      "source_id": "WOODSIDE",
+      "domains": [
+        "woodside.com",
+        "woodside.com.au"
+      ],
+      "type": "lng_project_operator_primary",
+      "default_priority": 80
+    },
+    {
+      "source_id": "GAZPROM",
+      "domains": [
+        "gazprom.com"
+      ],
+      "type": "pipeline_operator_primary",
+      "default_priority": 80
+    },
+    {
+      "source_id": "CNPC",
+      "domains": [
+        "cnpc.com.cn"
+      ],
+      "type": "pipeline_operator_primary",
+      "default_priority": 80
+    }
+  ]
+}

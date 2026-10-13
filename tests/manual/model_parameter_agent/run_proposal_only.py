@@ -99,9 +99,9 @@ BASELINE_CAPABILITY_RELEASE = "extend16-v8"
 PROPOSAL_FLOW_RELEASE = "v4.1.7"
 EXPECTED_V4_0_CATALOG_CHECKSUM = "416017351f2b9539370963a3ca413914876da55a1db3f41e3dacd34bd466c763"
 EXPECTED_V4_1_CATALOG_CHECKSUM = "7f4ef0b7aa60efb550b9175654fd82350f0c293debf880a9180e7e935db54d69"
-EXPECTED_NEW_BC_V7_CONTRACT_SHA256 = "e8bea11883e7e796938a994f6415aa0c294a8eccbb9181981a213fcdb0aec7bb"
+EXPECTED_NEW_BC_V8_CONTRACT_SHA256 = "686640c7a47b215112997d7e34483ccdd9c01672be8e13a077e75e0afe0486a7"
 EXPECTED_EXTEND16_V8_CONTRACT_SHA256 = "cfc4971841a290ccf87251630f9f5c2d2a99062464d5b1e16db41ce22317f0eb"
-EXPECTED_RESOURCE_SEMANTIC_SCHEMA_HASH = "94155816fd84902781f1227cf3c397318a023da3047bd61bb71216cfdd4fa168"
+EXPECTED_RESOURCE_SEMANTIC_SCHEMA_HASH = "a1bbd691bcc1f22d336e83ea5dc0f30f0cc13f7c4cb3b4100bf96292b17ad4a2"
 EXPECTED_PACKAGED_RESOURCE_FINGERPRINT = "b1686b6308e8ba094277417bb79bfd85bfe05bb8013c20ed20545b9b2f9c1a44"
 EXPECTED_WORKBOOK_PARAMETER_NAMES = frozenset(
     {
@@ -136,8 +136,8 @@ CAPABILITY_RELEASES: dict[str, dict[str, Any]] = {
         "proposal_capability_release_id": "extend16-v8",
         "proposal_capability_sha256": EXPECTED_EXTEND16_V8_CONTRACT_SHA256,
         "workbook_parameter_names": EXPECTED_WORKBOOK_PARAMETER_NAMES,
-        "resource_release_id": "new-bc-v7",
-        "workbook_contract_sha256": EXPECTED_NEW_BC_V7_CONTRACT_SHA256,
+        "resource_release_id": "new-bc-v8",
+        "workbook_contract_sha256": EXPECTED_NEW_BC_V8_CONTRACT_SHA256,
         "resource_semantic_schema_hash": EXPECTED_RESOURCE_SEMANTIC_SCHEMA_HASH,
         "effective_resource_fingerprint": EXPECTED_PACKAGED_RESOURCE_FINGERPRINT,
         "uncovered_policy_version": UNCOVERED_POLICY_VERSION,
@@ -149,8 +149,8 @@ CAPABILITY_RELEASES: dict[str, dict[str, Any]] = {
         "proposal_capability_release_id": "extend16-v8",
         "proposal_capability_sha256": EXPECTED_EXTEND16_V8_CONTRACT_SHA256,
         "workbook_parameter_names": EXPECTED_WORKBOOK_PARAMETER_NAMES,
-        "resource_release_id": "new-bc-v7",
-        "workbook_contract_sha256": EXPECTED_NEW_BC_V7_CONTRACT_SHA256,
+        "resource_release_id": "new-bc-v8",
+        "workbook_contract_sha256": EXPECTED_NEW_BC_V8_CONTRACT_SHA256,
         "resource_semantic_schema_hash": EXPECTED_RESOURCE_SEMANTIC_SCHEMA_HASH,
         "effective_resource_fingerprint": EXPECTED_PACKAGED_RESOURCE_FINGERPRINT,
         "uncovered_policy_version": UNCOVERED_POLICY_VERSION,

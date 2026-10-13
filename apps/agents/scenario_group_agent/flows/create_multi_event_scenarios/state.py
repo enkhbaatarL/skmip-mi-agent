@@ -100,6 +100,8 @@ class V4MultiEventGenerationState(BaseModel):
     impact_levers: list[ModelImpactLeverPayload] = Field(default_factory=list)
     impact_catalog_version: str = ""
     impact_catalog_checksum: str = ""
+    # parameter_name -> semantic_axes. Event 분석 프롬프트에서 Lever별 필요 slot을 보여 주는 데만 쓴다.
+    impact_parameter_axes: dict[str, str] = Field(default_factory=dict)
     user_id: int | None = None
     analysis_as_of: str = ""
 

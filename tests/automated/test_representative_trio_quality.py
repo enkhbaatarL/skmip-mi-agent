@@ -715,7 +715,7 @@ def test_merge_execution_evidence_combines_non_overlapping_release_matched_attem
             "catalog_checksum": EXPECTED_CATALOG_CHECKSUM,
         },
         "resource": {
-            "release_id": "new-bc-v7",
+            "release_id": "new-bc-v8",
             "contract_sha256": "contract",
             "proposal_capability_sha256": "capability",
             "proposal_flow_release": "v4.1.7",
@@ -773,7 +773,7 @@ def test_post_fix_evidence_explicitly_replaces_attempt_and_keeps_audit() -> None
             "catalog_checksum": EXPECTED_CATALOG_CHECKSUM,
         },
         "resource": {
-            "release_id": "new-bc-v7",
+            "release_id": "new-bc-v8",
             "contract_sha256": "contract",
             "proposal_capability_sha256": "capability",
             "proposal_flow_release": "v4.1.7",

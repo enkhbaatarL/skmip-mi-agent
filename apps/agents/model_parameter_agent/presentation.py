@@ -1,3 +1,5 @@
+# Copyright (c) 2026 SK Innovation E&S.
+
 from __future__ import annotations
 
 import json
@@ -9,6 +11,12 @@ from apps.agents.model_parameter_agent.flows.propose_parameters.api_schema impor
     ProposeParametersCallbackOut,
     ProposeParametersData,
 )
+from apps.agents.model_parameter_agent.schemas.api.logical_table_catalog import (
+    LogicalTableCatalogData,
+    LogicalTableFile,
+    LogicalTableItem,
+    LogicalTableParameter,
+)
 from apps.agents.model_parameter_agent.schemas.api.parameters import (
     ModelParameterTarget,
     ProposalParameter,
@@ -16,6 +24,10 @@ from apps.agents.model_parameter_agent.schemas.api.parameters import (
 from apps.agents.model_parameter_agent.utils.basecase import (
     basecase_slot_axis_names_from_candidate,
     basecase_value_field_name_from_candidate,
+)
+from apps.agents.model_parameter_agent.utils.logical_table_catalog import (
+    LogicalTableCatalogEntry,
+    load_logical_table_catalog,
 )
 from apps.common.exceptions.custom import MIBaseError
 from apps.common.values.error_codes import ErrorCode
@@ -31,7 +43,82 @@ def _slot_from_axes(slot_axes: list[dict[str, Any]]) -> dict[str, Any]:
     return slot
 
 
-def _append_unique(items: list[str], value: Any) -> None:
+def build_logical_table_catalog_data() -> LogicalTableCatalogData:
+    catalog = load_logical_table_catalog()
+    entries_by_file_and_parameter: dict[tuple[str, int], list[LogicalTableCatalogEntry]] = {}
+    parameter_order: list[tuple[str, int]] = []
+    for entry in catalog.entries:
+        if entry.model_param_id is None or entry.model_file == "Output":
+            continue
+        key = (entry.model_file, entry.model_param_id)
+        if key not in entries_by_file_and_parameter:
+            entries_by_file_and_parameter[key] = []
+            parameter_order.append(key)
+        entries_by_file_and_parameter[key].append(entry)
+
+    files: list[LogicalTableFile] = []
+    for model_file in ("Demand", "Supply", "Trade"):
+        parameters: list[LogicalTableParameter] = []
+        for key in parameter_order:
+            if key[0] != model_file:
+                continue
+            entries = sorted(
+                entries_by_file_and_parameter[key],
+                key=lambda entry: entry.display_order or 0,
+            )
+            first = entries[0]
+            if (
+                first.model_param_id is None
+                or first.parameter_code is None
+                or first.parameter_display_name is None
+                or first.parameter_use_yn is None
+            ):
+                raise MIBaseError(
+                    ErrorCode.INVALID_REQUEST,
+                    detail="Logical-table catalog contains an incomplete mapped parameter",
+                )
+            parameters.append(
+                LogicalTableParameter(
+                    model_param_id=first.model_param_id,
+                    parameter_code=first.parameter_code,
+                    parameter_name=first.parameter_display_name,
+                    use_yn=first.parameter_use_yn,
+                    tables=[
+                        LogicalTableItem(
+                            logical_table_code=entry.logical_table_code,
+                            display_name=entry.display_name,
+                            model_sheet=entry.model_sheet,
+                            model_table_key=entry.model_table_key,
+                            table_role=entry.table_role,
+                            sheet_status=entry.sheet_status,
+                            source_type=entry.source_type,
+                            display_order=entry.display_order,
+                            ui_visible=entry.ui_visible,
+                            screen_visible=entry.screen_visible,
+                            summary_screen_mode=entry.summary_screen_mode,
+                            mapping_note=entry.mapping_note,
+                        )
+                        for entry in entries
+                        if entry.table_role is not None and entry.display_order is not None
+                    ],
+                ),
+            )
+        files.append(LogicalTableFile(model_file=model_file, parameters=parameters))
+
+    counts = catalog.expected_counts
+    return LogicalTableCatalogData(
+        catalog_version=catalog.catalog_version,
+        hierarchy=["modelFile", "parameterName", "tables.displayName"],
+        source_workbook_sha256=catalog.source.workbook_sha256,
+        entry_count=counts.entry_count,
+        logical_table_count=counts.logical_table_count,
+        mapped_entry_count=counts.mapped_entry_count,
+        parameter_count=counts.mapped_parameter_count,
+        files=files,
+    )
+
+
+def _append_unique(items: list[str], value: Any) -> None:  # noqa: ANN401
     text = str(value or "").strip()
     if text and text not in items:
         items.append(text)
@@ -56,7 +143,7 @@ def _value_key(value: dict[str, Any]) -> str:
     )
 
 
-def _axis_value_key(value: Any) -> Any:
+def _axis_value_key(value: Any) -> Any:  # noqa: ANN401
     if value is None:
         return None
     text = str(value).strip()
@@ -80,7 +167,7 @@ def _slot_value_key(value: dict[str, Any], axes: list[str]) -> str:
     )
 
 
-def _int_or_none(value: Any) -> int | None:
+def _int_or_none(value: Any) -> int | None:  # noqa: ANN401
     if value is None:
         return None
     try:
@@ -101,11 +188,11 @@ def _value_field_for(
     return str(adjustment.get("parameter_name") or "")
 
 
-def _field_key(value: Any) -> str:
+def _field_key(value: Any) -> str:  # noqa: ANN401
     return re.sub(r"[^0-9a-zA-Z가-힣]+", "", str(value or "")).lower()
 
 
-def _column_role_names(raw: Any) -> list[str]:
+def _column_role_names(raw: Any) -> list[str]:  # noqa: ANN401
     names: list[str] = []
     for part in str(raw or "").split(","):
         if ":" not in part:
@@ -198,7 +285,7 @@ def _finalize_group_values(
     group["values"] = finalized_values
 
 
-def _build_proposal_parameters(
+def _build_proposal_parameters(  # noqa: C901
     adjustments: list[dict[str, Any]],
     candidates: list[dict[str, Any]],
     *,
@@ -294,7 +381,7 @@ def _build_proposal_parameters(
 
 def _context_ids(
     scenario_context: dict[str, Any],
-    fallback_scenario_id: Any,
+    fallback_scenario_id: Any,  # noqa: ANN401
 ) -> tuple[int, int | None, int | None]:
     scenario = scenario_context.get("scenario") or {}
     scenario_group = scenario_context.get("scenario_group") or {}

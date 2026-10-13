@@ -14,6 +14,7 @@ import unicodedata
 
 from langchain_core.runnables.config import RunnableConfig
 from langgraph.runtime import Runtime
+from pydantic import ValidationError
 
 from apps.agents.model_parameter_agent.flows.propose_parameters.state import ModelParameterProposalState
 from apps.agents.model_parameter_agent.flows.propose_parameters.validation import (
@@ -2544,6 +2545,16 @@ def _exception_chain(exc: BaseException) -> tuple[BaseException, ...]:
     return tuple(chain)
 
 
+def _is_incomplete_json_validation_error(exc: ValidationError) -> bool:
+    errors = exc.errors(include_url=False)
+    if not errors or any(error.get("type") != "json_invalid" for error in errors):
+        return False
+    return all(
+        "EOF while parsing" in str((error.get("ctx") or {}).get("error") or error.get("msg") or "")
+        for error in errors
+    )
+
+
 def _transient_llm_error_reason(exc: BaseException) -> str | None:
     transient_error_codes = {
         ErrorCode.LLM_RESPONSE_TIMEOUT,
@@ -2566,6 +2577,8 @@ def _transient_llm_error_reason(exc: BaseException) -> str | None:
         "WriteTimeout",
     }
     for item in _exception_chain(exc):
+        if isinstance(item, ValidationError) and _is_incomplete_json_validation_error(item):
+            return "LLM_INCOMPLETE_JSON"
         if isinstance(item, MIBaseError):
             if item.error_code in transient_error_codes:
                 return item.error_code.name

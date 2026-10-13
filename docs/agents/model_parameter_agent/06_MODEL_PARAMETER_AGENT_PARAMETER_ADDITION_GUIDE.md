@@ -2,7 +2,7 @@
 
 ## 1. 체크인 기준선
 
-현재 Agent runtime 판정 기준은 proposal capability `extend16-v8`, workbook contract `new-bc-v7`,
+현재 Agent runtime 판정 기준은 proposal capability `extend16-v8`, workbook contract `new-bc-v8`,
 신규 Scenario Group catalog `v4.1` full pin이다. 기존 v4.0 Scenario는 저장된 v4.0 pin을 그대로 읽는다.
 DB 적용 상태는 runner preflight와 read-back으로 확인한다.
 
@@ -17,10 +17,12 @@ DB 적용 상태는 runner preflight와 read-back으로 확인한다.
   RegasAdjustment(ID 16), SupplyDisruption(ID 17), PNG Contract Volume(ID 18), ShippingCost(ID 20),
   RegionalProductionAdjustment(ID 22), ShippingFuelCost(ID 23), CanalToll(ID 24)
 - extend16의 v4 `multi_event_model_lever_dimensions` 기준값은 하나의 `read_only_proposal` contract
-  `model-parameter-workbook-contract-v7.json`을 사용한다. 이 workbook contract는 비활성 이력 호환용
+  `model-parameter-workbook-contract-v8.json`을 사용한다. 이 workbook contract는 비활성 이력 호환용
   User-Adjusted Gas Demand까지 17종 reference를 보존하지만 proposal capability에는 활성 16종만 둔다.
-  변경되지 않은 Excel artifact는
-  `resources/basecase_v4/new-bc-v1/`의 digest를 재사용하고, v1/v3는 기존 `resources/basecase/`를 유지한다.
+  ID 13·14 matrix write target은 최종 workbook의 84개월 범위 `G:CL`을 사용하며 mgmt v0044 master와
+  동일해야 한다.
+  packaged baseline Excel artifact는 `resources/basecase_v4/new-bc-v2/`의 digest를 사용한다. 활성 MI Base 경로는
+  Object Storage의 연결 workbook을 같은 구조 계약으로 검증하며, v1/v3는 기존 `resources/basecase/` 호환 경계를 유지한다.
 - LUT-backed 10개는 contract reference→same-exact-key LUT fallback→slot/evidence/value 절차를 사용한다.
   Basecase-only 6개도 같은 `v4_workbook_then_lut` mode를 쓰지만 등록 LUT가 없으므로 검증된 workbook
   exact slot만 사용하며, v4에는 별도 legacy Basecase reference mode를 두지 않는다.
@@ -33,6 +35,8 @@ DB 적용 상태는 runner preflight와 read-back으로 확인한다.
 - 공개 proposal/confirmation API와 payload, confirmation 동작은 변경하지 않는다.
 - DB migration 정본은 sibling mgmt repository다. v4.1은 기존 master·legacy mapping·v4.0 행을 수정하지 않고
   `tmm_mi_model_impact_lever_m`에 21행을 side-by-side로 추가하며 mgmt migration 0036과 동일해야 한다.
+- 후속 mgmt v0044는 schema·binding·활성 집합을 바꾸지 않고 master ID 13·14의
+  `basecase_value_end_col`만 최종 workbook과 같은 `CL`로 정합화한다.
 - 260813 workbook과 `resources/Model_Parameter_Base_Case_Mapping.md`는 0032의 최종 target·unit 정합성을
   사람이 검토하기 위한 자료다. DB 적용과 runtime 판정은 versioned canonical·contract·mgmt DML을 기준으로 한다.
 
@@ -245,7 +249,9 @@ workbook은 다음 명령으로 v4 canonical·config·archive와 보호 대상 l
 adapter, manifest, config/ConfigMap, canonical/workbook/docs/tests를 함께 갱신한다. staging 원본은 사용자가
 별도로 요청하지 않는 한 이동·삭제·덮어쓰기하지 않는다.
 
-envs/config.yaml과 devops/k8s/configmap.yaml을 같이 수정한다.
+`envs/config.yaml`과 외부에서 관리하는 Neuro Model Parameter 설정을 같이 수정한다. 검토용 Neuro 사본을
+`devops/k8s/model-parameter-configmap.yaml`에 둘 수 있지만 Git에는 커밋하지 않는다. 공용
+`devops/k8s/configmap.yaml`은 전용 설정의 source of truth가 아니다.
 
 - 활성 parameter: enabled=true, adapter, files, required_columns, key_axes, 필요 시 metadata_axes
 - 보류 parameter: enabled=false로 다운로드·구조 검증만 수행
@@ -258,15 +264,16 @@ adapter는 필수 header, horizon, 숫자 형식, 빈 값, exact-key 충돌, joi
 runtime proposal 범위를 제한하기 위해 DB, canonical JSON/SQL, config, LUT, Basecase workbook을 축소하지 않는다.
 v4 runtime은 active parameter definition과 catalog binding에 필요한 resource를 사용한다. 기존 v1/v3 Basecase
 preload의 누락·파싱 오류·0건은 warning으로 남기며, 활성 16개 capability 전체는 자동화·release
-acceptance에서 별도로 검증한다. v4 `new-bc-v7` startup은 contract schema/path와 contract에 고정된
+acceptance에서 별도로 검증한다. v4 `new-bc-v8` startup은 contract schema/path와 contract에 고정된
 Workbook path/digest만 경량 검증한다. sheet·header·range·변환·고정 record count는 최초 exact v4 materialization에서
 fail closed하고 성공 결과를 process cache한다.
 
 ### versioned workbook 계약을 변경하거나 확장할 때
 
-현재 extend16의 v4-only reference는 `resources/contracts/model-parameter-workbook-contract-v7.json`이 소유한다.
-변경되지 않은 workbook은 `resources/basecase_v4/new-bc-v1/` digest를 재사용할 수 있지만, 계약 coverage·parser·hash가
-바뀌면 새 release ID와 새 contract 파일을 만든다. 기존 `resources/basecase/` 파일을 덮어쓰거나
+현재 extend16의 v4-only reference는 `resources/contracts/model-parameter-workbook-contract-v8.json`이 소유한다.
+각 release는 검증용 불변 packaged artifact 디렉터리와 digest를 고정하며, 현재 v8은 `resources/basecase_v4/new-bc-v2/`를 사용한다.
+활성 MI Base의 Object Storage workbook은 이 계약의 구조를 적용하되 요청별 실제 digest로 별도 고정한다.
+계약 coverage·parser·hash 또는 workbook digest가 바뀌면 새 release ID와 새 contract 파일·artifact 디렉터리를 만든다. 기존 `resources/basecase/` 파일을 덮어쓰거나
 `new_resources/`를 runtime path로 연결하지 않는다.
 
 향후 proposal 범위를 확대할 때는 기존 5개가 사용하는 방식을 기본 불변 조건으로 삼는다.
@@ -390,7 +397,8 @@ applicability는 보존한다. 대표 worst-case prompt를 직렬화해 설정 b
 - 직렬화 상한: model_parameter_max_step2_prompt_bytes, model_parameter_max_step3_prompt_bytes
 - proposal Flow release: model_parameter_proposal_flow_release=v4.1.7
 - transient LLM 호출: model_parameter_transient_retry_max_attempts=2,
-  base delay 0.5초, max jitter 0.25초; semantic/좌표/DB 오류는 retry 금지
+  base delay 0.5초, max jitter 0.25초; timeout·transport·retryable HTTP와
+  `EOF while parsing`으로 확인된 불완전 JSON만 retry하고 완결 JSON의 schema·semantic/좌표/DB 오류는 retry 금지
 - 상한 초과: LLM 호출 전 actual/limit과 parameter별 크기를 포함해 실패
 
 proposal Step3의 `proposedValue`는 유한 숫자여야 한다. Confirmation은 `proposedValue` key가 필수지만 값은 `null`일 수 있고, non-null 값만 persistence 경계에서 엄격한 유한 숫자로 정규화한다. 원래 proposal과 같아야 한다는 비교는 없다. 두 경로 모두 설정 기반 소수 자릿수 round/trunc/ceil을 적용하지 않는다. Basecase/LUT 기준값의 adapter 정밀도 정책은 이와 별개로 유지하되 v4 PowerMix source fraction은 atomic sum을 보존하도록 정밀도 변환에서 제외한다. 기존 proposed precision 설정 키는 배포 설정 호환용이며 runtime 제안값을 변환하지 않는다.
@@ -410,7 +418,7 @@ floating-point noise에만 `1e-12` 절대·상대 허용오차를 적용한다. 
 4. v4 canonical JSON·SQL, LUT manifest, workbook/archive와 legacy mapping 비변경 digest를 확인한다.
 5. resource capability 기준으로 LUT-backed 활성 10개의 selectable LUT slot과 Basecase-only 활성 6개의
    Basecase slot을 확인한다. v4 신규 proposal capability가 v4.1 executable 활성 16개와 정확히 일치하는지 검증한다.
-6. v4 `new-bc-v7` contract의 세 workbook·auxiliary digest/header와
+6. v4 `new-bc-v8` contract의 세 workbook·auxiliary digest/header와
    815/5,040/4,200/5,040/845/60/23,820/23,820/420/4,908/12/22,320/684/5/2,187/5/10 record를 확인하고,
    invalid exact-key LUT 차단, PowerMix atomic vector, HurricaneIntensity 0~4 정수,
    LiqProd/LiqUtil target·evidence 회귀를 통과한다.
@@ -432,6 +440,6 @@ dry-run에서 우연히 할당된 ID를 기준값으로 채택하지 않는다.
 |---|---|---|---|---|---|---|---|---|
 | `<new parameter>` | PASS/FAIL | PASS/FAIL | PASS/FAIL | PASS/FAIL | PASS/FAIL/N/A | PASS/FAIL | PASS/FAIL | PASS/FAIL |
 
-검증 전후 DB·canonical·catalog와 기존 v1/v3 Basecase·업무용 mapping workbook fingerprint가 같아야 한다. 별도로 추가한 v4 contract/config path와 재사용한 `new-bc-v1` workbook artifact는 선언된 digest·header·record count와 일치해야 한다.
+검증 전후 DB·canonical·catalog와 기존 v1/v3 Basecase·업무용 mapping workbook fingerprint가 같아야 한다. 별도로 추가한 v4 contract/config path와 `new-bc-v2` packaged baseline artifact는 선언된 digest·header·record count와 일치해야 하며, 활성 MI Base의 Object Storage workbook도 같은 구조 계약을 통과해야 한다. workbook `SUMMARY`의 파일·시트·표 이름·화면 표시 여부도 logical table catalog와 일치해야 한다.
 
 catalog checksum이 바뀌면 master와 Lever catalog를 원자적으로 적용한 뒤 신규 v4 Scenario를 생성한다. 기존 v4 Scenario를 새 catalog로 조용히 재해석하지 않는다. Coal/Gas Futures는 실제 2026년 이후 strip이 제공될 때, ElectrificationRate는 국가·연·Drive Train LUT와 승인 binding·capability가 준비될 때 같은 절차로 활성화한다.

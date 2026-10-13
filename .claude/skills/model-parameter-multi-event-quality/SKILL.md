@@ -260,8 +260,11 @@ Step1.5/2/3 semantic abstention도 MI Base 준비 뒤 종료되므로 예외의 
   `Proposal 결과 KPI`, 그룹 표, post-fix 비교 표의 컬럼 정의도 고정 섹션으로 포함한다. KPI 개선안은 새 지표 제안이
   아니라 Proposal 성공률·triple-success·종류 동일성·Scenario별 값 변별 등 **기존 KPI를 높이는 실행 아이디어**로 쓴다.
 - evidence schema v6 이상인 공식 Report에는 실행 시점의 전체 `model_parameter_*` runtime effective 값,
-  로컬 `envs/config.yaml`, Neuro `devops/k8s/configmap.yaml` 선언값·SHA와 차이를 자동 포함한다. secret-valued
-  항목은 값과 key를 증적에서 제외하거나 마스킹한다. config snapshot이 빠진 Report는 완료로 처리하지 않는다.
+  로컬 `envs/config.yaml`, campaign에 별도로 제공된 외부 관리 Neuro 설정의 선언값·SHA와 차이를 자동
+  포함한다. 로컬 검토 사본의 기본 경로는 Git에서 제외된 `devops/k8s/model-parameter-configmap.yaml`이며,
+  그 파일이 없는 일반 CI는 Neuro parity 검사를 실행한 것으로 간주하지 않는다. secret-valued 항목은 값과
+  key를 증적에서 제외하거나 마스킹한다. Neuro parity를 검증한다고 선언한 Report에 config snapshot이
+  빠지면 완료로 처리하지 않는다.
 - v4.1.2 proposal-only frozen-context 검사는 persisted Scenario/Event/Group drift를 fail-closed로 유지하되,
   graph 실행 중 최상위에 추가되는 request-local `mi_base_case_id` pin은 Scenario mutation으로 분류하지 않는다.
   다른 context 차이는 persistence 전에 계속 차단한다.
@@ -279,7 +282,8 @@ release acceptance까지 요청받으면 이 보고서의 mandatory `FAIL`이 0�
 - unscoped read-only discovery만 허용하고 unscoped `--execute`는 DB 접속 전에 차단한다.
 - 기존 보고서 경로는 덮어쓰지 않으며 보고서 예약 실패도 DB 접속 전에 차단한다.
 - write-producing Scenario workflow를 자동 retry하지 않는다. 내부 LLM retry는 timeout·transport·HTTP
-  408/425/429/5xx로 제한하고 semantic/schema/좌표/integrity 오류에는 적용하지 않는다.
+  408/425/429/5xx와 `EOF while parsing`으로 확인된 불완전 JSON으로 제한하고, 완결 JSON의
+  semantic/schema·좌표/integrity 오류에는 적용하지 않는다.
 - catalog checksum, Lever ID/binding, group Event membership 오류를 경고로 낮추지 않는다.
 - valid but unmapped/non-executable catalog state는 reason code와 함께 coverage 증적으로 보존한다.
 - 보고서에 비밀값, DB 자격증명, 전체 prompt 원문을 기록하지 않는다.

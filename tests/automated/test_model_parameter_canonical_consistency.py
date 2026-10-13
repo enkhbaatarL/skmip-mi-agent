@@ -15,6 +15,7 @@ from openpyxl.worksheet.worksheet import Worksheet
 import pytest
 import yaml
 
+from apps.common.values.error_codes import ErrorCode
 from scripts.model_parameter.apply_model_parameter_v4 import (
     _validate_documents,
 )
@@ -683,3 +684,61 @@ def test_operator_docs_do_not_reintroduce_pre_v4_active_or_legacy_mapping_state(
     for path in canonical_docs:
         content = path.read_text(encoding="utf-8")
         assert all(parameter_name in content for parameter_name in EXPECTED_CURRENT_ACTIVE_PARAMETER_NAMES)
+
+
+def test_model_parameter_result_code_docs_match_runtime_contract() -> None:
+    api_spec = (ROOT_DIR / "docs/agents/model_parameter_agent/02_MODEL_PARAMETER_AGENT_API_SPEC.md").read_text(
+        encoding="utf-8"
+    )
+    flow_doc = (ROOT_DIR / "docs/agents/model_parameter_agent/04_MODEL_PARAMETER_AGENT_FLOW.md").read_text(
+        encoding="utf-8"
+    )
+    flow_source = (ROOT_DIR / "apps/agents/model_parameter_agent/flows/propose_parameters/flow.py").read_text(
+        encoding="utf-8"
+    )
+    validation_source = (
+        ROOT_DIR / "apps/agents/model_parameter_agent/flows/propose_parameters/validation.py"
+    ).read_text(encoding="utf-8")
+    quiz = (ROOT_DIR / "docs/agents/model_parameter_agent/07_MODEL_PARAMETER_AGENT_COMPREHENSION_QUIZ.md").read_text(
+        encoding="utf-8"
+    )
+
+    failure_mapping_source = flow_source.split("def _failure_result", maxsplit=1)[1].split(
+        "def _public_failure_error",
+        maxsplit=1,
+    )[0]
+    runtime_error_names = set(
+        re.findall(r"ErrorCode\.([A-Z0-9_]+)\.name", failure_mapping_source),
+    )
+    abstention_codes = {
+        name
+        for name, value in re.findall(
+            r'^(ABSTAINED_[A-Z0-9_]+) = "([A-Z0-9_]+)"$',
+            validation_source,
+            flags=re.MULTILINE,
+        )
+        if name == value
+    }
+
+    assert runtime_error_names
+    assert abstention_codes
+    for name in runtime_error_names:
+        numeric_code, _message, http_status = ErrorCode[name].value
+        assert f"| `{http_status}` | `{numeric_code}` | `{name}` |" in api_spec
+    assert all(f"`{code}`" in api_spec for code in abstention_codes)
+    internal_reason_codes = {
+        "ACTIVE_PARAMETER_DEFINITION_MISSING",
+        "CATALOG_MARKED_UNSUPPORTED",
+        "INACTIVE_MODEL_PARAMETER",
+        "NO_PARAMETER_BINDING",
+        "PRICE_ONLY",
+        "PROPOSAL_SCOPE_EXCLUDED",
+        "UNCHANGED_LEVER_STATE",
+    }
+    assert all(f"`{code}`" in api_spec for code in internal_reason_codes)
+    assert "`LLM_INCOMPLETE_JSON`" in api_spec
+    assert "`LLM_INCOMPLETE_JSON`" in flow_doc
+    assert "unchanged-only라서 변화 후보가 0개가 되면 그때 요청을 `INVALID_REQUEST`" not in quiz
+    assert "허용 candidate가 0개면 `INVALID_REQUEST`" not in quiz
+    assert "`ABSTAINED_NO_CHANGE`" in quiz
+    assert "`ABSTAINED_OUT_OF_PROPOSAL_SCOPE`" in quiz

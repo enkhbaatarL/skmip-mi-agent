@@ -24,10 +24,12 @@ from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.v4_sche
     V4DimensionDefinition,
     V4DimensionDesignDraft,
     V4DimensionDesignResult,
+    V4EventAnalysisExclusion,
     V4EventImpactAnalysisDraft,
     V4EventImpactAnalysisResult,
     V4ExcludedScenarioCandidate,
     V4GenerationResult,
+    V4GroupTitleDraft,
     V4LeverStateDraft,
     V4ReadableAdditionalDimensionDesignDraft,
     V4ReadableDimensionDesignDraft,
@@ -51,6 +53,8 @@ from apps.agents.scenario_group_agent.prompts.model_lever_scenario_generation im
     build_v4_interaction_analysis_user_prompt,
     build_v4_scenario_synthesis_user_prompt,
     event_open_question_budgets,
+    is_v4_unconfirmed_statement,
+    summarize_parameter_slots,
 )
 from apps.agents.scenario_group_agent.utils.scenario_group_summary import (
     EVENT_SUMMARY_PREVIEW_LENGTH,
@@ -426,7 +430,6 @@ def _synthesis() -> V4ScenarioSynthesisResult:
 
     return V4ScenarioSynthesisResult.model_validate(
         {
-            "groupTitle": "JKM 복수 Event 시나리오",
             "groupDescription": "공통 영향 경로와 잔여 불확실성을 결합한 JKM 시나리오",
             "scenarios": [
                 scenario(
@@ -495,6 +498,7 @@ def _group_summary() -> str:
 def _finalized() -> tuple[V4GenerationResult, object]:
     return finalize_v4_generation_result(
         _synthesis(),
+        group_title="테스트 그룹",
         group_summary=_group_summary(),
         impact_analysis=_analysis(),
         dimension_design=_dimensions(),
@@ -740,6 +744,7 @@ def test_v4_finalizer_normalizes_fractional_probabilities_to_integer_percentages
 
     finalized, _coverage = finalize_v4_generation_result(
         synthesis,
+        group_title="테스트 그룹",
         group_summary=_group_summary(),
         impact_analysis=_analysis(),
         dimension_design=_dimensions(),
@@ -763,6 +768,7 @@ def test_v4_finalizer_distributes_zero_probability_weights_deterministically() -
 
     finalized, _coverage = finalize_v4_generation_result(
         synthesis,
+        group_title="테스트 그룹",
         group_summary=_group_summary(),
         impact_analysis=_analysis(),
         dimension_design=_dimensions(),
@@ -774,10 +780,11 @@ def test_v4_finalizer_distributes_zero_probability_weights_deterministically() -
     assert [scenario.baseline_yn for scenario in finalized.scenarios] == [False, True, False]
 
 
-def test_v4_finalizer_injects_fallback_scenario_when_llm_set_misses_one_direction() -> None:
+def test_v4_finalizer_retries_when_injected_fallback_is_below_minimum_probability() -> None:
     # LLM이 제출한 Scenario 3개가 Base(가장 높은 probabilityScore) 대비 전부 bullish 방향이라,
-    # bearish 방향 Scenario가 하나도 없는 상황을 재현한다. 재시도에만 기대지 않고 서버가 직접
-    # Base 대비 bearish 방향 Scenario를 구성해 끼워 넣는지 확인한다.
+    # bearish 방향 Scenario가 하나도 없는 상황을 재현한다. 서버가 방향 보완용 fallback을
+    # 1%로 구성하더라도 최종 Scenario의 최소 확률 5% 계약을 인위적으로 우회하지 않고
+    # 합성 재시도로 넘기는지 확인한다.
     def scenario(title: str, values: dict[str, str], band: str, score: float) -> V4ScenarioCandidateDraft:
         return V4ScenarioCandidateDraft.model_validate(
             {
@@ -845,15 +852,92 @@ def test_v4_finalizer_injects_fallback_scenario_when_llm_set_misses_one_directio
     ]
     synthesis = V4ScenarioSynthesisResult.model_validate(
         {
-            "groupTitle": "test",
             "groupDescription": "test",
             "scenarios": [base.model_dump(), combo_a.model_dump(), combo_b.model_dump()],
             "excludedScenarios": [item.model_dump() for item in excluded],
         },
     )
 
+    with pytest.raises(ValueError, match=r"Final probabilityScore must be >= 5%"):
+        finalize_v4_generation_result(
+            synthesis,
+            group_title="테스트 그룹",
+            group_summary=_group_summary(),
+            impact_analysis=_analysis(),
+            dimension_design=_dimensions(),
+            impact_levers=_catalog(),
+        )
+
+
+def test_v4_finalizer_excludes_excess_same_direction_scenarios_beyond_two_slots() -> None:
+    # pressure_band는 방향당 slot이 2개(strong_X/X)뿐이라, Base 대비 같은 방향(여기서는 bullish)에
+    # 3개가 몰리면 전부 다른 band를 줄 수 없다. 가장 극단적인 2개만 남고 나머지 1개는
+    # excludedScenarios로 빠져야 한다(에러 없이 바로 유효한 결과가 나와야 함).
+    def scenario(title: str, values: dict[str, str], band: str, score: float) -> V4ScenarioCandidateDraft:
+        return V4ScenarioCandidateDraft.model_validate(
+            {
+                "title": title,
+                "narrative": f"{title} 전개",
+                "dimensionValues": values,
+                "commonImpactPathIds": ["path_101_demand", "path_202_supply"],
+                "appliedInteractionIds": ["interaction_1"],
+                "pressureBand": band,
+                "pressureBreakdown": {
+                    "commonImpact": "x",
+                    "valueDelta": "x",
+                    "interactionEffect": "x",
+                },
+                "relatedMarkets": [],
+                "probabilityScore": score,
+                "mixedFactors": [],
+                "explanation": f"{title} 설명",
+            },
+        )
+
+    # 사전 검증(LLM 원본 band 분산·5-band 커버리지)을 통과시키기 위해 원본 band는 서로 다르게
+    # 둔다. 실제 recompute는 Base 선정 후 delta 기준으로 다시 계산되므로 이 값 자체는 중요하지
+    # 않다 — 핵심은 bullish_1/2/3이 Base 대비 같은(양수) 방향이라는 것.
+    base = scenario(
+        "base",
+        {"cold_wave_intensity": "high", "liquefaction_recovery": "fast", "risk_premium": "low"},
+        "bearish",
+        40,
+    )
+    bearish = scenario(
+        "bearish",
+        {"cold_wave_intensity": "low", "liquefaction_recovery": "fast", "risk_premium": "low"},
+        "strong_bearish",
+        15,
+    )
+    bullish_1 = scenario(
+        "bullish-1",
+        {"cold_wave_intensity": "low", "liquefaction_recovery": "delayed", "risk_premium": "high"},
+        "balanced",
+        15,
+    )
+    bullish_2 = scenario(
+        "bullish-2",
+        {"cold_wave_intensity": "high", "liquefaction_recovery": "fast", "risk_premium": "high"},
+        "bullish",
+        15,
+    )
+    bullish_3 = scenario(
+        "bullish-3",
+        {"cold_wave_intensity": "high", "liquefaction_recovery": "delayed", "risk_premium": "low"},
+        "strong_bullish",
+        15,
+    )
+    synthesis = V4ScenarioSynthesisResult.model_validate(
+        {
+            "groupDescription": "test",
+            "scenarios": [item.model_dump() for item in (base, bearish, bullish_1, bullish_2, bullish_3)],
+            "excludedScenarios": [],
+        },
+    )
+
     finalized, _coverage = finalize_v4_generation_result(
         synthesis,
+        group_title="테스트 그룹",
         group_summary=_group_summary(),
         impact_analysis=_analysis(),
         dimension_design=_dimensions(),
@@ -861,17 +945,16 @@ def test_v4_finalizer_injects_fallback_scenario_when_llm_set_misses_one_directio
     )
 
     assert len(finalized.scenarios) == 4
-    base_result = next(scenario for scenario in finalized.scenarios if scenario.baseline_yn)
-    assert base_result.pressure_band == "balanced"
-    assert base_result.scenario_role not in {"floor", "ceiling"}
-
-    non_base = [scenario for scenario in finalized.scenarios if not scenario.baseline_yn]
-    assert {scenario.scenario_role for scenario in non_base} >= {"floor", "ceiling"}
-    floor_scenario = next(scenario for scenario in non_base if scenario.scenario_role == "floor")
-    assert floor_scenario.pressure_band in {"bearish", "strong_bearish"}
-    assert floor_scenario.dimension_values == {
-        "cold_wave_intensity": "low",
-        "liquefaction_recovery": "fast",
+    non_base_bands = [scenario.pressure_band for scenario in finalized.scenarios if not scenario.baseline_yn]
+    assert len(non_base_bands) == len(set(non_base_bands))
+    assert len(finalized.excluded_scenarios) == 1
+    excluded = finalized.excluded_scenarios[0]
+    assert excluded.reason_code == "LOW_DISTINCTIVENESS"
+    # 세 bullish 후보가 delta 동률(+2)이라 정렬이 안정적으로 유지되고, 제출 순서상 마지막
+    # (bullish-3)이 상위 2개(bullish-1, bullish-2) 밖으로 밀려 제외된다.
+    assert excluded.dimension_values == {
+        "cold_wave_intensity": "high",
+        "liquefaction_recovery": "delayed",
         "risk_premium": "low",
     }
     assert sum(scenario.probability_score for scenario in finalized.scenarios) == 100
@@ -883,7 +966,8 @@ def test_v4_scenario_rejects_missing_common_path() -> None:
     with pytest.raises(ValueError, match="all common Impact Paths"):
         finalize_v4_generation_result(
             synthesis,
-            group_summary=_group_summary(),
+            group_title="테스트 그룹",
+        group_summary=_group_summary(),
             impact_analysis=_analysis(),
             dimension_design=_dimensions(),
             impact_levers=_catalog(),
@@ -897,7 +981,8 @@ def test_v4_scenario_duplicate_combination_error_identifies_both_scenarios() -> 
     with pytest.raises(ValueError) as error:
         finalize_v4_generation_result(
             synthesis,
-            group_summary=_group_summary(),
+            group_title="테스트 그룹",
+        group_summary=_group_summary(),
             impact_analysis=_analysis(),
             dimension_design=_dimensions(),
             impact_levers=_catalog(),
@@ -1305,6 +1390,65 @@ def test_v4_readable_event_requires_candidate_one_when_impacts_exist() -> None:
         )
 
 
+def _two_impact_readable(primary_state: str, supporting_state: str) -> V4ReadableEventAnalysisDraft:
+    facts = ["호르무즈 해협 LNG 통항이 사실상 중단됨.", "동남아 수입업체들이 현물 공급 부족에 직면함."]
+    return V4ReadableEventAnalysisDraft.model_validate(
+        {
+            "eventFacts": facts,
+            "decisionBasis": [],
+            "impacts": [
+                {
+                    "evidence": [fact],
+                    "analysis": f"{fact} 이 변화가 아시아 LNG 공급을 줄여 JKM에 단기 상승 압력을 준다.",
+                    "leverStates": [state],
+                    "balance": "trade|decrease",
+                    "importance": "high",
+                }
+                for fact, state in zip(facts, [primary_state, supporting_state], strict=True)
+            ],
+            "openQuestions": [],
+            "excludedBecause": None,
+        },
+    )
+
+
+def test_v4_supporting_impact_must_differ_from_primary_route() -> None:
+    readable = _two_impact_readable(
+        "route_disruption|primary|disrupt|호르무즈 해협|단기",
+        "route_disruption|primary|disrupt| 호르무즈  해협 |단기",
+    )
+
+    with pytest.raises(ValueError, match="Impact 2 repeats Impact 1 with the same Lever, direction, scope and timing"):
+        expand_v4_readable_event_analysis(
+            readable,
+            event_id=1157,
+            observed_at=None,
+            fact_candidates={"f1": readable.event_facts[0], "f2": readable.event_facts[1]},
+        )
+
+
+@pytest.mark.parametrize(
+    "supporting_state",
+    [
+        "route_disruption|primary|disrupt|동남아 수입국|단기",  # 같은 Lever, 다른 대상
+        "route_disruption|primary|recover|호르무즈 해협|단기",  # 같은 Lever, 다른 방향
+        "route_disruption|primary|disrupt|호르무즈 해협|중기",  # 같은 Lever, 다른 시점
+        "inventory_condition|primary|decrease|호르무즈 해협|단기",  # 다른 Lever
+    ],
+)
+def test_v4_supporting_impact_on_same_lever_is_kept_when_route_differs(supporting_state: str) -> None:
+    readable = _two_impact_readable("route_disruption|primary|disrupt|호르무즈 해협|단기", supporting_state)
+
+    draft = expand_v4_readable_event_analysis(
+        readable,
+        event_id=1157,
+        observed_at=None,
+        fact_candidates={"f1": readable.event_facts[0], "f2": readable.event_facts[1]},
+    )
+
+    assert [path.source_fact_ids for path in draft.impact_paths] == [["e1157_f1"], ["e1157_f2"]]
+
+
 def test_v4_three_facts_hydrate_to_ordered_paths_and_preserve_lineage() -> None:
     facts = [
         "동북아 한파 지속 전망",
@@ -1319,11 +1463,12 @@ def test_v4_three_facts_hydrate_to_ordered_paths_and_preserve_lineage() -> None:
                 {
                     "evidence": [fact],
                     "analysis": f"{fact}가 동북아 LNG 수요를 바꾸는 대표 경로 {index}로 JKM에 단기 상승 압력을 준다.",
-                    "leverStates": ["weather_demand|primary|increase|동북아|단기"],
+                    # 같은 Lever라도 대상(scope)이 다르면 별도 경로로 인정한다.
+                    "leverStates": [f"weather_demand|primary|increase|{scope}|단기"],
                     "balance": "demand|increase",
                     "importance": "high" if index == 1 else "medium",
                 }
-                for index, fact in enumerate(facts, start=1)
+                for index, (fact, scope) in enumerate(zip(facts, ["동북아", "한국", "일본"], strict=True), start=1)
             ],
             "openQuestions": [
                 {
@@ -1418,6 +1563,342 @@ def test_v4_fact_candidates_do_not_truncate_the_source_sentence() -> None:
     candidates = build_v4_event_fact_candidates({"mi_event_id": 101, "key_bullets": [fact]})
 
     assert candidates == {"f1": fact}
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        "신규 보도에 LNG선, LNG 화물, 가스 설비 피해나 카타르 LNG 수출 차질은 명시되지 않음.",
+        "본 Event와 직접 연결된 가격 반응은 신규 근거에서 확인되지 않음",
+        "피해 범위와 규모는 아직 확인되지 않았음.",
+        "신규 기사에서 확정 물량 변화는 확인되지 않아 단기 실물 수급 변화 근거는 제한적임.",
+        "국가·터미널별 실제 utilization 변동 근거는 포함되지 않음.",
+        "Sakhalin-2 제재·운영·정비·생산 상태 변화에 대한 신규 근거 부재임.",
+        # 앞 절도 미확인 진술이면 혼합 문장이 아니다.
+        "신규 리포트는 터키 발전용 가스 수요 수치를 제시하지 않았으며, 기존 사건의 상태 변경은 확인되지 않음.",
+    ],
+)
+def test_v4_unconfirmed_statement_detects_sentences_that_conclude_with_absence(sentence: str) -> None:
+    assert is_v4_unconfirmed_statement(sentence)
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        "신규 기사에 JKM 가격 수치는 제시되지 않았으나, 공급 확대 신호는 LNG 프리미엄 하방 압력으로 작용할 수 있음.",
+        "미 중부사령부는 상선 55척이 통과했다고 밝혀 즉각적인 물동량 중단은 확인되지 않았으며, 이는 차질을 제한하는 요인임.",
+        "Freeport LNG는 10월 2일 압축기 정비로 Train 2를 중단함.",
+        # 앞 절에 관측 사실이 있는 혼합 문장 (1168 재고 근거가 빠져 inventory_condition이 사라진 회귀)
+        "일본 주요 전력사 LNG 재고는 직전 공표 기준 저점 수준으로 언급되었으며 최신 수치 업데이트는 신규 근거에서 확인되지 않음.",
+        "러시아가 해당 시설에 대규모 드론 공격을 가했으며, 피해 범위와 규모는 아직 확인되지 않았음.",
+    ],
+)
+def test_v4_unconfirmed_statement_keeps_substantive_sentences(sentence: str) -> None:
+    assert not is_v4_unconfirmed_statement(sentence)
+
+
+def test_v4_fact_candidates_exclude_unconfirmed_supporting_statements() -> None:
+    primary = "Troll 가스전 비계획 가동 중단으로 노르웨이 가스 공급이 56 mcm/d 감소함."
+    unconfirmed = "본 Event와 직접 연결된 TTF·JKM 가격 반응은 신규 근거에서 확인되지 않음."
+    supporting = "유럽 저장률은 68.8%로 전년 대비 12.1%포인트 낮음."
+    event = {"mi_event_id": 101, "one_line_summary": "Troll 차질 지속", "key_bullets": [primary, unconfirmed, supporting]}
+
+    assert build_v4_event_fact_candidates(event) == {"f1": primary, "f2": supporting}
+
+
+def test_v4_fact_candidates_use_summary_as_primary_when_headline_bullet_is_unconfirmed() -> None:
+    unconfirmed = "이번 신규 기록에서는 해당 설비의 복구·연장·물량 변화가 직접 확인되지 않음."
+    background = "동일 기간 호르무즈 통항 리스크가 아시아 LNG 가격 상승을 주도함."
+    summary = "[노르웨이 가스 공급] Troll 비계획 중단 지속 → 유럽 가스 공급 제약"
+    event = {"mi_event_id": 101, "one_line_summary": summary, "key_bullets": [unconfirmed, background]}
+
+    assert build_v4_event_fact_candidates(event) == {"f1": summary, "f2": background}
+
+
+def test_v4_fact_candidates_use_summary_when_headline_is_mixed_but_keep_it_as_a_candidate() -> None:
+    headline = (
+        "아시아 단기 공급 보고는 MLNG Dua 정지와 Tangguh LNG 약세를 강조했으며, Sakhalin-2 상태 변경의 직접 근거는 제시되지 않음."
+    )
+    constraint = "러시아 법인 전환 이후 제재와 예비부품 접근 제약 지속으로 운영 안정성 리스크 잔존임."
+    summary = "[러시아 LNG 제재] Sakhalin-2 상태 업데이트 부재 → 운영·정비 리스크 유지"
+    event = {"mi_event_id": 1184, "one_line_summary": summary, "key_bullets": [headline, constraint]}
+
+    assert build_v4_event_fact_candidates(event) == {"f1": summary, "f2": headline, "f3": constraint}
+
+
+def test_v4_fact_candidates_fall_back_to_summary_when_every_bullet_is_unconfirmed() -> None:
+    event = {
+        "mi_event_id": 101,
+        "one_line_summary": "Cove Point LNG가 약 5주간 연례 정비로 생산을 중단함.",
+        "key_bullets": ["신규 리포트에는 정비 종료나 생산 재개 정보가 포함되지 않음."],
+    }
+
+    assert build_v4_event_fact_candidates(event) == {"f1": "Cove Point LNG가 약 5주간 연례 정비로 생산을 중단함."}
+
+
+@pytest.mark.parametrize(
+    ("dates", "expected"),
+    [
+        ({"oldest_record_first_created": "2026-06-01T00:00:00", "latest_record_first_created": "2026-07-20T23:00:00"},
+         "- 관련 기록 기간: 2026-06-01 ~ 2026-07-20 (원문 기록 수집 시점)"),
+        ({"oldest_record_first_created": "2026-07-20T23:00:00", "latest_record_first_created": "2026-07-20T23:00:00"},
+         "- 관련 기록 기간: 2026-07-20 (원문 기록 수집 시점)"),
+        ({"latest_record_first_created": "2026-07-20T23:00:00"}, "- 관련 기록 기간: 2026-07-20 (원문 기록 수집 시점)"),
+    ],
+)
+def test_v4_event_prompt_falls_back_to_record_period_without_occurred_at(
+    dates: dict[str, str],
+    expected: str,
+) -> None:
+    lever = {"lever_code": "us_gom_hurricane_disruption", "domain": "supply", "applicability_hint": "GoM"}
+    event = EventPayload.model_validate(
+        {"mi_event_id": 1522, "event_type_l2_id": 11, "event_title_ko": "걸프만 셧인", "key_bullets": ["셧인"], **dates},
+    )
+
+    prompt = build_model_lever_user_prompt(
+        events=[event.model_dump()], impact_levers=[lever], catalog_version="v4", analysis_as_of="2026-10-11"
+    )
+
+    assert "- 발생시각: 미제공\n" in prompt
+    assert expected in prompt
+    assert "관련 기록 기간은 사건이 관측된 연도·월입니다" in prompt
+    assert "사건의 시작점이나 잔여 기간 계산의 기준으로는\n  쓰지 않습니다" in prompt
+    # "Catalog 조건"을 직접 언급하면 모델이 다른 Lever의 적용 조건까지 엄격하게 읽어 Event를 제외했다 (1706).
+    assert "Catalog의 적용 연도·월 조건" not in prompt
+
+
+def test_v4_event_prompt_prefers_occurred_at_over_record_period() -> None:
+    lever = {"lever_code": "us_gom_hurricane_disruption", "domain": "supply", "applicability_hint": "GoM"}
+    with_time = {
+        "mi_event_id": 101,
+        "key_bullets": ["셧인"],
+        "occurred_at": "2026-08-13T00:00:00",
+        "latest_record_first_created": "2026-08-28T08:00:00",
+    }
+    without_dates = {"mi_event_id": 102, "key_bullets": ["셧인"]}
+
+    timed = build_model_lever_user_prompt(
+        events=[with_time], impact_levers=[lever], catalog_version="v4", analysis_as_of="2026-10-11"
+    )
+    undated = build_model_lever_user_prompt(
+        events=[without_dates], impact_levers=[lever], catalog_version="v4", analysis_as_of="2026-10-11"
+    )
+
+    assert "- 발생시각: 2026-08-13T00:00:00\n" in timed
+    assert "관련 기록 기간" not in timed
+    assert "- 발생시각: 미제공\n" in undated
+    assert "관련 기록 기간" not in undated
+
+
+@pytest.mark.parametrize(
+    ("semantic_axes", "expected"),
+    [
+        ("slot=B:Year(YYYY, 2026~2030); value=F:User Input Absolute Value ($/d)", "Year(YYYY, 2026~2030)"),
+        (
+            "slot=B:Year(YYYY, 2026~2030), C:Country(국가명; basecase 예: United States, Taiwan (China), Spain); "
+            "value=F:% change(+/-)",
+            "Year(YYYY, 2026~2030), Country",
+        ),
+        (
+            "slot=Country(국가명; 예: Algeria), LNG Plant(예: Arzew GL1Z), LNG Plant Train(348개 basecase Train 중 선택; "
+            "예: Angola LNG T1), Year(YYYY), Month(1~12); value=Utilization Rate",
+            "Country, LNG Plant, LNG Plant Train, Year(YYYY), Month(1~12)",
+        ),
+        (
+            "slot=J:Year(YYYY, 2026~2030), K:Country(국가명), value=M:Population (Thousands)",
+            "Year(YYYY, 2026~2030), Country",
+        ),
+        (None, ""),
+    ],
+)
+def test_summarize_parameter_slots_keeps_slot_names_and_ranges(semantic_axes: str | None, expected: str) -> None:
+    assert summarize_parameter_slots(semantic_axes) == expected
+
+
+def test_v4_event_prompt_renders_levers_by_meaning_and_parameter_slots() -> None:
+    levers = [
+        {
+            "lever_code": "lng_charter_rate",
+            "domain": "trade",
+            "description": "연도별 LNG 선박 charter rate($/day)의 최종 절대값 변화",
+            "applicability_hint": "선박 charter 시장의 전역·연간 충격에만 사용한다.",
+            "parameter_bindings": [{"parameter_name": "ShippingCost", "support_status": "executable"}],
+        },
+        {
+            "lever_code": "direct_gas_demand",
+            "domain": "demand",
+            "description": "국가·연월·수요 하위부문별 최종 가스수요 BCM 직접 입력",
+            "applicability_hint": "exact Country·Year·Month·Demand Sub-Sector가 있을 때만 최후 수단으로 사용한다.",
+            "parameter_bindings": [
+                {
+                    "parameter_name": "User-Adjusted Gas Demand",
+                    "support_status": "known_unsupported",
+                    "unsupported_reason_code": "INACTIVE_MODEL_PARAMETER",
+                },
+            ],
+        },
+        {"lever_code": "regional_price_spread", "domain": "price_only", "description": "상대 가격 spread 변화"},
+    ]
+    axes = {
+        "ShippingCost": "slot=B:Year(YYYY, 2026~2030); value=F:User Input Absolute Value ($/d)",
+        "User-Adjusted Gas Demand": "slot=D:Country, E:Year(YYYY, 2026~2030), F:Month(1~12), G:Demand Sub-Sector",
+    }
+
+    prompt = build_model_lever_user_prompt(
+        events=[{"mi_event_id": 1682, "key_bullets": ["대서양 용선료 저점"]}],
+        impact_levers=levers,
+        catalog_version="v4",
+        analysis_as_of="2026-10-12",
+        parameter_axes=axes,
+    )
+
+    assert "- lng_charter_rate: 연도별 LNG 선박 charter rate($/day)의 최종 절대값 변화" in prompt
+    assert "· ShippingCost [사용 가능] 필요 slot: Year(YYYY, 2026~2030)" in prompt
+    assert "· User-Adjusted Gas Demand [비활성(모델 입력 불가)] 필요 slot: Country, Year(YYYY, 2026~2030)" in prompt
+    assert "- regional_price_spread: 상대 가격 spread 변화\n  · binding 없음" in prompt
+    # 자연어 적용 조건은 Lever 탈락의 원인이었으므로 Event 분석 프롬프트에 넣지 않는다 (1682·1706·1309).
+    assert "전역·연간 충격에만" not in prompt
+    assert "최후 수단" not in prompt
+    assert "세부 slot이 없다는 이유만으로\n     Lever를 버리거나 Event를 제외하지 않습니다" in prompt
+    assert "위험·가능성·업데이트 부재만 있으면 binding 없는 price_only Lever" in prompt
+    assert "binding parameter가 비활성이거나 사실의 Year가 범위 밖이면" in prompt
+    assert "적용 조건을 이 Event의 사실이 실제로 충족할 때만" not in prompt
+
+
+def _catalog_blocked_readable(**overrides: object) -> V4ReadableEventAnalysisDraft:
+    payload: dict[str, object] = {
+        "eventFacts": ["대서양 용선료가 저점에서 보합을 유지함."],
+        "decisionBasis": [],
+        "impacts": [],
+        "openQuestions": [],
+        "excludedBecause": "운임 영향은 있으나 맞는 Lever의 조건을 충족하지 않는다.",
+        "excludedReason": "catalog_condition_unmet",
+        "blockedLevers": ["direct_gas_demand"],
+    }
+    payload.update(overrides)
+    return V4ReadableEventAnalysisDraft.model_validate(payload)
+
+
+def test_v4_catalog_condition_unmet_exclusion_is_hydrated_and_finalized() -> None:
+    readable = _catalog_blocked_readable()
+    draft = expand_v4_readable_event_analysis(
+        readable,
+        event_id=1682,
+        observed_at=None,
+        fact_candidates={"f1": "대서양 용선료가 저점에서 보합을 유지함."},
+    )
+
+    result = finalize_v4_event_impact_analysis(draft, event_ids=[1682], impact_levers=_catalog())
+
+    assert [(item.reason_type, item.blocked_lever_codes) for item in result.event_exclusions] == [
+        ("catalog_condition_unmet", ["direct_gas_demand"]),
+    ]
+
+
+def test_v4_exclusion_without_reason_defaults_to_no_material_impact() -> None:
+    readable = _catalog_blocked_readable(excludedReason=None, blockedLevers=[])
+    draft = expand_v4_readable_event_analysis(
+        readable,
+        event_id=1682,
+        observed_at=None,
+        fact_candidates={"f1": "대서양 용선료가 저점에서 보합을 유지함."},
+    )
+
+    assert [(item.reason_type, item.blocked_lever_codes) for item in draft.event_exclusions] == [
+        ("no_material_impact", []),
+    ]
+
+
+def test_v4_catalog_condition_unmet_rejects_unknown_blocked_levers() -> None:
+    draft = expand_v4_readable_event_analysis(
+        _catalog_blocked_readable(blockedLevers=["not_in_catalog"]),
+        event_id=1682,
+        observed_at=None,
+        fact_candidates={"f1": "대서양 용선료가 저점에서 보합을 유지함."},
+    )
+
+    with pytest.raises(ValueError, match="blockedLevers must be catalog Lever codes"):
+        finalize_v4_event_impact_analysis(draft, event_ids=[1682], impact_levers=_catalog())
+
+
+@pytest.mark.parametrize(
+    ("overrides", "expected_reason", "expected_blocked"),
+    [
+        ({"eventFacts": [], "excludedBecause": "사용할 사실이 없다."}, None, []),
+        ({"excludedReason": "no_material_impact"}, "no_material_impact", []),
+        (
+            {"blockedLevers": ["direct_gas_demand", "direct_gas_demand"]},
+            "catalog_condition_unmet",
+            ["direct_gas_demand"],
+        ),
+    ],
+)
+def test_v4_readable_exclusion_reason_normalizes_inconsistent_fields(
+    overrides: dict[str, object],
+    expected_reason: str | None,
+    expected_blocked: list[str],
+) -> None:
+    # 모순된 사유·Lever 조합은 분석 내용에 영향이 없으므로 재시도 대신 정규화한다.
+    readable = _catalog_blocked_readable(**overrides)
+
+    assert (readable.excluded_reason, readable.blocked_levers) == (expected_reason, expected_blocked)
+
+
+def test_v4_stored_exclusion_without_blocked_levers_still_loads() -> None:
+    exclusion = V4EventAnalysisExclusion.model_validate(
+        {"eventId": 1309, "reasonType": "no_material_impact", "reason": "중요한 영향 없음"},
+    )
+
+    assert exclusion.blocked_lever_codes == []
+
+
+def test_v4_event_markdown_labels_catalog_condition_exclusions() -> None:
+    from apps.agents.scenario_group_agent import presentation
+
+    markdown = presentation._v4_event_markdown(
+        [{"mi_event_id": 1682, "event_title_ko": "대서양 운임"}, {"mi_event_id": 1309, "event_title_ko": "EU 메탄"}],
+        {
+            "event_exclusions": [
+                {"event_id": 1682, "reason_type": "catalog_condition_unmet", "reason": "Lever 조건 미충족"},
+                {"event_id": 1309, "reason_type": "no_material_impact", "reason": "중요한 영향 없음"},
+            ],
+        },
+    )
+
+    assert "- 분석 제외(Catalog 조건 미충족): Lever 조건 미충족" in markdown
+    assert "- 분석 제외: 중요한 영향 없음" in markdown
+
+
+def test_v4_event_prompt_explains_exclusion_reason_types() -> None:
+    prompt = build_model_lever_user_prompt(
+        events=[{"mi_event_id": 1682, "key_bullets": ["대서양 용선료 저점"]}],
+        impact_levers=[],
+        catalog_version="v4",
+        analysis_as_of="2026-10-12",
+    )
+
+    assert "· catalog_condition_unmet: LNG 시장 영향은 있지만 의미가 맞는 Lever를 위 규칙" in prompt
+    # 새 유형이 제외를 늘리지 않도록 price_only로 설명할 수 있으면 제외하지 않는다 (1706: 4/4 제외 → 1/3).
+    assert "price_only Lever로도 영향 경로를 설명할 수 없어 제외할 때만 씁니다" in prompt
+    assert "blockedLevers에 검토했지만 쓸 수 없었던\n    Lever code를 최대 3개" in prompt
+    assert "· no_material_impact: 그 밖에 LNG 시장에 중요한 영향이 없을 때" in prompt
+
+
+def test_v4_event_prompt_omits_unconfirmed_statements_entirely() -> None:
+    unconfirmed = "본 Event와 직접 연결된 JKM 가격 반응은 신규 근거에서 확인되지 않음."
+    primary = "카타르에너지는 Edison에 대한 LNG 인도를 12월 초까지 재개하지 못한다고 밝힘."
+    lever = {"lever_code": "weather_demand", "domain": "demand", "applicability_hint": "한파·폭염"}
+    event = {"mi_event_id": 101, "event_title_ko": "카타르 불가항력", "key_bullets": [primary, unconfirmed]}
+
+    prompt = build_model_lever_user_prompt(
+        events=[event], impact_levers=[lever], catalog_version="v4", analysis_as_of="2026-10-09"
+    )
+
+    assert f"1. {primary}" in prompt
+    # 미확인 문장을 별도 섹션으로 보여 주면 모델이 Catalog 조건을 엄격하게 읽어 Lever·Event를 버렸다
+    # (1522 GoM Lever 0/5 → 섹션 제거 3/5, 1706 제외 3/4 → 섹션 제거 1/5).
+    assert unconfirmed not in prompt
+    assert "확인되지 않은 사항" not in prompt
 
 
 def _readable_interaction_draft() -> V4ReadableInteractionAnalysisDraft:
@@ -1759,7 +2240,6 @@ def _readable_scenario_draft() -> V4ReadableScenarioSynthesisDraft:
 
     return V4ReadableScenarioSynthesisDraft.model_validate(
         {
-            "title": "동북아 한파와 미국 Gulf 액화시설 중단",
             "description": (
                 "동북아 한파 전망과 미국 Gulf LNG 액화시설 가동 중단이 관측됐다. "
                 "수요 충격의 지속과 공급 차질의 전달·증폭, 기온 완화와 설비 회복에 따른 상쇄가 핵심 분기를 만든다."
@@ -1823,6 +2303,8 @@ def test_v4_graph_parallelizes_events_and_retries_only_the_failed_event() -> Non
             return _readable_interaction_draft()
         if output_schema is V4ReadableDimensionDesignDraft:
             return _readable_dimension_draft()
+        if output_schema is V4GroupTitleDraft:
+            return V4GroupTitleDraft(title="동북아 한파 지속 속 미국 액화시설 정비 지속성")
         return _readable_scenario_draft()
 
     group = ScenarioGroupPayload(
@@ -1865,10 +2347,11 @@ def test_v4_graph_parallelizes_events_and_retries_only_the_failed_event() -> Non
     v4_flow_module.get_compiled_graph.cache_clear()
 
     assert calls.count("V4ReadableEventAnalysisDraft") == 3
-    assert calls[-3:] == [
+    assert calls[-4:] == [
         "V4ReadableInteractionAnalysisDraft",
         "V4ReadableDimensionDesignDraft",
         "V4ReadableScenarioSynthesisDraft",
+        "V4GroupTitleDraft",
     ]
     assert attempts_by_event == {101: 2, 202: 1}
     assert final_state["analysis_attempt"] == 2
@@ -1876,6 +2359,7 @@ def test_v4_graph_parallelizes_events_and_retries_only_the_failed_event() -> Non
     assert final_state["dimension_attempt"] == 1
     assert final_state["scenario_attempt"] == 1
     persist.assert_called_once()
+    assert persist.call_args.kwargs["title"] == "동북아 한파 지속 속 미국 액화시설 정비 지속성"
     assert persist.call_args.kwargs["summary"] == ("한파로 난방 수요가 증가했다. | 액화시설 유지보수가 시작됐다.")
     assert persist.call_args.kwargs["dimension_definitions"][0]["rationale"] == "동북아 한파와 추가 분기 기준"
 
@@ -1907,6 +2391,11 @@ def test_prepare_v4_fixes_analysis_as_of_for_the_run() -> None:
             return_value=(_catalog(), "v1", "checksum-v1"),
         ) as load_active_catalog,
         patch.object(
+            v4_flow_module.ModelImpactLeverService,
+            "load_parameter_semantic_axes",
+            return_value={"HurricaneIntensity": "slot=B:Year(YYYY, 2026~2030), C:Month(1~12)"},
+        ),
+        patch.object(
             v4_flow_module.ScenarioGroupService,
             "prepare_v4_multi_event_group",
             return_value=group,
@@ -1914,6 +2403,7 @@ def test_prepare_v4_fixes_analysis_as_of_for_the_run() -> None:
     ):
         prepared = v4_flow_module.prepare_v4_multi_event_scenarios(payload)
 
+    assert prepared["impact_parameter_axes"] == {"HurricaneIntensity": "slot=B:Year(YYYY, 2026~2030), C:Month(1~12)"}
     assert prepared["analysis_as_of"] == "2026-08-07"
     assert [event.mi_event_id for event in prepared["events"]] == [202, 101]
     load_active_catalog.assert_called_once_with(catalog_version="v4.1")
@@ -2225,12 +2715,14 @@ def test_v4_prompts_follow_fact_path_uncertainty_contract() -> None:
         impact_analysis=_analysis().model_dump(),
         dimension_definitions=[item.model_dump() for item in _dimensions().dimension_definitions],
         validation_warnings=[],
+        analysis_as_of="2026-08-07",
     )
     scenario_retry = build_v4_scenario_synthesis_user_prompt(
         events=[{"mi_event_id": 101, "event_title_ko": "동북아 한파"}],
         impact_analysis=_analysis().model_dump(),
         dimension_definitions=[item.model_dump() for item in _dimensions().dimension_definitions],
         validation_warnings=[],
+        analysis_as_of="2026-08-07",
         validation_feedback="scenarios[1].dimensionValues duplicates scenarios[0].dimensionValues",
     )
     interaction = build_v4_interaction_analysis_user_prompt(
@@ -2242,8 +2734,10 @@ def test_v4_prompts_follow_fact_path_uncertainty_contract() -> None:
     assert "이번 Event openQuestions 목표·상한: 3개" in first
     assert "eventFacts는 Impact의 근거가 되는 후보를 최대 3개까지 모두 선택" in first
     assert "impacts[].evidence에는 선택한 eventFacts를 1~3개 포함하며" in first
-    assert "impacts는 가급적 1~2개만 작성" in first
-    assert "별도 주요 Lever, 반대 방향, 구분되는 기간 또는 독립 원인" in first
+    assert "impacts는 Primary Impact와 별도 경로 Fact 수만큼 작성하며 최대 3개" in first
+    assert "1) 별도 경로 Fact: Primary Fact와 다른 대상(국가·지역·구매자·시설), 반대 방향, 구분되는 시점의 변화를" in first
+    assert "2) 보강 Fact: Primary Fact와 같은 변화의 수치·관측일" in first
+    assert "Lever·direction·scope·timing이 모두 같으면 서버가 같은 경로로 보고 거부합니다" in first
     assert "leverStates는 Impact마다 가급적 1~2개만 작성" in first
     assert "세 단계가 모두 중요한 전달 경로일 때만 최대 3개" in first
     assert "중요한 3개만 선택" in first
@@ -2253,7 +2747,8 @@ def test_v4_prompts_follow_fact_path_uncertainty_contract() -> None:
     assert "서로 다른 Impact에서는 같은 Lever code를 다시 사용할 수 있습니다" in first
     assert "첫 번째 `lever` code를 비교해" in first
     assert "루트 summary" not in scenario
-    assert "`선택 MI Event`, `모델 영향 레버`, `복수 이벤트 시나리오`" in scenario
+    assert "그룹 제목은 다음 단계에서" not in scenario
+    assert "루트 title" not in scenario
     assert "첫 문장은 관측된 이벤트 사실을 직접 서술" in scenario
     assert "`반영한다`, `바탕으로 한다`, `정리한다`" in scenario
     assert "Dimension 이름을" in scenario
@@ -2272,7 +2767,7 @@ def test_v4_prompts_follow_fact_path_uncertainty_contract() -> None:
     assert "leverStates List should have at most 3 items" in retry
     assert "eventFacts는 Impact의 근거가 되는 후보를 최대 3개까지 모두 선택" in retry
     assert "impacts[].evidence에는 선택한 eventFacts를 1~3개 포함하며" in retry
-    assert "impacts는 가급적 1~2개만 작성" in retry
+    assert "impacts는 Primary Impact와 별도 경로 Fact 수만큼 작성하며 최대 3개" in retry
     assert "잘못된 영향 경로·Lever·balance·열린 질문만 수정" in retry
     assert "48시간 사전 요청처럼 반복되는 운영 조건" in first
     assert "분석 기준일: 2026-08-07" in first
@@ -2293,7 +2788,7 @@ def test_v4_prompts_follow_fact_path_uncertainty_contract() -> None:
     assert "unused question을 최소 1개" in dimension
     assert "## 숫자·시점 판단 근거" in dimension
     assert "분석 기준일 2026-08-07 현재 동북아 한파 전망" in dimension
-    assert "## 그룹 제목·설명의 근거가 되는 이벤트" in scenario
+    assert "## 그룹 설명의 근거가 되는 이벤트" in scenario
     assert "[이벤트 1]" in scenario
     assert "제목: 동북아 한파" in scenario
     assert "요약: 한파로 난방 수요가 증가했다." in scenario
@@ -2302,9 +2797,7 @@ def test_v4_prompts_follow_fact_path_uncertainty_contract() -> None:
     assert "[이벤트 2]" in scenario
     assert "제목: 액화시설 정비" in scenario
     assert scenario.index("[이벤트 1]") < scenario.index("[이벤트 2]")
-    assert "루트 title은 20~60자의 한국어" in scenario
-    assert "영문 `Event`, `Scenario`를 쓰지 않습니다" in scenario
-    assert "description에는 `입력 사실`을 쓰지 않습니다" in scenario
+    assert "영문 `Event`, `Scenario`와 `입력 사실`을 쓰지 않습니다" in scenario
     assert "`JKM`을 쓰지 않습니다" not in scenario
     assert "LNG·JKM·TTF·HH 등 시장·상품 약어와 시설·기업 고유명은" in scenario
     assert "원문 표기 그대로 쓰고 `엘엔지`, `제이케이엠`처럼 한글로 음역하지 않습니다" in scenario
@@ -2441,7 +2934,6 @@ def test_llm_validation_error_detail_preserves_field_locations_for_retry() -> No
     with pytest.raises(ValueError) as error:
         V4ReadableScenarioSynthesisDraft.model_validate(
             {
-                "title": "테스트 그룹",
                 "description": "테스트 설명",
                 "scenarios": [{}],
             },
@@ -2552,7 +3044,10 @@ def test_v4_scenario_group_metadata_schema_describes_korean_event_wording() -> N
     schema = V4ReadableScenarioSynthesisDraft.model_json_schema()
     properties = schema["properties"]
 
-    assert "선택한 이벤트" in properties["title"]["description"]
+    assert "title" not in properties
+    title_description = V4GroupTitleDraft.model_json_schema()["properties"]["title"]["description"]
+    assert "모든 시나리오가 공유하는 전제와 시나리오를 가르는 핵심 질문" in title_description
+    assert "특정 시나리오의 답이나 결말을 쓰지 않음" in title_description
     assert "summary" not in properties
     assert "영문 Event/Scenario" in properties["description"]["description"]
     assert "영문 Event/Scenario와 '입력 사실'은 사용하지 않음" in properties["description"]["description"]

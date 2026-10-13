@@ -5,7 +5,7 @@
 allow-list gate는 Model Parameter Agent의 source matching 뒤, exact slot·값 제안 LLM과 proposal
 persistence 전에만 적용됩니다. Scenario Group Agent를 비롯한 다른 Agent의 동작, confirmation,
 DB·canonical·catalog checksum과 workbook artifact는 바꾸지 않습니다. capability/workbook contract와 이를
-가리키는 config는 `extend16-v8`/`new-bc-v7`로 갱신됩니다.
+가리키는 config는 `extend16-v8`/`new-bc-v8`로 갱신됩니다.
 
 ## 1. “현재 체계를 거꾸로 사용한다”는 의미
 

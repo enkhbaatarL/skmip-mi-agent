@@ -72,6 +72,15 @@ v1/v3의 legacy 이름 allow-list 5종은 그대로 유지한다.
 값을 넣을 모델 파일, Sheet, table과 value field의 조합이다. 같은 파라미터명만 맞는 것으로는 충분하지 않으며
 등록된 target과 좌표 구조가 함께 맞아야 한다.
 
+### Logical table display catalog
+
+화면 탐색 라벨은 proposal의 machine target과 분리한다. 체크인된
+`model-parameter-logical-table-catalog-v3.json`은 검토 원본의 199행을 보존하고,
+`GET /model-parameters/logical-table-catalog`가 연결된 22개 파라미터·54개 관계를
+`Demand/Supply/Trade → parameterName → tables[].displayName`으로 반환한다. `table1`, `table2` 같은
+`modelTableKey`는 저장·확정용 값이므로 사용자 라벨로 렌더링하지 않는다. master 연결은 이름 문자열이 아니라
+`modelParamId`를 사용한다.
+
 ### Slot
 
 모델에서 값 하나가 들어갈 정확한 위치다. 예를 들어 `PMI / Japan / 2027 / 1월`과
@@ -82,7 +91,7 @@ v1/v3의 legacy 이름 allow-list 5종은 그대로 유지한다.
 
 Demand·Supply·Trade workbook에 들어 있는 현재 모델 입력값이다. 같은 exact slot에 Basecase가 있으면
 LUT보다 우선하는 기준값이 된다. 정확히 v4 `multi_event_model_lever_dimensions`인 요청은 versioned
-`new-bc-v7` workbook contract의 authoritative source를 사용하고, v1/v3는 기존 Basecase workbook 파서를 유지한다.
+`new-bc-v8` workbook contract의 authoritative source를 사용하고, v1/v3는 기존 Basecase workbook 파서를 유지한다.
 제안 요청은 접수 시점의 활성 MI Base `case_id`를 고정하고 `SCNRCASE`에 연결된
 Demand·Supply·Trade 입력 workbook 3개를 우선 사용한다. 현재 Base의 파일을 안전하게 준비하지
 못하면 동일 `case_id`·`run_seq`·연결 파일 식별자와 workbook hash/contract를 검증한 로컬 cache만
@@ -139,15 +148,20 @@ v1/v3 신규 proposal은 raw 후보 생성 후 기존 `GDP`, `PMI`, `PowerMix`, 
 binding은 Step1.5 LLM으로 다시 routing하지 않고 deterministic
 candidate로 보존하며 primary/alternative lineage는 후속 evidence 판단에 함께 전달한다.
 
-### v4 `new-bc-v7` read-only reference
+### v4 `new-bc-v8` read-only reference
 
 extend16 열여섯 Parameter의 v4 proposal은
-`resources/contracts/model-parameter-workbook-contract-v7.json`이 고정한 authoritative source를 모두
-동일한 reference pipeline으로 사용한다. v7 계약은 내용이 바뀌지 않은
-`resources/basecase_v4/new-bc-v1/` Demand·Supply·Trade workbook digest를 재사용한다. capability는
+`resources/contracts/model-parameter-workbook-contract-v8.json`이 고정한 authoritative source 구조를 모두
+동일한 reference pipeline으로 사용한다. 정상 운영 요청은 활성 MI Base에 연결된 Demand·Supply·Trade workbook을
+Object Storage에서 내려받아 실제 digest와 v8 구조 계약을 함께 검증한다. 최종 전달본은 startup 검증과 명시적
+configured fallback을 위한 packaged baseline으로 `resources/basecase_v4/new-bc-v2/`에 고정한다. capability는
 `read_only_proposal`이며, 여기서 read-only는 Workbook/reference에 대한 경계다. workbook을 수정하거나
 Formula/Query를 재계산하거나 model engine을 실행하지 않되 기존 proposal persistence는 유지한다.
 기존 `resources/basecase/`는 그대로 남아 v1/v3 동작을 보존한다.
+
+v8에서 ID 13 `LiqProdAdjustment`와 ID 14 `LiqUtilAdjustment`의 write target 종료 열은 `CL`이다.
+두 시트의 7/8/9행에서 확인되는 유효 월 범위 `G:CL`은 2025-01~2031-12의 84개월이며, `CM:DA`는
+유효한 월 header가 아니다. 이 경계는 mgmt v0044의 DB master와 동일하다.
 
 ID 15는 Supply `BCPipeline`의 Mt/y 연간 값을 월 slot으로 확장하고, ID 17은 Supply `BCProduction`의 Mt 값을
 digest-pinned `SeasonalityLogic.csv`로 월별 집계한다. 기존 Bcm LUT fallback 값은 0.735를 곱해 동일한 Mt 단위로 변환한다.
@@ -317,7 +331,8 @@ skmip-mi-agent/
 │   │   │   └── resource_*.py              # 파일 준비·runtime 경로
 │   │   ├── resources/
 │   │   │   ├── basecase/                  # v1/v3 호환 packaged Basecase
-│   │   │   ├── basecase_v4/new-bc-v1/     # v4 read-only proposal workbook
+│   │   │   ├── basecase_v4/new-bc-v1/     # v1~v7 historical workbook artifact
+│   │   │   ├── basecase_v4/new-bc-v2/     # v8 final workbook artifact
 │   │   │   ├── contracts/                 # workbook contract
 │   │   │   ├── lut/                       # packaged LUT
 │   │   │   └── mapping/                   # canonical Excel과 이전본 archive
@@ -328,7 +343,8 @@ skmip-mi-agent/
 │       └── mi_base/                       # 외부 MI Base·연결 파일 read-only 조회
 ├── docs/agents/model_parameter_agent/      # 공식 Agent 문서
 ├── envs/config.yaml                       # 로컬 실행·resource 설정
-├── devops/k8s/configmap.yaml              # 배포 환경 설정
+├── devops/k8s/model-parameter-configmap.yaml # 로컬 검토용 Neuro 설정(Git 제외)
+├── devops/k8s/configmap.yaml              # 여러 Agent가 공유하는 Kubernetes 예시
 └── tests/
     ├── automated/test_model_parameter_*.py
     ├── manual/model_parameter_agent/
@@ -337,7 +353,7 @@ skmip-mi-agent/
 
 API는 `api.py`에서 시작해 `flows/`로 들어간다. 제안 Flow는 전략에 따라 v1/v3 legacy mapping adapter 또는 v4 Lever-native context loader로 raw 후보를 만든 뒤, version별 scope gate를 LLM·저장보다 먼저 적용한다. 활성 MI Base는 요청별로 선택해 `mi_base_case_id`로 저장하고, 허용 후보만 그 요청의 Basecase/LUT, prompt와 저장 service로 전달한다. v1 proposal은 대표 event ID를 저장하지만 v3/v4 proposal은 `mi_event_id=NULL`로 저장하고 `scenario_group_id`를 authoritative link로 사용한다. 외부 API의 기존 optional `eventId`도 v3/v4에서는 `null`이며 MI Base 식별자를 public payload에 추가하지 않는다. DB query는 flow/node가 직접 작성하지 않고 Agent service와 `apps/persistence/`의 domain service/repository를 통해 실행한다.
 
-확정 단계의 custom parameter 허용 동작, 기존 저장 데이터와 JSON shape은 그대로 유지한다. proposal 생성의 Step3는 `proposedValue`를 유한 숫자로 검증한다. Confirmation은 각 value 객체에 `proposedValue` key가 있어야 하지만 값은 `null`일 수 있고, `null`이 아닌 값만 persistence 경계에서 엄격한 유한 숫자로 정규화한다. 원래 proposal과 동일한 항목·값인지 비교하지 않으므로 사용자는 구조 계약과 알려진 정의 검증 범위 안에서 항목을 수정·추가·삭제할 수 있으며, custom parameter도 공통 구조 검증을 통과하면 저장할 수 있다. 어느 경로도 설정 기반 소수 자릿수 round/trunc/ceil을 적용하지 않는다. Basecase/LUT 기준값의 기존 정밀도 정책은 유지하되, v4 PowerMix authoritative fraction은 atomic sum을 훼손하지 않도록 원본 정밀도를 보존한다. runtime allow-list는 신규 proposal 생성에만 적용하며 confirmation을 추가로 제한하지 않는다. v4 provenance와 미지원 진단은 request state, trace, validation warning 또는 실패 detail에만 둔다. `new-bc-v7`는 versioned contract와 그 경로를 가리키는 manifest/config를 추가하고 기존 workbook digest를 재사용한다. v4.1은 같은 master·model input을 유지한 채 side-by-side Lever binding만 확대하며 DB DDL, legacy mapping, writer/recalculation/engine은 변경하지 않는다.
+확정 단계의 custom parameter 허용 동작, 기존 저장 데이터와 JSON shape은 그대로 유지한다. proposal 생성의 Step3는 `proposedValue`를 유한 숫자로 검증한다. Confirmation은 각 value 객체에 `proposedValue` key가 있어야 하지만 값은 `null`일 수 있고, `null`이 아닌 값만 persistence 경계에서 엄격한 유한 숫자로 정규화한다. 원래 proposal과 동일한 항목·값인지 비교하지 않으므로 사용자는 구조 계약과 알려진 정의 검증 범위 안에서 항목을 수정·추가·삭제할 수 있으며, custom parameter도 공통 구조 검증을 통과하면 저장할 수 있다. 어느 경로도 설정 기반 소수 자릿수 round/trunc/ceil을 적용하지 않는다. Basecase/LUT 기준값의 기존 정밀도 정책은 유지하되, v4 PowerMix authoritative fraction은 atomic sum을 훼손하지 않도록 원본 정밀도를 보존한다. runtime allow-list는 신규 proposal 생성에만 적용하며 confirmation을 추가로 제한하지 않는다. v4 provenance와 미지원 진단은 request state, trace, validation warning 또는 실패 detail에만 둔다. `new-bc-v8`는 packaged baseline인 `new-bc-v2`의 digest와 ID 13·14의 유효 matrix 범위 `G:CL`을 고정하고, 활성 MI Base의 Object Storage workbook에도 같은 구조 계약을 적용한다. mgmt v0044는 같은 DB master 종료 열을 반영한다. 새 workbook의 Agent 소비 record·값은 이전 artifact와 동일하며, DB DDL, legacy mapping, writer/recalculation/engine은 변경하지 않는다.
 
 코드를 변경하기 전에는 [AGENTS.md](../../../AGENTS.md),
 [Python conventions](../../../.claude/rules/python-conventions.md)와
