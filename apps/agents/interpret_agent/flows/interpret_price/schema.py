@@ -76,6 +76,10 @@ class InterpretInput(ApiModel):
 
     scenario_group_id: int | None = None
     base_scenario_id: str
+    mi_base_case_id: int = Field(gt=0, description="proposal snapshot에 고정된 MI Base case ID")
+    mi_base_price_run_seq: int = Field(gt=0, description="해석에 사용한 MI Base 가격 run sequence")
+    model_param_proposal_ids: dict[str, int] = Field(default_factory=dict)
+    scenario_price_run_seqs: dict[str, int] = Field(default_factory=dict)
     scenario_ids: list[str] = Field(default_factory=list)
     features: list[str] = Field(default_factory=list, description="등장하는 feature 목록")
     period_start: str | None = None

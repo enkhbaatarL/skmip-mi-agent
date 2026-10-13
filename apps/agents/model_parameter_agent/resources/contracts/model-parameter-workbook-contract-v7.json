@@ -1,0 +1,239 @@
+{
+  "schema_version": 7,
+  "release_id": "new-bc-v7",
+  "extends": "model-parameter-workbook-contract-v6.json",
+  "parameters": {
+    "RegionalProductionAdjustment": {
+      "proposal_policy": {
+        "mode": "conditional",
+        "may_abstain": true,
+        "evidence_required": ["ProvinceOrBasinOrCountry", "Year", "AnnualProductionChange"]
+      },
+      "reference_source": {
+        "workbook_role": "supply",
+        "sheet": "BCProduction",
+        "range": "C:K",
+        "parser": "regional_production_annual",
+        "header_row": 7,
+        "data_start_row": 8,
+        "data_end_row": 25000,
+        "columns": {
+          "Year": "C",
+          "Country": "E",
+          "Province/Basin": "F",
+          "Identifier": "G",
+          "Base case supply (Mt)": "K"
+        },
+        "transforms": {
+          "Volumes (Bcm)": {
+            "source_field": "Base case supply (Mt)",
+            "operation": "multiply",
+            "factor": 1.3605442176870748,
+            "provenance": "Fundamental Model gas conversion: 1 Bcm = 0.735 Mt"
+          }
+        },
+        "key_axes": ["Year", "Province/Country"],
+        "metadata_axes": [],
+        "value_field": "Volumes (Bcm)",
+        "reference_unit": "Bcm",
+        "value_semantics": "absolute_final_regional_production",
+        "expected_record_count": 2187
+      },
+      "write_target": {
+        "workbook_role": "supply",
+        "sheet": "ProductionAdjustment",
+        "table": "table1",
+        "layout": "fixed_columns",
+        "header_row": 7,
+        "data_start_row": 13,
+        "data_end_row": 200,
+        "columns": {
+          "Year": "B",
+          "Province/Country": "C",
+          "Volumes (Bcm)": "E",
+          "% change (+/-)": "F"
+        },
+        "column_headers": {
+          "Province/Country": "Province, Country"
+        },
+        "key_axes": ["Year", "Province/Country"],
+        "metadata_axes": [],
+        "value_field": "Volumes (Bcm)",
+        "write_unit": "Bcm",
+        "value_semantics": "absolute_final_regional_production",
+        "observed_record_count": 0,
+        "row_policy": "appendable",
+        "metadata_authority": "reference_source"
+      },
+      "constraints": {
+        "minimum": 0.0,
+        "maximum": null,
+        "atomic_group_axes": [],
+        "vector_axis": null,
+        "vector_members": [],
+        "sum": null,
+        "sum_tolerance": null,
+        "require_complete_vector": false,
+        "direct_evidence_required": true
+      }
+    },
+    "ShippingFuelCost": {
+      "proposal_policy": {
+        "mode": "conditional",
+        "may_abstain": true,
+        "evidence_required": ["FuelPriceChange", "IFO380", "Year"]
+      },
+      "reference_source": {
+        "workbook_role": "trade",
+        "sheet": "ShippingCostInput",
+        "range": "B:C",
+        "parser": "exact_rows",
+        "header_row": 27,
+        "data_start_row": 28,
+        "data_end_row": 35,
+        "columns": {
+          "Year": "B",
+          "RE Base Case ($/tonne)": "C"
+        },
+        "required_cells": {
+          "C3": "Absolute"
+        },
+        "key_axes": ["Year"],
+        "metadata_axes": [],
+        "value_field": "RE Base Case ($/tonne)",
+        "reference_unit": "$/tonne",
+        "value_semantics": "absolute_final_shipping_fuel_cost",
+        "expected_record_count": 5
+      },
+      "write_target": {
+        "workbook_role": "trade",
+        "sheet": "ShippingCostInput",
+        "table": "table3",
+        "layout": "fixed_columns",
+        "header_row": 27,
+        "data_start_row": 28,
+        "data_end_row": 35,
+        "columns": {
+          "Year": "B",
+          "User Input Absolute Value ($/tonne)": "F"
+        },
+        "required_cells": {
+          "C3": "Absolute"
+        },
+        "key_axes": ["Year"],
+        "metadata_axes": [],
+        "value_field": "User Input Absolute Value ($/tonne)",
+        "write_unit": "$/tonne",
+        "value_semantics": "absolute_final_shipping_fuel_cost",
+        "observed_record_count": 5,
+        "row_policy": "existing_exact",
+        "metadata_authority": "write_target"
+      },
+      "constraints": {
+        "minimum": 0.0,
+        "maximum": null,
+        "atomic_group_axes": [],
+        "vector_axis": null,
+        "vector_members": [],
+        "sum": null,
+        "sum_tolerance": null,
+        "require_complete_vector": false,
+        "direct_evidence_required": true
+      }
+    },
+    "CanalToll": {
+      "proposal_policy": {
+        "mode": "conditional",
+        "may_abstain": true,
+        "evidence_required": ["Canal", "SuezOrPanama", "TollChange", "Year"]
+      },
+      "reference_source": {
+        "workbook_role": "trade",
+        "sheet": "ShippingCostInput",
+        "range": "A:C",
+        "parser": "exact_rows",
+        "header_row": 38,
+        "data_start_row": 39,
+        "data_end_row": 57,
+        "included_rows": [39, 40, 41, 42, 43, 44, 45, 46, 50, 51, 52, 53, 54, 55, 56, 57],
+        "columns": {
+          "Canal/Year Key": "A",
+          "Year": "B",
+          "RE Base Case ($/crossing)": "C"
+        },
+        "column_headers": {
+          "Canal/Year Key": "Helper"
+        },
+        "required_cells": {
+          "C3": "Absolute",
+          "A49": "Helper",
+          "B49": "Year",
+          "C49": "RE Base Case ($/Crossing"
+        },
+        "axis_transforms": {
+          "Canal": {
+            "source_field": "Canal/Year Key",
+            "operation": "strip_leading_year",
+            "allowed_values": ["Suez", "Panama"]
+          }
+        },
+        "key_axes": ["Canal", "Year"],
+        "metadata_axes": [],
+        "value_field": "RE Base Case ($/crossing)",
+        "reference_unit": "$/crossing",
+        "value_semantics": "absolute_final_canal_toll",
+        "expected_record_count": 10
+      },
+      "write_target": {
+        "workbook_role": "trade",
+        "sheet": "ShippingCostInput",
+        "table": "table4",
+        "layout": "fixed_columns",
+        "header_row": 38,
+        "data_start_row": 39,
+        "data_end_row": 57,
+        "included_rows": [39, 40, 41, 42, 43, 44, 45, 46, 50, 51, 52, 53, 54, 55, 56, 57],
+        "columns": {
+          "Canal/Year Key": "A",
+          "Year": "B",
+          "User Input Absolute Value ($/crossing)": "F"
+        },
+        "column_headers": {
+          "Canal/Year Key": "Helper"
+        },
+        "required_cells": {
+          "C3": "Absolute",
+          "A49": "Helper",
+          "B49": "Year",
+          "F49": "User Input Absolute Value ($/crossing)"
+        },
+        "axis_transforms": {
+          "Canal": {
+            "source_field": "Canal/Year Key",
+            "operation": "strip_leading_year",
+            "allowed_values": ["Suez", "Panama"]
+          }
+        },
+        "key_axes": ["Canal", "Year"],
+        "metadata_axes": [],
+        "value_field": "User Input Absolute Value ($/crossing)",
+        "write_unit": "$/crossing",
+        "value_semantics": "absolute_final_canal_toll",
+        "observed_record_count": 10,
+        "row_policy": "existing_exact",
+        "metadata_authority": "write_target"
+      },
+      "constraints": {
+        "minimum": 0.0,
+        "maximum": null,
+        "atomic_group_axes": [],
+        "vector_axis": null,
+        "vector_members": [],
+        "sum": null,
+        "sum_tolerance": null,
+        "require_complete_vector": false,
+        "direct_evidence_required": true
+      }
+    }
+  }
+}

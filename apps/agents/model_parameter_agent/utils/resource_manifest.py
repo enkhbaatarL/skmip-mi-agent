@@ -1,3 +1,5 @@
+# Copyright (c) 2026 SK Innovation E&S.
+
 from __future__ import annotations
 
 from collections.abc import Mapping
@@ -32,7 +34,7 @@ PACKAGE_DIR = Path(__file__).resolve().parents[1]
 PACKAGE_RESOURCE_DIR = PACKAGE_DIR / "resources"
 PACKAGE_BASECASE_DIR = PACKAGE_RESOURCE_DIR / "basecase"
 PACKAGE_LUT_ROOT = PACKAGE_RESOURCE_DIR / "lut"
-MODEL_PARAMETER_RESOURCE_SCHEMA_VERSION = 5
+MODEL_PARAMETER_RESOURCE_SCHEMA_VERSION = 8
 REQUIRED_BASECASE_ROLES = frozenset({"demand", "supply", "trade"})
 
 
@@ -293,28 +295,33 @@ def _proposal_capabilities(
     raw_contract: object,
 ) -> tuple[Path, ProposalCapabilityContract, str]:
     if not isinstance(raw_contract, dict):
-        raise _manifest_error("manifest proposal_capabilities must be a mapping")
+        msg = "manifest proposal_capabilities must be a mapping"
+        raise _manifest_error(msg)
     unknown_fields = sorted(set(raw_contract) - {"path", "release_id", "sha256"})
     if unknown_fields:
-        raise _manifest_error(f"proposal_capabilities contains unknown fields: {unknown_fields}")
+        msg = f"proposal_capabilities contains unknown fields: {unknown_fields}"
+        raise _manifest_error(msg)
     relative_path = _safe_relative_path(raw_contract.get("path"), label="proposal_capabilities")
     contract_path = (PACKAGE_RESOURCE_DIR / relative_path).resolve()
     if not contract_path.is_relative_to(PACKAGE_RESOURCE_DIR.resolve()):
-        raise _manifest_error(f"proposal capability path escapes package resources: {relative_path}")
+        msg = f"proposal capability path escapes package resources: {relative_path}"
+        raise _manifest_error(msg)
     contract = load_proposal_capability_contract(contract_path)
     configured_release_id = str(raw_contract.get("release_id") or "")
     if configured_release_id != contract.release_id:
-        raise _manifest_error(
+        msg = (
             "proposal capability release ID differs: "
-            f"configured={configured_release_id}, contract={contract.release_id}",
+            f"configured={configured_release_id}, contract={contract.release_id}"
         )
+        raise _manifest_error(msg)
     actual_sha256 = proposal_capability_contract_sha256(contract_path)
     configured_sha256 = str(raw_contract.get("sha256") or "")
     if configured_sha256 != actual_sha256:
-        raise _manifest_error(
+        msg = (
             "proposal capability fingerprint differs: "
-            f"configured={configured_sha256}, actual={actual_sha256}",
+            f"configured={configured_sha256}, actual={actual_sha256}"
         )
+        raise _manifest_error(msg)
     return contract_path, contract, actual_sha256
 
 

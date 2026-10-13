@@ -68,7 +68,8 @@ When the hydrated checksum changes, existing v4 groups remain pinned to their or
 - `apps/agents/model_parameter_agent/new_resources/` — incoming user-owned staging; not a runtime or manifest root
 - `apps/agents/model_parameter_agent/new_resources/lut/` — future LUT drop location; absence is valid and staged files require explicit validation/promotion
 - `envs/config.yaml`
-- `devops/k8s/configmap.yaml`
+- `devops/k8s/model-parameter-configmap.yaml` — locally supplied, Git-ignored Neuro Model Parameter configuration; never commit it
+- `devops/k8s/configmap.yaml` — shared multi-Agent Kubernetes example; not the Neuro Model Parameter authority
 - `apps/common/configs/config.py`
 - `apps/agents/model_parameter_agent/constants.py`
 - `apps/agents/model_parameter_agent/resources/basecase/`

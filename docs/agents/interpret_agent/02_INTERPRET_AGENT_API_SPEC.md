@@ -3,6 +3,7 @@
 ## 기준
 
 - Interpret Agent 전용 FastAPI entrypoint는 `interpret.py`다.
+- FastAPI·OpenAPI `info.version`은 `v4.1.7`이다.
 - app 내부 업무 path는 `/scenario-groups/{scenario_group_id}/price-interpretations` 계열 두 개뿐이다.
 - JSON 필드는 Pydantic alias 기준 camelCase로 표시한다.
 - `scenario_group_id`는 path parameter이고 `scenarioIds`는 optional request body다.
@@ -103,7 +104,7 @@ preview는 같은 HTTP 요청 안에서 다음 작업을 모두 실행한다.
       "baseScenarioId": "MI Base",
       "features": ["Temperature", "PowerMix"],
       "indices": ["JKM", "TTF", "HH"],
-      "periodStart": "2027-01",
+      "periodStart": "2026-04",
       "periodEnd": "2030-12",
       "unit": "$/MMBtu"
     },
@@ -133,11 +134,12 @@ preview는 같은 HTTP 요청 안에서 다음 작업을 모두 실행한다.
 | `baseScenarioId` | string | 현재 고정값 `MI Base` |
 | `features` | string array | proposal에서 발견한 Feature 이름, 첫 등장 순서 |
 | `indices` | string array | 현재 고정값 `JKM`, `TTF`, `HH` |
-| `periodStart`, `periodEnd` | string 또는 null | 월간 Feature와 가격의 전체 표시 범위 |
+| `periodStart`, `periodEnd` | string 또는 null | 수급모델 월별 가격 결과의 실제 시작·종료 월 |
 | `unit` | string | 현재 고정값 `$/MMBtu` |
 
-연간 Feature 기간은 `periodStart`, `periodEnd` 계산에 넣지 않는다. 가격은 월간 자료이므로 정상 입력에서는 가격
-기간이 meta 기간에 반영된다.
+Feature 기간은 `periodStart`, `periodEnd` 계산에 넣지 않는다. 가격 화면과 동일하게 실제 monthly 결과의 첫 월과
+마지막 월을 쓰므로 부분 연도 시작도 보존한다. 예시의 `2026-04`~`2030-12`는 57개월이며 2026년 1월로
+확장하지 않는다.
 
 `indices`는 실제 조회 성공한 지수만 보여 주는 availability 목록이 아니다. 일부 지수 자료가 없어도 고정 세 지수가
 표시될 수 있다.
@@ -223,6 +225,12 @@ callback_base_url
 
 이 callback 수신 path는 Interpret Agent가 제공하는 endpoint가 아니라 외부 backend 계약이다.
 
+Interpret 전용 설정에서 callback 관련 필수 항목은 OAuth2 3종,
+`callback_base_url`, `callback_price_interpretations_path`, `skip_callback`이다.
+`callback_create_scenarios_path`, `callback_validate_scenarios_path`,
+`callback_create_signposts_path`, `callback_model_parameter_proposals_path`는 다른 Agent용이며 Interpret flow는 읽지
+않는다.
+
 공통 설정 `skip_callback=true`이면 callback connector는 HTTP 요청을 보내지 않고 skip 로그만 남긴다. 이 경우도
 Interpret Agent에는 결과를 대신 보관하거나 나중에 전송하는 row가 없다.
 
@@ -281,22 +289,30 @@ callback 자체 전송 실패는 callback body로 다시 알릴 곳이 없다. c
 - `priceCharacter`
 - `summary`
 - `synthesis.overallMessage`
+- `meta.baseScenarioId`, `meta.features`, `meta.indices`, `meta.periodStart`, `meta.periodEnd`, `meta.unit`
+- preview·accepted `message`
 - callback `content`
 - failure callback `reason`
 
-정규화는 Markdown heading·blockquote·link·목록·code fence·강조 표식과 알려진 HTML tag를 제거하거나 일반
-텍스트로 바꾼다. URL이 있는 Markdown link는 label과 URL을 일반 텍스트로 보존한다. `<JKM>`처럼 알려진 HTML
-tag가 아닌 domain token은 이름을 보존한다.
+정규화는 Markdown ATX·Setext heading, 중첩 blockquote, inline·reference link, 목록·task list·표·code fence,
+강조·취소선 표식과 HTML tag·comment를 제거하거나 일반 텍스트로 바꾼다. 정상 HTML뿐 아니라 entity로 중첩
+인코딩되거나 닫히지 않은 tag도 제거하고 `script`, `style`, `template`, `noscript` 내용은 버린다. URL은 일반
+텍스트로 보존하며 `<JKM>`, `<TTF>`, `<HH>`, `<Base>`는 angle bracket 없이 이름만 보존한다.
 
 프롬프트의 글자 수 제한은 다음과 같지만 Pydantic `max_length`로 강제하지는 않는다.
 
 | 필드 | prompt 제한 |
 | --- | --- |
-| `identity` | 45자 |
-| `driverPhase` | 220자 |
-| `priceCharacter` | 220자 |
-| `summary` | 260자 |
+| `identity` | 70자 |
+| `driverPhase` | 340자 |
+| `priceCharacter` | 340자 |
+| `summary` | 420자 |
 | `overallMessage` | 600자 |
+
+Scenario 해석은 단순 수치 요약이 아니라 `핵심 market call → 입력 변화와 물리적 수급의 전이 경로 → 지수별
+상대 민감도·비동조·정상화 → 방향·수치 신뢰도 분리 → 근거 기반 모니터링과 조건부 대응` 순서의 전문 리포트
+문체를 요구한다. 근거에 없는 사건·회사·운영 사실은 추가하지 않으며, 데이터 품질 신호가 있으면 수치 신뢰도와
+활용 범위를 낮춰 설명한다.
 
 ## 4. 오류 계약
 
@@ -341,12 +357,17 @@ preview graph에서 `MIBaseError`가 발생하면 공통 envelope를 반환한�
 | --- | --- | --- |
 | direct flow 호출에서 `scenario_group_id=None` | 400 | `INVALID_REQUEST` |
 | 대상 proposal이 0건 | 500 | `DATA_RETRIEVAL_FAILED` |
+| proposal ID 또는 pinned `mi_base_case_id`가 없거나 유효하지 않음 | 500 | `DATA_RETRIEVAL_FAILED` |
+| 한 요청의 proposal이 서로 다른 MI Base case를 가리킴 | 500 | `DATA_RETRIEVAL_FAILED` |
 | MI Base 가격이 세 지수 모두 없음 | 500 | `DATA_RETRIEVAL_FAILED` |
 | 대상 Scenario 하나라도 세 지수 가격이 모두 없음 | 500 | `DATA_RETRIEVAL_FAILED` |
+| 가격 월 축 중복·누락·역순 또는 Base/Scenario 축 불일치 | 500 | `DATA_RETRIEVAL_FAILED` |
+| Scenario run의 `base_case_prc`가 pinned MI Base와 불일치 | 500 | `DATA_RETRIEVAL_FAILED` |
+| 한 해석에 서로 다른 Base 또는 Scenario run이 섞임 | 500 | `DATA_RETRIEVAL_FAILED` |
 | 처리되지 않은 예외 | 500 | `UNKNOWN_ERROR` |
 
-일부 지수만 없는 경우는 현재 loader가 차단하지 않는다. 공통 기간이 없는 Feature·가격 series도 metric을 빈 근거로
-만들 수 있으며 별도 API 오류가 되지 않는다.
+일부 지수만 없는 경우는 현재 loader가 차단하지 않는다. 공통 기간이 없는 Feature series는 metric을 빈 근거로
+만들 수 있지만, 조회된 가격 series는 pinned MI Base와 Scenario의 월 축이 완전히 같아야 한다.
 
 ### Async 오류
 

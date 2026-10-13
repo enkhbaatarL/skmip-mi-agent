@@ -1,3 +1,5 @@
+# Copyright (c) 2026 SK Innovation E&S.
+
 from __future__ import annotations
 
 import asyncio
@@ -22,9 +24,29 @@ from apps.agents.model_parameter_agent.flows.propose_parameters.flow import (
     run_propose_parameters_background,
     run_propose_parameters_sync,
 )
+from apps.agents.model_parameter_agent.presentation import (
+    build_logical_table_catalog_data,
+)
+from apps.agents.model_parameter_agent.schemas.api.logical_table_catalog import (
+    LogicalTableCatalogOut,
+)
 
 
 router = APIRouter()
+
+
+@router.get(
+    "/model-parameters/logical-table-catalog",
+    response_model=LogicalTableCatalogOut,
+    response_model_exclude_none=False,
+    summary="수급모델 파라미터별 정식 논리 테이블 카탈로그 조회",
+    description=(
+        "플랫폼 화면의 3단계 탐색 구조를 modelFile → parameterName → tables.displayName으로 반환합니다. "
+        "modelTableKey는 저장·확정용 물리 키이므로 화면 라벨로 사용하지 않습니다."
+    ),
+)
+async def get_logical_table_catalog() -> LogicalTableCatalogOut:
+    return LogicalTableCatalogOut(data=build_logical_table_catalog_data())
 
 
 @router.post(
@@ -44,7 +66,7 @@ router = APIRouter()
 )
 async def propose_parameters_sync(
     scenario_id: int,
-    payload: ProposeParametersRequest | None = Body(default=None),
+    payload: ProposeParametersRequest | None = Body(default=None),  # noqa: B008
 ) -> ProposeParametersOut:
     user_id = payload.user_id if payload is not None else None
     return await run_propose_parameters_sync(
@@ -73,7 +95,7 @@ async def propose_parameters_sync(
 async def propose_parameters(
     scenario_id: int,
     background_tasks: BackgroundTasks,
-    payload: ProposeParametersRequest | None = Body(default=None),
+    payload: ProposeParametersRequest | None = Body(default=None),  # noqa: B008
 ) -> ProposeParametersAcceptedOut:
     user_id = payload.user_id if payload is not None else None
     result = await asyncio.to_thread(

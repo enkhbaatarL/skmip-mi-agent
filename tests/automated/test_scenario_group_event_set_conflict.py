@@ -12,6 +12,9 @@ from sqlalchemy.dialects import mysql
 from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.api_schema import (
     V4MultiEventCreateScenariosIn,
 )
+from apps.agents.scenario_group_agent.persistence import (
+    scenario_group_operation_service as operation_service_module,
+)
 from apps.agents.scenario_group_agent.persistence.scenario_group_service import ScenarioGroupService
 from apps.common.exceptions.custom import MIBaseError
 from apps.common.middleware.exception_handler import _mi_error_response
@@ -20,43 +23,6 @@ from apps.persistence.event.repository import EventRepository
 from apps.persistence.scenario_group.event_set import canonical_event_set, event_set_hash
 from apps.persistence.scenario_group.repository import ScenarioGroupRepository
 from apps.persistence.scenario_group.schema import ScenarioGroupPayload
-
-
-def _group(
-    scenario_group_id: int,
-    *,
-    owner_id: int = 7,
-    stage: str = "scenario_created",
-) -> SimpleNamespace:
-    return SimpleNamespace(
-        scenario_group_id=scenario_group_id,
-        request_usr_id=owner_id,
-        stage=stage,
-    )
-
-
-def _operation(scenario_group_id: int, status: str) -> SimpleNamespace:
-    return SimpleNamespace(
-        scenario_group_id=scenario_group_id,
-        operation_id=f"op-{scenario_group_id}-{status}",
-        status=status,
-    )
-
-
-def _check_conflict(
-    *,
-    groups: list[SimpleNamespace],
-    event_ids_by_group_id: dict[int, list[int]],
-    active_operations: dict[int, SimpleNamespace] | None = None,
-    user_id: int = 7,
-) -> None:
-    ScenarioGroupService._raise_for_event_set_conflict(
-        groups=groups,
-        event_ids_by_group_id=event_ids_by_group_id,
-        active_operations=active_operations or {},
-        requested_event_ids=[3, 1, 2],
-        user_id=user_id,
-    )
 
 
 def test_event_set_hash_is_order_independent_and_versioned() -> None:
@@ -70,89 +36,6 @@ def test_event_set_hash_is_order_independent_and_versioned() -> None:
 def test_request_validation_rejects_duplicate_or_non_positive_event_ids(event_ids: list[int]) -> None:
     with pytest.raises(ValidationError):
         V4MultiEventCreateScenariosIn(miEventIds=event_ids, userId=7)
-
-
-@pytest.mark.parametrize("status", ["queued", "running"])
-def test_active_operation_blocks_same_owner_with_operation_context(status: str) -> None:
-    group = _group(407)
-    operation = _operation(407, status)
-
-    with pytest.raises(MIBaseError) as caught:
-        _check_conflict(
-            groups=[group],
-            event_ids_by_group_id={407: [1, 2, 3]},
-            active_operations={407: operation},
-        )
-
-    assert caught.value.error_code is ErrorCode.SCENARIO_GROUP_OPERATION_CONFLICT
-    assert caught.value.status_code == 409
-    assert caught.value.context == {
-        "scenarioGroupId": 407,
-        "operationId": operation.operation_id,
-    }
-
-
-@pytest.mark.parametrize("status", ["queued", "running"])
-def test_blocking_group_owned_by_another_user_returns_ownership_conflict(status: str) -> None:
-    group = _group(407, owner_id=8)
-    operation = _operation(407, status)
-
-    with pytest.raises(MIBaseError) as caught:
-        _check_conflict(
-            groups=[group],
-            event_ids_by_group_id={407: [1, 2, 3]},
-            active_operations={407: operation},
-            user_id=7,
-        )
-
-    assert caught.value.error_code is ErrorCode.SCENARIO_GROUP_OWNERSHIP_CONFLICT
-    assert caught.value.status_code == 403
-    assert caught.value.context["scenarioGroupId"] == 407
-    assert caught.value.context["operationId"] == operation.operation_id
-
-
-@pytest.mark.parametrize("latest_status", [None, "succeeded", "failed", "interrupted"])
-def test_unconfirmed_group_without_active_operation_allows_recreation(latest_status: str | None) -> None:
-    """Completed되지 않은 과거 그룹이라도, 지금 진행 중인 operation이 없으면 재생성을 막지 않는다.
-
-    Event 내용이 계속 갱신되므로 동일 이벤트 조합으로 다시 생성하는 것 자체는 유효한 케이스.
-    """
-    group = _group(407)
-
-    _check_conflict(
-        groups=[group],
-        event_ids_by_group_id={407: [1, 2, 3]},
-    )
-
-
-def test_completed_group_allows_recreation_without_operation_history() -> None:
-    _check_conflict(
-        groups=[_group(407, stage="completed")],
-        event_ids_by_group_id={407: [1, 2, 3]},
-    )
-
-
-def test_hash_collision_candidate_with_different_linked_event_set_is_ignored() -> None:
-    _check_conflict(
-        groups=[_group(407)],
-        event_ids_by_group_id={407: [3, 4, 5]},
-    )
-
-
-def test_active_operation_conflict_ignores_other_matching_groups_without_active_operation() -> None:
-    active_group = _group(406)
-    inactive_group = _group(407)
-    active_operation = _operation(406, "running")
-
-    with pytest.raises(MIBaseError) as caught:
-        _check_conflict(
-            groups=[inactive_group, active_group],
-            event_ids_by_group_id={406: [1, 2, 3], 407: [1, 2, 3]},
-            active_operations={406: active_operation},
-        )
-
-    assert caught.value.error_code is ErrorCode.SCENARIO_GROUP_OPERATION_CONFLICT
-    assert caught.value.context["scenarioGroupId"] == 406
 
 
 def test_event_lock_query_is_sorted_and_uses_for_update() -> None:
@@ -212,67 +95,14 @@ def test_conflict_response_merges_existing_resource_identifiers() -> None:
     }
 
 
-def test_loser_transaction_rolls_back_before_inserting_temporary_group() -> None:
+def test_matching_event_set_does_not_block_new_group_creation() -> None:
     session = Mock()
     group_repository = Mock()
-    group_repository.fetch_event_set_candidates.return_value = [_group(407)]
-    group_repository.fetch_event_ids_by_group_ids.return_value = {407: [1, 2, 3]}
-    event_repository = Mock()
-    event_repository.lock_events.return_value = [1, 2, 3]
-    operation = _operation(407, "running")
-    operation_repository = Mock()
-    operation_repository.fetch_active_by_group_ids.return_value = {407: operation}
-    connection_module = ModuleType("apps.common.configs.database.sync_database.connection")
-    connection_module.get_sync_session = Mock(return_value=session)  # type: ignore[attr-defined]
-
-    with (
-        patch.dict(sys.modules, {"apps.common.configs.database.sync_database.connection": connection_module}),
-        patch(
-            "apps.agents.scenario_group_agent.persistence.scenario_group_service.ScenarioGroupRepository",
-            return_value=group_repository,
-        ),
-        patch(
-            "apps.agents.scenario_group_agent.persistence.scenario_group_service.EventRepository",
-            return_value=event_repository,
-        ),
-        patch(
-            "apps.persistence.scenario_group_operation.repository.ScenarioGroupOperationRepository",
-            return_value=operation_repository,
-        ),
-    ):
-        with pytest.raises(MIBaseError) as caught:
-            ScenarioGroupService().prepare_v4_multi_event_group(
-                events=[
-                    {"mi_event_id": 3, "event_type_l2_id": 30},
-                    {"mi_event_id": 1, "event_type_l2_id": 10},
-                    {"mi_event_id": 2, "event_type_l2_id": 20},
-                ],
-                impact_catalog_version="catalog-v1",
-                impact_catalog_checksum="c" * 64,
-                user_id=7,
-                operation_id="op-new",
-            )
-
-    assert caught.value.error_code is ErrorCode.SCENARIO_GROUP_OPERATION_CONFLICT
-    group_repository.insert_group.assert_not_called()
-    group_repository.insert_group_event.assert_not_called()
-    session.rollback.assert_called_once_with()
-    session.commit.assert_not_called()
-
-
-def test_group_links_operation_and_accepted_event_are_committed_atomically() -> None:
-    session = Mock()
-    group_repository = Mock()
-    group_repository.fetch_event_set_candidates.return_value = []
-    group_repository.fetch_event_ids_by_group_ids.return_value = {}
     group_repository.insert_group.return_value = 408
-    created_model = SimpleNamespace(scenario_group_id=408)
-    group_repository.fetch_by_id.return_value = created_model
+    group_repository.fetch_by_id.return_value = SimpleNamespace(scenario_group_id=408)
     event_repository = Mock()
     event_repository.lock_events.return_value = [1, 2, 3]
     event_repository.fetch_latest_snapshot_id.return_value = None
-    operation_repository = Mock()
-    operation_repository.fetch_active_by_group_ids.return_value = {}
     operation_service = Mock()
     expected = ScenarioGroupPayload(scenario_group_id=408)
     connection_module = ModuleType("apps.common.configs.database.sync_database.connection")
@@ -288,12 +118,70 @@ def test_group_links_operation_and_accepted_event_are_committed_atomically() -> 
             "apps.agents.scenario_group_agent.persistence.scenario_group_service.EventRepository",
             return_value=event_repository,
         ),
+        patch.object(
+            operation_service_module,
+            "ScenarioGroupOperationService",
+            return_value=operation_service,
+        ),
+        patch.object(ScenarioGroupPayload, "from_model", return_value=expected),
+    ):
+        result = ScenarioGroupService().prepare_v4_multi_event_group(
+            events=[
+                {"mi_event_id": 3, "event_type_l2_id": 30},
+                {"mi_event_id": 1, "event_type_l2_id": 10},
+                {"mi_event_id": 2, "event_type_l2_id": 20},
+            ],
+            impact_catalog_version="catalog-v1",
+            impact_catalog_checksum="c" * 64,
+            user_id=7,
+            operation_id="op-new",
+        )
+
+    assert result is expected
+    group_repository.fetch_event_set_candidates.assert_not_called()
+    group_repository.fetch_event_ids_by_group_ids.assert_not_called()
+    group_repository.insert_group.assert_called_once()
+    operation_service.create_accepted_in_session.assert_called_once_with(
+        session,
+        scenario_group_id=408,
+        operation_id="op-new",
+        operation_type="create",
+        engine_version="v4",
+        user_id=7,
+    )
+    session.commit.assert_called_once_with()
+    session.rollback.assert_not_called()
+
+
+def test_group_links_operation_and_accepted_event_are_committed_atomically() -> None:
+    session = Mock()
+    group_repository = Mock()
+    group_repository.fetch_event_set_candidates.return_value = []
+    group_repository.fetch_event_ids_by_group_ids.return_value = {}
+    group_repository.insert_group.return_value = 408
+    created_model = SimpleNamespace(scenario_group_id=408)
+    group_repository.fetch_by_id.return_value = created_model
+    event_repository = Mock()
+    event_repository.lock_events.return_value = [1, 2, 3]
+    event_repository.fetch_latest_snapshot_id.return_value = None
+    operation_service = Mock()
+    expected = ScenarioGroupPayload(scenario_group_id=408)
+    connection_module = ModuleType("apps.common.configs.database.sync_database.connection")
+    connection_module.get_sync_session = Mock(return_value=session)  # type: ignore[attr-defined]
+
+    with (
+        patch.dict(sys.modules, {"apps.common.configs.database.sync_database.connection": connection_module}),
         patch(
-            "apps.persistence.scenario_group_operation.repository.ScenarioGroupOperationRepository",
-            return_value=operation_repository,
+            "apps.agents.scenario_group_agent.persistence.scenario_group_service.ScenarioGroupRepository",
+            return_value=group_repository,
         ),
         patch(
-            "apps.agents.scenario_group_agent.persistence.scenario_group_operation_service.ScenarioGroupOperationService",
+            "apps.agents.scenario_group_agent.persistence.scenario_group_service.EventRepository",
+            return_value=event_repository,
+        ),
+        patch.object(
+            operation_service_module,
+            "ScenarioGroupOperationService",
             return_value=operation_service,
         ),
         patch.object(ScenarioGroupPayload, "from_model", return_value=expected),

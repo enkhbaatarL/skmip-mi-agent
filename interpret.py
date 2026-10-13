@@ -9,7 +9,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from apps.agents.interpret_agent.api import router as interpret_router
-from apps.agents.interpret_agent.constants import AGENT_NAME
+from apps.agents.interpret_agent.constants import AGENT_NAME, INTERPRET_AGENT_VERSION
 from apps.common.configs.database.application_tables import APPLICATION_TABLES
 from apps.common.configs.database.schema_validation import validate_schema
 from apps.common.configs.database.sync_database.connection import get_sync_engine
@@ -30,7 +30,9 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 
     cfg = get_settings()
     setup_logging(cfg.log_level)
-    logger.info(f"Logging configured from settings | level={cfg.log_level.upper()}")
+    logger.info(
+        f"Logging configured from settings | level={cfg.log_level.upper()} | agent_version={INTERPRET_AGENT_VERSION}"
+    )
     setup_mlflow_tracing(cfg, agent_name=AGENT_NAME)
 
     logger.info("Validating ORM models against the database schema")
@@ -51,6 +53,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 
 app = FastAPI(
     title="SKMIP MI Agent API",
+    version=INTERPRET_AGENT_VERSION,
     lifespan=lifespan,
     docs_url=None,
     redoc_url=None,

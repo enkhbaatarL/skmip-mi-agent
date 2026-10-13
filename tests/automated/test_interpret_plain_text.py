@@ -5,10 +5,14 @@ import unittest
 from apps.agents.interpret_agent.flows.interpret_price.api_schema import (
     GroupSynthesisOut,
     PriceInterpretationCallbackItem,
+    PriceInterpretationMetaOut,
     ScenarioComparisonOut,
 )
 from apps.agents.interpret_agent.prompts import group_synthesizer, scenario_interpreter
-from apps.agents.interpret_agent.utils.plain_text import to_plain_text
+from apps.agents.interpret_agent.utils.plain_text import (
+    find_rich_text_markers,
+    to_plain_text,
+)
 
 
 FORBIDDEN_MARKERS = ("**", "__", "`", "<strong", "<b>", "<em", "<i>")
@@ -16,6 +20,7 @@ FORBIDDEN_MARKERS = ("**", "__", "`", "<strong", "<b>", "<em", "<i>")
 
 class InterpretPlainTextTest(unittest.TestCase):
     def assert_plain_text(self, value: str) -> None:
+        self.assertEqual(find_rich_text_markers(value), [])
         for marker in FORBIDDEN_MARKERS:
             self.assertNotIn(marker, value)
         for line in value.splitlines():
@@ -60,8 +65,44 @@ class InterpretPlainTextTest(unittest.TestCase):
 
         self.assertEqual(
             result,
-            ("• 조달 점검\n• 재고 확인\n• 헤지 검토\n1) 우선 대응\nindented code\n\n-0.5, JKM, JKM Base 대비, 2 * 3"),
+            ("• 조달 점검\n• 재고 확인\n• 헤지 검토\n1: 우선 대응\nindented code\n\n-0.5, JKM, JKM Base 대비, 2 * 3"),
         )
+        self.assert_plain_text(result)
+
+    def test_sanitizer_removes_nested_and_encoded_platform_markup(self) -> None:
+        rich_text = (
+            "> > **중첩 인용**\n"
+            "Setext 제목\n"
+            "=====\n"
+            "<https://example.com/source>\n"
+            "[보고서][source]\n"
+            "[source]: https://example.com/report\n"
+            "&amp;lt;strong&amp;gt;인코딩 강조&amp;lt;/strong&amp;gt;\n"
+            "<script>alert('hidden')</script>"
+            "<svg/onload=alert(1)><custom-tag data-x='1'>표시 본문</custom-tag>\n"
+            "| 지수 | 가격 |\n"
+            "| --- | --- |\n"
+            "| JKM | ~~12~~ |"
+        )
+
+        result = to_plain_text(rich_text)
+
+        self.assertIn("중첩 인용", result)
+        self.assertIn("Setext 제목", result)
+        self.assertIn("https://example.com/source", result)
+        self.assertIn("보고서 (https://example.com/report)", result)
+        self.assertIn("인코딩 강조", result)
+        self.assertIn("표시 본문", result)
+        self.assertIn("지수 · 가격", result)
+        self.assertNotIn("hidden", result)
+        self.assertNotIn("alert", result)
+        self.assert_plain_text(result)
+        self.assertEqual(to_plain_text(result), result)
+
+    def test_sanitizer_removes_malformed_html_tag_tail(self) -> None:
+        result = to_plain_text("가격 해석 <strong onclick='x'")
+
+        self.assertEqual(result, "가격 해석")
         self.assert_plain_text(result)
 
     def test_output_schemas_normalize_every_user_visible_text_field(self) -> None:
@@ -79,6 +120,13 @@ class InterpretPlainTextTest(unittest.TestCase):
             scenario_id=315,
             content="## **제목**\n<strong>본문</strong>",
         )
+        meta = PriceInterpretationMetaOut(
+            base_scenario_id="<strong>MI Base</strong>",
+            features=["**Temperature**", "<em>GDP</em>"],
+            indices=["<JKM>", "`TTF`"],
+            period_start="<b>2026-04</b>",
+            period_end="**2030-12**",
+        )
 
         self.assertEqual(scenario.identity, "공급 충격")
         self.assertEqual(scenario.driver_phase, "동인")
@@ -86,6 +134,11 @@ class InterpretPlainTextTest(unittest.TestCase):
         self.assertEqual(scenario.summary, "대응과 근거 (https://example.com)")
         self.assertEqual(synthesis.overall_message, "종합\n■ 점검")
         self.assertEqual(callback.content, "제목\n본문")
+        self.assertEqual(meta.base_scenario_id, "MI Base")
+        self.assertEqual(meta.features, ["Temperature", "GDP"])
+        self.assertEqual(meta.indices, ["JKM", "TTF"])
+        self.assertEqual(meta.period_start, "2026-04")
+        self.assertEqual(meta.period_end, "2030-12")
         for value in (
             scenario.identity,
             scenario.driver_phase,
@@ -93,6 +146,11 @@ class InterpretPlainTextTest(unittest.TestCase):
             scenario.summary,
             synthesis.overall_message,
             callback.content,
+            meta.base_scenario_id,
+            *meta.features,
+            *meta.indices,
+            meta.period_start or "",
+            meta.period_end or "",
         ):
             self.assert_plain_text(value)
 
@@ -127,6 +185,47 @@ class InterpretPlainTextTest(unittest.TestCase):
             self.assertIn("일반 텍스트", description)
         group_schema = group_synthesizer.GroupSynthesisLLMOutput.model_json_schema()
         self.assertIn("일반 텍스트", group_schema["properties"]["overall_message"]["description"])
+
+    def test_scenario_prompt_requires_professional_causal_report_with_expanded_limits(self) -> None:
+        prompt = scenario_interpreter.build_user_prompt(
+            scenario_id="315",
+            feature_metrics=[],
+            price_metrics=[],
+            data_quality=["가격 입력 재검증 필요"],
+        )
+
+        for expected in (
+            "입력 변화 → 물리적 공급·수요 변화 → 지역별 가격 반응",
+            "지수 간 상대 민감도",
+            "계절적 정점·유일한 피크라고 단정하지 않습니다",
+            "경제적 방향성의 신뢰도와 입력·가격 수치의 신뢰도를 분리",
+            "가격 입력 재검증 필요",
+            "수치 신뢰도와 활용 범위를 낮추고",
+            "모니터링 항목",
+            "헤지·조달·검증",
+            "ShippingCost()",
+        ):
+            self.assertIn(expected, prompt)
+        self.assertIn(
+            f"identity: 공백 포함 {scenario_interpreter.IDENTITY_MAX_CHARS}자 이내",
+            prompt,
+        )
+        self.assertIn(
+            f"driver_phase: 3~4문장, 공백 포함 {scenario_interpreter.DRIVER_PHASE_MAX_CHARS}자 이내",
+            prompt,
+        )
+        self.assertIn(
+            f"price_character: 3~4문장, 공백 포함 {scenario_interpreter.PRICE_CHARACTER_MAX_CHARS}자 이내",
+            prompt,
+        )
+        self.assertIn(
+            f"summary: 4~5문장, 공백 포함 {scenario_interpreter.SUMMARY_MAX_CHARS}자 이내",
+            prompt,
+        )
+        self.assertLessEqual(scenario_interpreter.IDENTITY_MAX_CHARS, 45 * 2)
+        self.assertLessEqual(scenario_interpreter.DRIVER_PHASE_MAX_CHARS, 220 * 2)
+        self.assertLessEqual(scenario_interpreter.PRICE_CHARACTER_MAX_CHARS, 220 * 2)
+        self.assertLessEqual(scenario_interpreter.SUMMARY_MAX_CHARS, 260 * 2)
 
 
 if __name__ == "__main__":

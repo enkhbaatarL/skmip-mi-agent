@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from copy import deepcopy
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import pytest
@@ -34,6 +35,7 @@ from tests.manual.model_parameter_agent.evaluate_event_type_proposals import (
 )
 from tests.manual.model_parameter_agent.evaluate_proposals import (
     _build_step_summary,
+    _persistence_quality_candidates,
     _value_reference_records,
 )
 
@@ -45,6 +47,30 @@ TARGET_PARAMETERS = (
     "Temperature",
     "LiqUtilAdjustment",
 )
+
+
+def test_v4_persistence_quality_uses_post_slot_candidate_set() -> None:
+    validated = [{"candidate_key": "hurricane"}, {"candidate_key": "liq-util"}]
+    exact_slot_candidates = [validated[0]]
+
+    assert (
+        _persistence_quality_candidates(
+            generation_strategy="multi_event_model_lever_dimensions",
+            validated_candidates=validated,
+            slot_candidate_mappings=exact_slot_candidates,
+            slot_candidate_mappings_captured=True,
+        )
+        == exact_slot_candidates
+    )
+    assert (
+        _persistence_quality_candidates(
+            generation_strategy="multi_event_composite_dimensions",
+            validated_candidates=validated,
+            slot_candidate_mappings=exact_slot_candidates,
+            slot_candidate_mappings_captured=True,
+        )
+        == validated
+    )
 
 
 def test_report_uses_runtime_proposal_values_to_preserve_lut_reference() -> None:
@@ -360,6 +386,12 @@ def test_evaluate_scenario_preserves_partial_trace_on_output_failure(
         knowledge_base_args.update(kwargs)
         return object()
 
+    async def fake_trace_resources(_raw_state: object) -> SimpleNamespace:
+        return SimpleNamespace(
+            workbook_contract=None,
+            workbook_resource_root=None,
+        )
+
     monkeypatch.setattr(proposal_evaluation, "ModelParameterService", FakeService)
     monkeypatch.setattr(
         proposal_evaluation,
@@ -374,8 +406,18 @@ def test_evaluate_scenario_preserves_partial_trace_on_output_failure(
     monkeypatch.setattr(proposal_evaluation, "RAW_GRAPH", FakeGraph())
     monkeypatch.setattr(
         proposal_evaluation,
+        "_resolve_trace_mi_base_resources",
+        fake_trace_resources,
+    )
+    monkeypatch.setattr(
+        proposal_evaluation,
+        "mi_base_resource_identity",
+        lambda _selection: {"case_id": None, "run_seq": None, "workbook_sha256": {}},
+    )
+    monkeypatch.setattr(
+        proposal_evaluation,
         "build_basecase_records",
-        lambda _kb, _candidates, _context: ([], []),
+        lambda _kb, _candidates, _context, **_kwargs: ([], []),
     )
     monkeypatch.setattr(proposal_evaluation, "to_output", raise_output_error)
 

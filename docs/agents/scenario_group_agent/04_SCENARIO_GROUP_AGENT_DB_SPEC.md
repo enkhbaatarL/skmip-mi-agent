@@ -72,11 +72,12 @@ Event Type 관계가 필요하다.
 
 v4는 `lever_code`, domain, 설명, 적용 기준, `parameter_bindings`, catalog version을 사용한다. 0030 이후 identity는
 `(catalog_version, lever_code)`이며 domain index와 parent self-FK도 catalog version을 함께 사용한다. v4 create는
-`catalog_version='v4'`, `use_yn='Y'`, `del_yn='N'`을 명시적으로 조회하고 그 checksum을 Group에 pin한다.
-binding이 없는 `route_disruption`, `trade_restriction`과 `price_only` Lever는 유효한 설명용 catalog row이며 모델
-Parameter 후보를 만들지 않는다. unknown Parameter binding이나 version 혼합은 계약 오류로 fail-close한다.
+설정의 `scenario_group_v4_impact_catalog_version`(현재 신규 Group은 `v4.1`), `use_yn='Y'`, `del_yn='N'`을
+명시적으로 조회하고 그 checksum을 Group에 pin한다. v4.1의 `route_disruption`, `trade_restriction`과
+`price_only` Lever는 conditional binding이 있어 Model Parameter 근거 판정 후보가 될 수 있다. unknown Parameter
+binding이나 version 혼합은 계약 오류로 fail-close한다.
 Additional Dimension 생성과 Presentation label enrichment도 Group의 `impact_catalog_version`과
-`impact_catalog_checksum`을 한 쌍으로 검증한다. 같은 `v4` 문자열이라도 checksum이 다르면 현재 catalog 의미를
+`impact_catalog_checksum`을 한 쌍으로 검증한다. 같은 version 문자열이라도 checksum이 다르면 현재 catalog 의미를
 과거 Group에 소급하지 않는다.
 
 ## 2. Scenario Group

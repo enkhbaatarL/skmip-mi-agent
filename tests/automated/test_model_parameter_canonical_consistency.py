@@ -15,6 +15,7 @@ from openpyxl.worksheet.worksheet import Worksheet
 import pytest
 import yaml
 
+from apps.common.values.error_codes import ErrorCode
 from scripts.model_parameter.apply_model_parameter_v4 import (
     _validate_documents,
 )
@@ -307,18 +308,12 @@ def test_shared_v1_v3_mapping_invariants_against_v4_master() -> None:
     assert hashlib.sha256(mapping_payload).hexdigest() == EXPECTED_SHARED_MAPPING_SHA256
 
     identified = {
-        row["model_param_dimension_map_id"]
-        for row in mappings
-        if row["model_param_dimension_map_id"] is not None
+        row["model_param_dimension_map_id"] for row in mappings if row["model_param_dimension_map_id"] is not None
     }
     assert identified == set(range(1, 129))
     assert sum(row["model_param_dimension_map_id"] is None for row in mappings) == 1
 
-    active_by_id = {
-        row["model_param_id"]: row
-        for row in master
-        if row["use_yn"] == "Y" and row["del_yn"] == "N"
-    }
+    active_by_id = {row["model_param_id"]: row for row in master if row["use_yn"] == "Y" and row["del_yn"] == "N"}
     candidate_rows = [row for row in mappings if row["mapping_method"] in {"direct", "routing"}]
     assert {
         active_by_id[row["model_param_id"]]["parameter_name"] for row in candidate_rows
@@ -362,6 +357,16 @@ def test_configmap_and_local_resource_manifests_match_canonical() -> None:
     local_resources = local["model_parameter_resources"]
     cluster_resources = embedded["model_parameter_resources"]
     assert local_resources == cluster_resources
+    local_storage = local["model_parameter_resource_storage"]
+    cluster_storage = embedded["model_parameter_resource_storage"]
+    assert set(local_storage) == set(cluster_storage)
+    environment_specific_storage_fields = {
+        "endpoint_url",
+        "access_key_id",
+        "secret_access_key",
+    }
+    for field_name in set(local_storage) - environment_specific_storage_fields:
+        assert local_storage[field_name] == cluster_storage[field_name]
 
     master_by_name = {row["parameter_name"]: row for row in canonical["master"]}
     assert len(master_by_name) == canonical["master_count"]
@@ -455,13 +460,33 @@ def test_configmap_and_local_resource_manifests_match_canonical() -> None:
             reference["path"],
         )
 
+    assert (
+        local["model_parameter_proposal_flow_release"] == embedded["model_parameter_proposal_flow_release"] == "v4.1.7"
+    )
+    assert (
+        local["scenario_group_v4_impact_catalog_version"]
+        == embedded["scenario_group_v4_impact_catalog_version"]
+        == "v4.1"
+    )
     for setting_name in (
+        "model_parameter_transient_retry_max_attempts",
+        "model_parameter_transient_retry_base_delay_seconds",
+        "model_parameter_transient_retry_max_jitter_seconds",
         "model_parameter_max_total_selected_slots",
         "model_parameter_max_step2_prompt_bytes",
         "model_parameter_max_step3_prompt_bytes",
+        "model_parameter_max_routing_candidates_per_dimension",
+        "model_parameter_v4_max_routing_candidates_per_dimension",
+        "model_parameter_max_conditional_parameters_per_scenario",
     ):
         assert local[setting_name] == embedded[setting_name]
         assert local[setting_name] > 0
+    assert local["model_parameter_variation_mode"] == embedded["model_parameter_variation_mode"] == "balanced"
+    for setting_name in (
+        "model_parameter_variation_profile_enabled",
+        "model_parameter_grounded_slot_recovery_enabled",
+    ):
+        assert local[setting_name] is embedded[setting_name] is True
 
 
 def test_canonical_mapping_workbook_and_archive_match_fixture() -> None:
@@ -496,11 +521,14 @@ def test_canonical_mapping_workbook_and_archive_match_fixture() -> None:
 
     parameter_names = {row["model_param_id"]: row["parameter_name"] for row in canonical["master"]}
     expected_mappings: list[dict[str, Any]] = []
-    next_mapping_id = max(
-        row["model_param_dimension_map_id"]
-        for row in mapping_canonical["dimension_mappings"]
-        if row["model_param_dimension_map_id"] is not None
-    ) + 1
+    next_mapping_id = (
+        max(
+            row["model_param_dimension_map_id"]
+            for row in mapping_canonical["dimension_mappings"]
+            if row["model_param_dimension_map_id"] is not None
+        )
+        + 1
+    )
     for source in mapping_canonical["dimension_mappings"]:
         expected = dict(source)
         if expected["model_param_dimension_map_id"] is None:
@@ -656,3 +684,61 @@ def test_operator_docs_do_not_reintroduce_pre_v4_active_or_legacy_mapping_state(
     for path in canonical_docs:
         content = path.read_text(encoding="utf-8")
         assert all(parameter_name in content for parameter_name in EXPECTED_CURRENT_ACTIVE_PARAMETER_NAMES)
+
+
+def test_model_parameter_result_code_docs_match_runtime_contract() -> None:
+    api_spec = (ROOT_DIR / "docs/agents/model_parameter_agent/02_MODEL_PARAMETER_AGENT_API_SPEC.md").read_text(
+        encoding="utf-8"
+    )
+    flow_doc = (ROOT_DIR / "docs/agents/model_parameter_agent/04_MODEL_PARAMETER_AGENT_FLOW.md").read_text(
+        encoding="utf-8"
+    )
+    flow_source = (ROOT_DIR / "apps/agents/model_parameter_agent/flows/propose_parameters/flow.py").read_text(
+        encoding="utf-8"
+    )
+    validation_source = (
+        ROOT_DIR / "apps/agents/model_parameter_agent/flows/propose_parameters/validation.py"
+    ).read_text(encoding="utf-8")
+    quiz = (ROOT_DIR / "docs/agents/model_parameter_agent/07_MODEL_PARAMETER_AGENT_COMPREHENSION_QUIZ.md").read_text(
+        encoding="utf-8"
+    )
+
+    failure_mapping_source = flow_source.split("def _failure_result", maxsplit=1)[1].split(
+        "def _public_failure_error",
+        maxsplit=1,
+    )[0]
+    runtime_error_names = set(
+        re.findall(r"ErrorCode\.([A-Z0-9_]+)\.name", failure_mapping_source),
+    )
+    abstention_codes = {
+        name
+        for name, value in re.findall(
+            r'^(ABSTAINED_[A-Z0-9_]+) = "([A-Z0-9_]+)"$',
+            validation_source,
+            flags=re.MULTILINE,
+        )
+        if name == value
+    }
+
+    assert runtime_error_names
+    assert abstention_codes
+    for name in runtime_error_names:
+        numeric_code, _message, http_status = ErrorCode[name].value
+        assert f"| `{http_status}` | `{numeric_code}` | `{name}` |" in api_spec
+    assert all(f"`{code}`" in api_spec for code in abstention_codes)
+    internal_reason_codes = {
+        "ACTIVE_PARAMETER_DEFINITION_MISSING",
+        "CATALOG_MARKED_UNSUPPORTED",
+        "INACTIVE_MODEL_PARAMETER",
+        "NO_PARAMETER_BINDING",
+        "PRICE_ONLY",
+        "PROPOSAL_SCOPE_EXCLUDED",
+        "UNCHANGED_LEVER_STATE",
+    }
+    assert all(f"`{code}`" in api_spec for code in internal_reason_codes)
+    assert "`LLM_INCOMPLETE_JSON`" in api_spec
+    assert "`LLM_INCOMPLETE_JSON`" in flow_doc
+    assert "unchanged-only라서 변화 후보가 0개가 되면 그때 요청을 `INVALID_REQUEST`" not in quiz
+    assert "허용 candidate가 0개면 `INVALID_REQUEST`" not in quiz
+    assert "`ABSTAINED_NO_CHANGE`" in quiz
+    assert "`ABSTAINED_OUT_OF_PROPOSAL_SCOPE`" in quiz

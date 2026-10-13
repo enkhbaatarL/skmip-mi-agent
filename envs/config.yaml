@@ -67,8 +67,13 @@ scenario_group_operation_stale_after_seconds: 120
 scenario_group_operation_reaper_interval_seconds: 30
 additional_dimension_stale_after_seconds: 240
 hide_price_pressure: true
+scenario_group_v4_impact_catalog_version: v4.1
 
 # Model parameter
+model_parameter_proposal_flow_release: v4.1.7
+model_parameter_transient_retry_max_attempts: 2
+model_parameter_transient_retry_base_delay_seconds: 0.5
+model_parameter_transient_retry_max_jitter_seconds: 0.25
 model_parameter_lut_enabled: true
 model_parameter_lut_horizon_start_year: 2026
 model_parameter_lut_horizon_end_year: 2030
@@ -79,6 +84,11 @@ model_parameter_proposed_value_precision_mode: trunc
 model_parameter_max_parameter_slots: 100
 model_parameter_max_value_prompt_basecase_records: 100
 model_parameter_max_routing_candidates_per_dimension: 2
+model_parameter_v4_max_routing_candidates_per_dimension: 3
+model_parameter_max_conditional_parameters_per_scenario: 4
+model_parameter_variation_mode: balanced
+model_parameter_variation_profile_enabled: true
+model_parameter_grounded_slot_recovery_enabled: true
 model_parameter_max_total_selected_slots: 300
 model_parameter_max_step2_prompt_bytes: 262144
 model_parameter_max_step3_prompt_bytes: 262144
@@ -97,6 +107,10 @@ model_parameter_resource_storage:
   bootstrap_timeout_seconds: 420
   lock_timeout_seconds: 500
 
+model_parameter_mi_base_fallback:
+  no_active_case_mode: fail
+  active_case_unavailable_mode: verified_cache
+
 model_parameter_resources:
   basecase:
     demand:
@@ -110,12 +124,12 @@ model_parameter_resources:
       object_storage_path: fundamental_model_artifact/input_template/복호화_(Base) Trade Model_Input.xlsm
 
   workbook_contract:
-    path: contracts/model-parameter-workbook-contract-v4.json
+    path: contracts/model-parameter-workbook-contract-v8.json
 
   proposal_capabilities:
-    path: contracts/model-parameter-proposal-capabilities-v3.json
-    release_id: extend7-v4
-    sha256: 6eca2fe50b10ed39a801d4071b0ac646c41d554e8d92c3bc932a4ddc8cf5f0a7
+    path: contracts/model-parameter-proposal-capabilities-v4.json
+    release_id: extend16-v8
+    sha256: cfc4971841a290ccf87251630f9f5c2d2a99062464d5b1e16db41ce22317f0eb
 
   lut:
     Coal Futures Price:

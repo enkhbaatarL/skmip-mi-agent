@@ -20,6 +20,7 @@ from apps.agents.model_parameter_agent.flows.propose_parameters.nodes import (
     finalize_empty_parameter_values,
     load_basecase_samples,
     load_scenario_context,
+    prepare_mi_base_resources,
     propose_parameter_slots,
     propose_parameter_values,
     select_parameter_candidates,
@@ -143,6 +144,7 @@ def build_graph() -> Runnable:
         output_schema=ModelParameterProposalOutputState,
     )
     builder.add_node("load_scenario_context", load_scenario_context)
+    builder.add_node("prepare_mi_base_resources", prepare_mi_base_resources)
     builder.add_node("select_parameter_candidates", select_parameter_candidates)
     builder.add_node("validate_parameter_candidates", validate_parameter_candidates)
     builder.add_node("load_basecase_samples", load_basecase_samples)
@@ -151,7 +153,8 @@ def build_graph() -> Runnable:
     builder.add_node("propose_parameter_values", propose_parameter_values)
     builder.add_node("finalize_empty_parameter_values", finalize_empty_parameter_values)
     builder.set_entry_point("load_scenario_context")
-    builder.add_edge("load_scenario_context", "select_parameter_candidates")
+    builder.add_edge("load_scenario_context", "prepare_mi_base_resources")
+    builder.add_edge("prepare_mi_base_resources", "select_parameter_candidates")
     builder.add_edge("select_parameter_candidates", "validate_parameter_candidates")
     builder.add_conditional_edges(
         "validate_parameter_candidates",
@@ -238,6 +241,12 @@ def to_output(state: dict[str, Any] | ModelParameterProposalState) -> ProposePar
     )
 
 
+def _valid_mi_base_case_id(value: Any) -> int | None:  # noqa: ANN401
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        return None
+    return value
+
+
 def prepare_propose_parameters_callback(
     scenario_id: int,
     *,
@@ -246,6 +255,9 @@ def prepare_propose_parameters_callback(
     try:
         model_parameter_service = ModelParameterService()
         scenario_context = model_parameter_service.load_context(scenario_id)
+        scenario_context["mi_base_case_id"] = _valid_mi_base_case_id(
+            model_parameter_service.load_active_mi_base_case_id(),
+        )
         model_param_proposal_id = model_parameter_service.create_processing_proposal(
             scenario_context=scenario_context,
             user_id=user_id,
@@ -285,9 +297,28 @@ async def run_propose_parameters_background(
     callback_payload: ProposeParametersCallbackOut
     trace_context = build_trace_context(session_id=str(model_param_proposal_id))
     try:
+        proposal_case_loader = getattr(
+            model_parameter_service,
+            "load_proposal_mi_base_case_id",
+            None,
+        )
+        pinned_case_id = (
+            _valid_mi_base_case_id(
+                await asyncio.to_thread(
+                    proposal_case_loader,
+                    model_param_proposal_id,
+                ),
+            )
+            if callable(proposal_case_loader)
+            else None
+        )
         with mlflow_trace_context(trace_context):
             final_state = await build_graph().ainvoke(
-                ModelParameterProposalState(scenario_id=scenario_id),
+                ModelParameterProposalState(
+                    scenario_id=scenario_id,
+                    mi_base_case_id=pinned_case_id,
+                    mi_base_selection_resolved=True,
+                ),
                 config=build_langgraph_config(trace_context),
                 context=trace_context,
             )
@@ -410,6 +441,10 @@ async def run_propose_parameters_sync(payload: dict[str, Any]) -> ProposeParamet
     trace_context = build_trace_context()
     try:
         state = to_state(payload)
+        state.mi_base_case_id = _valid_mi_base_case_id(
+            ModelParameterService().load_active_mi_base_case_id(),
+        )
+        state.mi_base_selection_resolved = True
     except Exception as exc:
         raise _public_failure_error(exc) from exc
     try:
@@ -424,6 +459,7 @@ async def run_propose_parameters_sync(payload: dict[str, Any]) -> ProposeParamet
         try:
             model_parameter_service = ModelParameterService()
             scenario_context = model_parameter_service.load_context(state.scenario_id)
+            scenario_context["mi_base_case_id"] = state.mi_base_case_id
             model_param_proposal_id = model_parameter_service.save_abstained_result(
                 scenario_context=scenario_context,
                 reason_code=exc.reason_code,

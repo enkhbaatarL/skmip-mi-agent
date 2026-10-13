@@ -61,12 +61,15 @@ blocked 후보에는 exact `PROPOSAL_SCOPE_EXCLUDED` reason code가 있어야 �
 
 raw/runtime/blocked candidate key는 각 집합 내에서 고유해야 하며 `runtime ∩ blocked = ∅`, `runtime ∪ blocked = raw`여야 한다.
 
-catalog의 `known_unsupported`, `unchanged`, `price_only`, no-binding state는 matcher non-input occurrence identity와 exact reason code multiset으로 graph까지 보존하며 raw executable 후보로 세지 않는다. 누락·중복·reason 변경은 `FAIL`이다.
+catalog의 `known_unsupported`, `unchanged`, binding 없는 `price_only`, no-binding state는 matcher non-input occurrence identity와 exact reason code multiset으로 graph까지 보존하며 raw executable 후보로 세지 않는다. conditional binding이 있는 `price_only`는 Step1.5 근거 판정 대상으로 세며, 누락·중복·reason 변경은 `FAIL`이다.
 
 ## 4. 선택, 수렴, 확장
 
 - `mapping_method=direct`인 runtime 후보는 graph selection에서 사라지면 `FAIL`이다.
 - 여러 executable binding의 routing 후보가 선택되지 않은 것은 자동 오류가 아니라 `REVIEW`다.
+- v4 복수 routing binding이 각각의 구조화된 applicability 근거를 통과해 모두 선택된 것은 정상이다.
+  후보별 `routing_evidence`의 candidate lineage, decision/evidence basis, direction, causal path, target scope,
+  time scope가 완전하면 PASS하고 누락이 있을 때만 `REVIEW`로 남긴다.
 - `load_context + match_v4_parameter_candidates_from_rows` 결과가 독립 expected raw oracle다. context resource로 구성된 `_evaluate_scenario().rule_candidates`는 graph의 v4 raw trace이며, key와 canonical parameter/model target이 독립 oracle와 일치해야 한다.
 - raw occurrence identity는 production `v4-lever|Dimension|Lever|parameter|model file|model sheet` key다.
 - Step1.5 이후에는 parameter/model target별로 병합된 `parameter|v4|...` key를 사용한다. 단순 key 동등 비교를 하지 않고 `merged_candidate_keys`/binding lineage가 runtime-allowed raw key를 보존하는지 검증한다.
@@ -116,12 +119,58 @@ scenario마다 다음을 기록한다.
 - Step별 LLM call/token usage가 제공되는 경우 그 값
 - 내부 retry 관측값
 - proposal row read-back이 실패해도 final response/partial record에서 보존한 proposal ID, failed stage와 persistence/confirmation 상태
+- semantic abstention이면 structured reason code/stage와 Step1.5 routing task/decision, Step2 slot diagnostics,
+  Step3 value diagnostics 중 종료 단계까지의 안전 요약. 전체 prompt/messages/context 원문은 기록하지 않는다.
 
-180초 초과 또는 1회를 넘는 write workflow attempt는 `FAIL`이다. 내부 LLM retry 또는 필수 token/step 관측성 누락은 `REVIEW`다. provider usage가 없으면 추정값을 만들지 않는다.
+구조화된 semantic abstention 자체는 execution `FAIL`이 아니며 무저장 원자성을 지킨 경우 `REVIEW`다. 이를 일반
+예외 문자열 검색으로 분류하지 않는다. 180초 초과 또는 1회를 넘는 write workflow attempt는 `FAIL`이다. 내부 LLM
+retry 또는 필수 token/step 관측성 누락은 `REVIEW`다. provider usage가 없으면 추정값을 만들지 않는다.
 
 ## 통합 보고서 완료 조건
 
 - 하나의 Markdown에 schema/core gate, target/catalog pin, selected Lever evidence, active parameter boundary matrix, persistence/confirmation, 성능, 오류/검토 항목을 포함한다.
 - mandatory execution error와 catalog/boundary/persistence `FAIL`이 0이어야 PASS/REVIEW가 가능하다.
+- attempted Scenario ID 집합은 고정 proposal-eligible 집합과 exact match하고 preflight skip은 실행하지 않는다.
+- 최종 DB 대조는 covered/uncovered/skip 건수와 Scenario ID 집합, Scenario→Group identity를 모두 비교한다.
+- post-fix 재실행은 고정 testset SHA/ordered identity를 유지하고 원 attempt와 수정 이유를 보존한 명시적 replacement만
+  허용한다.
+- campaign이 특정 MI Base fallback mode를 요구하면 runner가 Scenario 실행 전에 실제 로드 정책을 exact match하고,
+  evaluator가 모든 baseline/post-fix 증적의 정책을 다시 대조한다. mismatch 진단 실행은 무저장일 때만 별도 audit으로
+  제외할 수 있다.
+- 성공뿐 아니라 Step1.5/2/3 semantic abstention의 안전 예외 trace에도 `case_id`·`run_seq`·role별 workbook
+  SHA-256과 source를 남긴다. 누락 시 요구 fallback campaign은 관측 불완전 `FAIL`이며, semantic abstention과 node
+  failure source·test가 이후 실행에서 identity를 직접 전달하는지 확인한다. 추론 증적을 직접 관측으로 표기하지 않는다.
 - read-only 실행 chain 부재와 자동 discovery 대상 부재는 `COVERAGE LIMIT`으로 분리한다.
 - release acceptance 요청이면 별도의 `verify-model-parameter-release` 결과를 연결한다.
+
+## 8. 기존 Scenario-only 최신 pool gate
+
+신규 Group/Scenario 생성 없이 testset을 확장할 때는
+`existing-scenario-pool-campaign.md`와
+`tests/manual/model_parameter_agent/collect_existing_representative_trios.py`를 사용한다.
+
+- exact v4/v4.1 release 계약과 구조 gate를 먼저 적용한다.
+- `mod_dtm DESC, scenario_group_id DESC`로 정렬하고 ordered Event ID tuple별 최신 Group 하나만 유지한다.
+- 최대 50개 cap은 고유 Event signature에 적용한다. 과거 중복 Group으로 cap을 채우지 않는다.
+- 선택 Group의 모든 Scenario를 read-only preflight하고 Group당 대표 3개를 고정한다.
+- fixture 선정의 runtime capability와 현재 DB의 uncovered/covered write 상태를 분리한다.
+- `Parameter-type consistency` 분모는 3개 모두 runtime-capable인 Group이다.
+- `representative role coverage` 분모는 baseline/floor/ceiling이 selection pool에 모두 있는 Group이다.
+- 고유 Event signature와 최신 revision 선택률, fixture identity, preflight scope, mutation 0건은 hard gate다.
+- 실제 Proposal 성공·semantic abstention·`같은 종류 + Scenario별 다른 제안값`·exact-slot 값 차이·token/latency는
+  별도 write 승인 없이는 계산하지 않으며 read-only 리포트에는 `NOT_MEASURED_READ_ONLY`로 남긴다.
+- 최종 collection Markdown/JSON은 `Read-only KPI`가 기존 저장 데이터와 deterministic preflight로 계산한
+  cohort·실행 전제·coverage 지표임을 설명한다. collection `PASS`를 실제 Proposal 성공/값 품질로 해석하지 않으며,
+  `Covered`/`coverage limit`, 미평가 실행 KPI, 동일 fixture/release/context에서만 비교한다는 조건을 함께 고정한다.
+
+기존 Event 풀 재생성 campaign은 별도 정책 `existing_event_pool/add-only-regenerated-scenarios`를 사용한다.
+
+- 원본 fixture의 ordered Event ID 40개를 그대로 재사용하고 Event 추가/교체를 허용하지 않는다.
+- 원본 Group은 모두 보존하고 새 Group 40개만 add-only 생성한다. 원본/신규 Group ID는 서로 달라야 한다.
+- 새 Group은 API v4, Scenario Lever v4.1 catalog version/checksum, completed stage,
+  `parameter_mapping_ready=true`를 만족해야 한다.
+- 전체 신규 Scenario를 read-only preflight한 뒤 대표 3개/Group을 Proposal 전에 `freeze`하여 SHA-256을 고정한다.
+- Read-only 표는 대상·release pin·runtime-capable/coverage limit·current write eligible/covered·trio 가용성·
+  후보 종류 동일·FAIL/hard stop의 핵심 7개로 압축한다.
+- Object Storage가 없는 로컬 실행은 Proposal에만 승인된 `configured_fallback`을 process-local로 적용하고 증적에서
+  exact gate한다. 이는 active MI Base/Object Storage 연동 검증이 아니다.

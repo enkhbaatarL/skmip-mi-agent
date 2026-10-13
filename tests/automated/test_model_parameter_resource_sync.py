@@ -119,20 +119,29 @@ def test_integrated_manifest_declares_expected_resources() -> None:
         get_settings().model_parameter_resources,
         source_path=CONFIG_FILE_PATH,
     )
-    assert integrated.schema_version == 5
-    assert integrated.workbook_contract.release_id == "new-bc-v4"
+    assert integrated.schema_version == 8
+    assert integrated.workbook_contract.release_id == "new-bc-v8"
     assert integrated.workbook_contract.public_api_unchanged is True
-    assert integrated.workbook_contract_path.name == "model-parameter-workbook-contract-v4.json"
+    assert integrated.workbook_contract_path.name == "model-parameter-workbook-contract-v8.json"
     assert len(integrated.workbook_contract_schema_hash) == 64
-    assert integrated.proposal_capability_contract.release_id == "extend7-v4"
+    assert integrated.proposal_capability_contract.release_id == "extend16-v8"
     assert {item.model_param_id for item in integrated.proposal_capability_contract.parameters} == {
         4,
         6,
         7,
         8,
+        11,
+        12,
+        13,
         14,
         15,
+        16,
         17,
+        18,
+        20,
+        22,
+        23,
+        24,
     }
     assert len(integrated.proposal_capability_contract_sha256) == 64
     assert len(integrated.semantic_schema_hash) == 64
@@ -156,10 +165,24 @@ def test_k8s_single_config_file_uses_same_resource_mapping() -> None:
     embedded_config = yaml.safe_load(configmap["data"]["config.yaml"])
 
     assert embedded_config["model_parameter_resources"] == get_settings().model_parameter_resources
+    assert embedded_config["model_parameter_mi_base_fallback"] == (
+        get_settings().model_parameter_mi_base_fallback.model_dump(mode="json")
+    )
     for setting_name in (
+        "scenario_group_v4_impact_catalog_version",
+        "model_parameter_proposal_flow_release",
+        "model_parameter_transient_retry_max_attempts",
+        "model_parameter_transient_retry_base_delay_seconds",
+        "model_parameter_transient_retry_max_jitter_seconds",
         "model_parameter_max_total_selected_slots",
         "model_parameter_max_step2_prompt_bytes",
         "model_parameter_max_step3_prompt_bytes",
+        "model_parameter_max_routing_candidates_per_dimension",
+        "model_parameter_v4_max_routing_candidates_per_dimension",
+        "model_parameter_max_conditional_parameters_per_scenario",
+        "model_parameter_variation_mode",
+        "model_parameter_variation_profile_enabled",
+        "model_parameter_grounded_slot_recovery_enabled",
     ):
         assert embedded_config[setting_name] == getattr(get_settings(), setting_name)
 

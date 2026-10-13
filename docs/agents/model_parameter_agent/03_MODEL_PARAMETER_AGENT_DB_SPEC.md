@@ -9,14 +9,17 @@
 |---|---|
 | DB에는 무엇이 있나? | 파라미터 기준, legacy 연결 규칙, v3 event lineage, v4 Lever catalog와 제안·확정 결과가 있다. |
 | Agent는 어떻게 사용하나? | 파라미터·scenario lineage 기준은 읽고, 제안 결과표에는 처리 결과를 저장한다. |
-| 저장소 기준선의 파라미터는 몇 개인가? | 0032 canonical fixture master 21개 중 활성은 14개이고 LUT-backed 활성 10개와 Basecase-only 활성 4개다. v4 extend7 신규 proposal 허용은 7개이고 v1/v3는 기존 5개다. live DB 값은 별도 read-back이 필요하다. |
+| 현재 외부개발 DB와 Agent 제안 범위는 몇 개인가? | master 24개 중 활성 16개이고, v4.1 executable 고유 Parameter와 Agent v4 extend16 신규 proposal 허용은 모두 16개다. v1/v3는 기존 5개다. |
 | 이 문서의 범위는 무엇인가? | 기능 이해에 필요한 관계와 주요 데이터 모양을 설명한다. |
 
 > 이 문서의 개수는 체크인된 v4 master·Lever canonical과 v1/v3 canonical의 `dimension_mappings` 129행을 센 저장소 기준선이다. live DB 적용 상태를 뜻하지 않으며 운영 판정은 runner의 preflight와 DB read-back으로 확인한다. 2026-08-13 snapshot의 128행은 변경 전 증적이다.
 
 > v1/v3 신규 proposal은 `GDP`, `PMI`, `PowerMix`, `Temperature`, `LiqUtilAdjustment` 이름 allow-list를
-> 유지한다. v4는 ID `{4, 6, 7, 8, 14, 15, 17}`과 name/target이 capability contract와 일치해야 한다.
-> 정상 0032 canonical DB에서는 이 응용 계층 확장으로 master·mapping, Lever catalog/checksum, canonical/workbook을 변경하지 않는다.
+> 유지한다. v4는 ID `{4, 6, 7, 8, 11, 12, 13, 14, 15, 16, 17, 18, 20, 22, 23, 24}`과 name/target이
+> capability contract와 일치해야 한다.
+> 정상 0032 canonical DB에서는 이 응용 계층 확장으로 master·mapping, Lever catalog/checksum을 변경하지 않는다.
+> 후속 mgmt v0044는 schema·활성 집합·binding을 건드리지 않고 ID 13·14의
+> `basecase_value_end_col`만 최종 workbook과 같은 `CL`로 정합화한다.
 
 ## 1. 핵심 테이블을 한 문장으로 이해하기
 
@@ -30,6 +33,9 @@
 | `tmm_mi_scenario_group_event_m` | v3/v4 그룹의 ordered event 관계 | 읽기 |
 | `tmm_mi_dimension_value_mapping_m` | v3 자유 value의 source projection, 승인 상태와 version | 읽기 |
 | `tmm_mi_model_param_proposal_m` | Agent의 제안과 사용자의 최종 확정을 보관하는 작업 결과표 | 읽기·쓰기 |
+| `tmd_mdl_scnrcasem` | 현재 활성 MI Base와 `last_run_id` | 읽기 |
+| `tmd_mdl_scnrcaseh` | MI Base 실행 이력의 `run_id`·`run_seq` | 읽기 |
+| `tcm_filel` | MI Base·최신 실행에 연결된 파일 metadata | 읽기 |
 
 업무 흐름으로 보면 다음과 같다.
 
@@ -43,7 +49,7 @@ flowchart LR
     V -->|v4| L[선택 value의 Lever states와\nactive catalog binding 검증]
     C --> D[파라미터 사전에서\n모델 위치와 읽기 기준 확인]
     L --> D
-    D --> P[version별 proposal scope\nv1/v3 5개 · v4 7개]
+    D --> P[version별 proposal scope\nv1/v3 5개 · v4 16개]
     P --> E[Basecase와 LUT를 참고해\n값 제안]
     E --> F[제안 결과 저장]
     F --> G[사용자 검토·수정]
@@ -69,8 +75,8 @@ Agent는 live DB에서 사용 중이며 삭제되지 않은 항목만 읽는다.
 | `Temperature` | Demand / WeatherAdjustment | 국가, 연도, 월 | 행마다 정해진 열을 읽음 |
 | `Population` | Demand / GDPPopulationAdjustment | 국가, 연도 | 행마다 정해진 열을 읽음 |
 | `HurricaneIntensity` | Supply / {USA}Hurricanes | 연도, 월 | 행마다 정해진 열을 읽음 |
-| `LiqProdAdjustment` | Supply / LiqProdAdjustment | 국가, LNG 플랜트·트레인, 연도, 월 | 가로로 펼쳐진 월별 값을 읽음 |
-| `LiqUtilAdjustment` | Supply / LiqUtilAdjustment | 국가, LNG 플랜트·트레인, 연도, 월 | 가로로 펼쳐진 월별 값을 읽음 |
+| `LiqProdAdjustment` | Supply / LiqProdAdjustment | 국가, LNG 플랜트·트레인, 연도, 월 | `G:CL`의 84개 월 열을 읽음 |
+| `LiqUtilAdjustment` | Supply / LiqUtilAdjustment | 국가, LNG 플랜트·트레인, 연도, 월 | `G:CL`의 84개 월 열을 읽음 |
 | `PipelineAdjustment` | Supply / PipelineAdjustment | 파이프라인, From·To 국가, 연도, 월 | 행마다 정해진 열을 읽음 |
 | `SupplyDisruption` | Supply / ProductionAdjustment | 국가, 연도, 월 | 행마다 정해진 열을 읽음 |
 | `User-Adjusted Gas Demand` | Demand / DemandOutputOverwrite | 국가, 연도, 월, 수요 하위부문 | Basecase exact slot만 사용 |
@@ -105,6 +111,10 @@ canonical에서 다음 필드를 파라미터별로 대조하고, capability·wo
 DB의 `basecase_*`는 기준값을 **읽는 위치**, `model_*`는 결과를 **쓰는 위치**다. 두 위치가 다를 수 있으므로
 시트명 유사성으로 합치거나 과거 이름을 대입하지 않는다. 현재 대표 예시는 다음과 같다.
 
+ID 13·14는 `matrix_time_columns` target이며 `basecase_year_row=7`, `basecase_month_row=8`,
+`basecase_period_row=9`, `basecase_value_start_col=G`, `basecase_value_end_col=CL`이다. `G:CL`은
+2025-01~2031-12의 84개월이고 `CM:DA`에는 유효 월 header가 없다.
+
 | Parameter | 기준값 원본 | 최종 쓰기 대상 | 금지되는 해석 |
 |---|---|---|---|
 | `PipelineAdjustment` | Supply `BCPipeline` | Supply `PipelineAdjustment` / `table1` | From/To 축을 생략하거나 원본 시트에 쓰는 것으로 해석 |
@@ -130,9 +140,11 @@ DB의 `basecase_*`는 기준값을 **읽는 위치**, `model_*`는 결과를 **�
 | `indirect` | 55 | 값을 직접 바꾸지는 않지만 판단에 참고할 배경 정보 | 아니요 |
 | `na` | 33 | 모델 입력 파라미터와 직접 연결되지 않는 항목 | 아니요 |
 
-0032 이후 현재 master/runtime fixture는 `scripts/model_parameter/model-parameter-canonical-v4-0032.json`, v4 Lever
-fixture는 `scripts/model_parameter/model-impact-lever-canonical-v4-0032.json`이다. DB migration 정본은 sibling
-`skmip-mi-agent-mgmt` revision `d9f4c2a81332`이며, active catalog는 `v4`, checksum은 `b9d8c051…000b`이다.
+DB migration 정본은 sibling `skmip-mi-agent-mgmt`다. 외부개발 DB의 신규 Scenario Group용 active catalog는
+`v4.1`, checksum은 `7f4ef0b7aa60efb550b9175654fd82350f0c293debf880a9180e7e935db54d69`이다.
+v4.1 Lever rollout은 master를 변경하지 않고 기존 v4.0 옆에 같은 Lever Full Set 21행과 conditional binding을
+추가하므로 mgmt 0036 migration과 exact match해야 한다. 별도 mgmt v0044는 master ID 13·14의 종료 열을
+`DA`에서 `CL`로 바꾸며 나머지 master·mapping·Lever 행은 보존한다.
 기존 이름의 두 canonical과 `apply_model_parameter_v4.py`/정적 SQL은 0029 역사 릴리스 증적으로 보존하며 0030
 적용에 재사용하지 않는다. v1/v3 mapping은 `scripts/model_parameter/model-parameter-canonical-v1.json` 중
 `dimension_mappings`만 정본으로 사용한다. parameter 0030 successor에 상속된 128행 mapping payload는 0029
@@ -165,7 +177,7 @@ v3 group relation은 2~5개여야 하고, 각 group event는 선택된 composite
 
 선택 value가 정의 밖 자유 value이면 `tmm_mi_dimension_value_mapping_m`에서 같은 group·composite dimension·display value의 projection을 확인한다. `status=approved` projection만 보조 근거로 사용한다. mapping row가 없거나 pending/rejected여도 proposal은 허용하고 warning을 남긴다. group의 `parameter_mapping_ready=false`도 실행 gate가 아니다.
 
-이 역투영은 v1/v3 전용이며 live DB의 dimension mapping을 사용한다. 체크인 129행 기준선에서 direct/routing이 도달하는 전역 raw mapping-reachable 합집합은 `GDP`, `PMI`, `PowerMix`, `Temperature`, `Population`, `HurricaneIntensity`, `LiqProdAdjustment`, `LiqUtilAdjustment`, `PipelineAdjustment`, `SupplyDisruption` 10개다. 요청 하나에서는 관련 lineage에 연결된 하위 집합만 raw 후보가 된다. 이 중 신규 proposal에는 allow-list에 있는 `GDP`, `PMI`, `PowerMix`, `Temperature`, `LiqUtilAdjustment`만 남는다. Basecase-only 활성 4개에는 legacy direct/routing row를 추가하지 않았다. v4는 이 테이블을 조회하지 않으므로 v1/v3 raw 후보 생성과 v4 raw 후보 결정은 독립적이다.
+이 역투영은 v1/v3 전용이며 live DB의 dimension mapping을 사용한다. 체크인 129행 기준선에서 direct/routing이 도달하는 전역 raw mapping-reachable 합집합은 `GDP`, `PMI`, `PowerMix`, `Temperature`, `Population`, `HurricaneIntensity`, `LiqProdAdjustment`, `LiqUtilAdjustment`, `PipelineAdjustment`, `SupplyDisruption` 10개다. 요청 하나에서는 관련 lineage에 연결된 하위 집합만 raw 후보가 된다. 이 중 신규 proposal에는 allow-list에 있는 `GDP`, `PMI`, `PowerMix`, `Temperature`, `LiqUtilAdjustment`만 남는다. Basecase-only 활성 6개에는 legacy direct/routing row를 추가하지 않았다. v4는 이 테이블을 조회하지 않으므로 v1/v3 raw 후보 생성과 v4 raw 후보 결정은 독립적이다.
 
 ### 3.2 v4가 Lever catalog를 사용하는 방법
 
@@ -177,11 +189,12 @@ v4 loader는 Scenario, Group, `display_order`로 정렬한 Group–Event 관계,
 4. `source_event_ids`가 group event 집합의 부분집합인지 여부
 5. 각 Lever code/ID가 catalog와 일치하는지 여부
 
-0030 active catalog 기준선은 Lever 18개, raw parameter binding occurrence 16개를 가지며, 비활성
-CDD/HDD binding을 제외한 effective executable occurrence와 고유 활성 Parameter는 각각 14개다. 요청
-하나에서는 선택 value와 변화 state에 해당하는 하위 집합만 raw 후보가 된다. `price_only`, binding 없음,
-비활성 또는 catalog unsupported는 raw 후보에서 제외한다. 그 뒤 v4 capability contract의 ID/name/target을
-검증해 신규 proposal 후보를 7개 범위로 제한한다. `direction=unchanged`는 supporting context일 뿐 변화 후보가 아니다.
+외부개발 DB v4.1 active catalog는 Lever 21개, parameter binding occurrence 56개를 가지며, 37개가
+conditional이다. 비활성 이력 binding을 제외한 executable occurrence는 53개, 고유 활성 Parameter는 16개다.
+요청 하나에서는 선택 value와 변화 state에 해당하는 하위 집합만 raw 후보가 된다. binding 없는 `price_only`,
+binding 없음, 비활성 또는 catalog unsupported는 raw 후보에서 제외하지만 conditional binding이 있는
+`price_only`는 Step1.5 근거 판정으로 진행한다. 그 뒤 v4 capability contract의 ID/name/target을 검증해 신규
+proposal 후보를 활성 16개 범위로 제한한다. `direction=unchanged`는 supporting context일 뿐 변화 후보가 아니다.
 version/checksum/code/ID 불일치나 primary 누락은 proposal을 차단한다.
 
 ## 4. 결과표: 제안부터 확정까지 남기는 표
@@ -194,8 +207,36 @@ version/checksum/code/ID 불일치나 primary 누락은 proposal을 차단한다
 | `scenario_id` | 요청 scenario ID | 요청 scenario ID |
 | `scenario_group_id` | scenario가 속한 그룹 ID | authoritative multi-event group ID |
 | `mi_event_id` | 대표 event ID | `NULL` |
+| `mi_base_case_id` | 접수 시 선택한 활성 MI Base `case_id`, 없으면 `NULL` | 접수 시 선택한 활성 MI Base `case_id`, 없으면 `NULL` |
 
 v3/v4 proposal을 개별 event 하나에 귀속시키지 않는다. repository·DTO·serializer 소비자는 `mi_event_id`를 nullable로 처리하고 그룹 연결을 기준으로 조회해야 한다.
+
+`mi_base_case_id`는 요청 재현·추적을 위한 nullable unsigned integer다. MI Base 테이블은 별도 모델
+영역이 소유하므로 Agent ORM에 foreign key를 추가하지 않고 index만 둔다. 컬럼·인덱스
+마이그레이션 정본은 sibling `skmip-mi-agent-mgmt` v0037이다.
+
+### 4.1 MI Base와 연결 파일 조회
+
+1. `tmd_mdl_scnrcasem`의 `actv_base_yn='Y' AND del_yn='N'`을 조회한다.
+2. 0건이면 `mi_base_case_id=NULL`을 저장한다. 기본은 실패하며, 명시적 운영 설정에서만 기존 설정
+   Basecase를 허용한다. 1건이면 그 `case_id`를 제안 행에 고정한다.
+3. 2건 이상은 활성 기준이 애매하므로 임의의 하나를 고르지 않고 요청을 실패시킨다.
+4. `last_run_id = tmd_mdl_scnrcaseh.run_id`로 최신 실행의 `run_seq`를 얻는다.
+5. `tcm_filel`에서 다음 복합 키로 연결 파일을 조회한다.
+
+| `file_rel_obj_spt_cd` | `file_rel_obj_dstg_no` | 사용 |
+|---|---:|---|
+| `SCNRCASE` | `case_id` | Demand·Supply·Trade 입력 3종을 제안값 계산에 사용 |
+| `SCNRCASEH` | `run_seq` | 결과 파일 metadata만 조회 |
+| `SCNRCASEHI` | `run_seq` | 중간 파일 metadata만 조회 |
+| `SCNRCASEHTF` | `run_seq` | Trade Flow 결과 파일 metadata만 조회 |
+
+`SCNRCASEH/HI/HTF`가 없어도 입력 workbook 3종이 유효하면 제안 계산은 계속한다.
+반대로 `SCNRCASE` 3종을 완전하게 식별·검증하지 못하면 저장된 `mi_base_case_id`는 유지하되
+다른 Basecase로 fallback하지 않고 실패한다. Object Storage의 현재 metadata를 확인할 수 없는 경우에만
+같은 `case_id`, `last_run_id`, `run_seq`, SCNRCASE 파일 식별자에 대해 저장된 cache를 찾고, cache 내부
+workbook SHA-256과 contract를 다시 검증해 사용한다. 같은 identity에 서로 다른 workbook 내용이 둘 이상이면
+임의 선택하지 않고 실패한다.
 
 ```mermaid
 stateDiagram-v2
@@ -222,7 +263,9 @@ stateDiagram-v2
 `ABSTAINED`와 `FAILED`는 모두 `proposal_parameters=[]`을 저장한다. `ABSTAINED`는 기존 `error_code`에
 `ABSTAINED_*` 사유 코드를, `error_message`에 사용자 표시용 두 줄 안내를 저장한다. `FAILED`는 기존
 `ErrorCode` 이름과 실패 안내를 저장한다. 즉 플랫폼 B.E는 `status`로 보류/실패를 먼저 구분하고,
-`error_code`로 세부 원인을 판별하면 된다. `ABSTAINED`는 확정 대상이 아니며 후속 모델 실행 입력에서도 제외한다.
+`error_code`로 세부 원인을 판별하면 된다. 전체 공개 보류·실패 코드와 내부 진단 코드의 구분은
+[API 오류 코드 표](02_MODEL_PARAMETER_AGENT_API_SPEC.md#4-오류를-받았을-때-확인할-것)를 따른다.
+`ABSTAINED`는 확정 대상이 아니며 후속 모델 실행 입력에서도 제외한다.
 
 운영 DB의 `status` CHECK 제약에도 `ABSTAINED`를 추가해야 한다. 이 DDL 마이그레이션의 source of truth는
 형제 저장소 `skmip-mi-agent-mgmt`이며, Agent 배포보다 먼저 적용한다. 허용 상태는
@@ -267,11 +310,12 @@ stateDiagram-v2
 
 - 새 파라미터를 추가하려면 이름만 등록하는 것으로 끝나지 않는다. 모델 위치, Basecase/LUT capability와 v4 Lever binding이 함께 맞아야 한다. v1/v3 지원이 필요할 때만 별도로 legacy mapping을 변경한다.
 - v1/v3의 `direct`/`routing`과 v4의 executable Lever binding은 raw 후보 소스다. 신규 proposal은 v1/v3
-  이름 allow-list 5종 또는 v4 ID capability 7종을 적용한 결과만 사용한다.
+  이름 allow-list 5종 또는 v4 ID capability 16종을 적용한 결과만 사용한다.
 - 같은 좌표에서는 Basecase 값이 LUT 값보다 우선한다. DB는 어느 파일과 위치를 읽을지 정하고, 실제 참고값은 Basecase/LUT에서 얻는다.
 - 확정은 새 결과 행을 추가하지 않고 기존 제안 행을 `CONFIRMED`로 갱신한다. 다시 확정하면 이전 확정 내용이 최신 요청으로 바뀐다.
 - 보류·실패 원인은 결과표의 `error_code`, `error_message`에 남고, 비동기 요청은 callback 상태도 함께 확인해야 한다.
 - v4 배포에서는 parameter master와 Lever catalog를 원자적으로 적용한다. catalog checksum이 바뀌면 기존 v4 Scenario를 새 catalog로 재해석하지 않고 신규 Scenario를 생성한다.
+- Agent 배포 전 sibling mgmt v0037을 적용해 `mi_base_case_id`·index와 ORM을 먼저 맞춘다.
 - Agent는 이 기능에서 DDL이나 canonical DML을 수행하지 않는다. 시작 시 schema validation과 context 조회가 필수 테이블·컬럼·nullable 계약 누락을 명확히 차단한다.
 - runtime allow-list는 신규 proposal 생성에만 적용하며 기존 proposal 행·confirmation·custom parameter 호환 동작을 변경하지 않는다.
 

@@ -14,6 +14,7 @@ import unittest
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 from fastapi.routing import APIRoute
+from pydantic import ValidationError
 import pytest
 
 from apps.agents.model_parameter_agent.api import router as model_parameter_router
@@ -90,6 +91,9 @@ from apps.agents.model_parameter_agent.utils.lut import (
     build_slot_catalog,
     get_lut_catalog,
     get_parameter_spec_registry,
+)
+from apps.agents.model_parameter_agent.utils.mi_base_resources import (
+    MiBaseResourceSelection,
 )
 from apps.agents.model_parameter_agent.utils.parameter_mapping import (
     DEFAULT_BASECASE_DIR,
@@ -3955,7 +3959,7 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
 
         assert captured_kwargs["stream"] is True
         assert captured_kwargs["reasoning_effort"] == "high"
-        assert captured_kwargs["max_retries"] == 3
+        assert captured_kwargs["max_retries"] == 0
         log_args = logger.debug.call_args.args
         assert log_args[1:] == (
             "LLMValueProposalResponse",
@@ -3964,8 +3968,190 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
             "high",
             310,
             10,
-            3,
+            0,
+            2,
+            0.5,
+            0.25,
         )
+
+    async def test_transient_llm_failure_retries_once_with_jitter_and_records_attempts(self) -> None:
+        calls = 0
+
+        async def fake_invoke(**kwargs):  # noqa: ANN003
+            nonlocal calls
+            calls += 1
+            assert kwargs["max_retries"] == 0
+            if calls == 1:
+                try:
+                    raise TimeoutError("gateway timeout")
+                except TimeoutError as cause:
+                    raise MIBaseError(
+                        ErrorCode.LLM_INVOCATION_ERROR,
+                        detail="wrapped transport failure",
+                    ) from cause
+            return SimpleNamespace(result="ok", usage=None, model="quality-model")
+
+        fake_module = types.ModuleType("apps.connectors.llm.llm_client")
+        fake_module.invoke_llm_structured_output = fake_invoke
+        settings = SimpleNamespace(
+            llm_stream_enabled=False,
+            llm_reasoning_effort="default",
+            llm_timeout_sec=310,
+            http_connect_timeout=10,
+            model_parameter_transient_retry_max_attempts=2,
+            model_parameter_transient_retry_base_delay_seconds=0.5,
+            model_parameter_transient_retry_max_jitter_seconds=0.25,
+        )
+        with (
+            patch.dict(sys.modules, {"apps.connectors.llm.llm_client": fake_module}),
+            patch.object(proposal_nodes, "get_settings", return_value=settings),
+            patch.object(proposal_nodes.random, "uniform", return_value=0.1),
+            patch.object(proposal_nodes.asyncio, "sleep", new=AsyncMock()) as sleep,
+        ):
+            result = await proposal_nodes._invoke_structured(
+                output_schema=LLMValueProposalResponse,
+                messages=[{"role": "user", "content": "test"}],
+                model_name="test-model",
+            )
+
+        assert calls == 2
+        assert result.result == "ok"
+        assert result.attempt_count == 2
+        assert result.retry_count == 1
+        assert result.retry_reasons == ("TimeoutError",)
+        assert result.retry_delays_seconds == (0.6,)
+        sleep.assert_awaited_once_with(0.6)
+
+    async def test_incomplete_structured_json_retries_once_and_records_reason(self) -> None:
+        with pytest.raises(ValidationError) as caught:
+            LLMValueProposalResponse.model_validate_json(
+                '{"parameter_adjustments":[{"candidate_key":"truncated',
+            )
+        incomplete_json_error = caught.value
+        calls = 0
+
+        async def fake_invoke(**_kwargs):  # noqa: ANN003
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise MIBaseError(
+                    ErrorCode.LLM_INVALID_RESPONSE_ERROR,
+                    detail="invalid structured response",
+                ) from incomplete_json_error
+            return SimpleNamespace(result="ok", usage=None, model="quality-model")
+
+        fake_module = types.ModuleType("apps.connectors.llm.llm_client")
+        fake_module.invoke_llm_structured_output = fake_invoke
+        settings = SimpleNamespace(
+            llm_stream_enabled=True,
+            llm_reasoning_effort="default",
+            llm_timeout_sec=310,
+            http_connect_timeout=10,
+            model_parameter_transient_retry_max_attempts=2,
+            model_parameter_transient_retry_base_delay_seconds=0.0,
+            model_parameter_transient_retry_max_jitter_seconds=0.0,
+        )
+        with (
+            patch.dict(sys.modules, {"apps.connectors.llm.llm_client": fake_module}),
+            patch.object(proposal_nodes, "get_settings", return_value=settings),
+            patch.object(proposal_nodes.asyncio, "sleep", new=AsyncMock()) as sleep,
+        ):
+            result = await proposal_nodes._invoke_structured(
+                output_schema=LLMValueProposalResponse,
+                messages=[{"role": "user", "content": "test"}],
+                model_name="test-model",
+            )
+
+        assert calls == 2
+        assert result.result == "ok"
+        assert result.attempt_count == 2
+        assert result.retry_count == 1
+        assert result.retry_reasons == ("LLM_INCOMPLETE_JSON",)
+        assert result.retry_delays_seconds == (0.0,)
+        sleep.assert_awaited_once_with(0.0)
+
+    async def test_non_eof_json_syntax_error_is_never_retried(self) -> None:
+        with pytest.raises(ValidationError) as caught:
+            LLMValueProposalResponse.model_validate_json('{"parameter_adjustments":,}')
+        malformed_json_error = caught.value
+        calls = 0
+
+        async def fake_invoke(**_kwargs):  # noqa: ANN003
+            nonlocal calls
+            calls += 1
+            raise MIBaseError(
+                ErrorCode.LLM_INVALID_RESPONSE_ERROR,
+                detail="invalid structured response",
+            ) from malformed_json_error
+
+        fake_module = types.ModuleType("apps.connectors.llm.llm_client")
+        fake_module.invoke_llm_structured_output = fake_invoke
+        settings = SimpleNamespace(
+            llm_stream_enabled=True,
+            llm_reasoning_effort="default",
+            llm_timeout_sec=310,
+            http_connect_timeout=10,
+            model_parameter_transient_retry_max_attempts=2,
+            model_parameter_transient_retry_base_delay_seconds=0.0,
+            model_parameter_transient_retry_max_jitter_seconds=0.0,
+        )
+        with (
+            patch.dict(sys.modules, {"apps.connectors.llm.llm_client": fake_module}),
+            patch.object(proposal_nodes, "get_settings", return_value=settings),
+            patch.object(proposal_nodes.asyncio, "sleep", new=AsyncMock()) as sleep,
+        ):
+            with self.assertRaises(MIBaseError):
+                await proposal_nodes._invoke_structured(
+                    output_schema=LLMValueProposalResponse,
+                    messages=[{"role": "user", "content": "test"}],
+                    model_name="test-model",
+                )
+
+        assert calls == 1
+        sleep.assert_not_awaited()
+
+    async def test_semantic_llm_failure_is_never_retried(self) -> None:
+        calls = 0
+
+        async def fake_invoke(**_kwargs):  # noqa: ANN003
+            nonlocal calls
+            calls += 1
+            raise MIBaseError(
+                ErrorCode.LLM_INVALID_RESPONSE_ERROR,
+                detail="invalid structured response",
+            )
+
+        fake_module = types.ModuleType("apps.connectors.llm.llm_client")
+        fake_module.invoke_llm_structured_output = fake_invoke
+        settings = SimpleNamespace(
+            llm_stream_enabled=False,
+            llm_reasoning_effort="default",
+            llm_timeout_sec=310,
+            http_connect_timeout=10,
+            model_parameter_transient_retry_max_attempts=3,
+            model_parameter_transient_retry_base_delay_seconds=0.0,
+            model_parameter_transient_retry_max_jitter_seconds=0.0,
+        )
+        with (
+            patch.dict(sys.modules, {"apps.connectors.llm.llm_client": fake_module}),
+            patch.object(proposal_nodes, "get_settings", return_value=settings),
+            patch.object(proposal_nodes.asyncio, "sleep", new=AsyncMock()) as sleep,
+        ):
+            with self.assertRaises(MIBaseError) as caught:
+                await proposal_nodes._invoke_structured(
+                    output_schema=LLMValueProposalResponse,
+                    messages=[{"role": "user", "content": "test"}],
+                    model_name="test-model",
+                )
+
+        assert calls == 1
+        assert caught.exception.context["model_parameter_llm_retry"] == {
+            "attempt_count": 1,
+            "retry_count": 0,
+            "retry_reasons": [],
+            "retry_delays_seconds": [],
+        }
+        sleep.assert_not_awaited()
 
     async def test_single_population_route_can_be_excluded_by_candidate_validation(self) -> None:
         direct_candidate = {
@@ -4087,6 +4273,22 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
                 "events": [{"mi_event_id": 101}],
             },
             candidate_mappings=[candidate],
+            mi_base_resources=MiBaseResourceSelection(
+                source="configured_fallback",
+                basecase_dir=Path("/not-exported/basecase"),
+                workbook_resource_root=Path("/not-exported/workbooks"),
+                workbook_contract=SimpleNamespace(
+                    workbooks={
+                        "demand": SimpleNamespace(sha256="demand-sha256"),
+                        "supply": SimpleNamespace(sha256="supply-sha256"),
+                        "trade": SimpleNamespace(sha256="trade-sha256"),
+                    },
+                ),
+                case_id=15,
+                run_seq=71,
+                linked_file_counts={"SCNRCASE": 3},
+                fallback_reason="not exported",
+            ),
         )
         with (
             patch.object(proposal_nodes, "_invoke_structured", side_effect=fake_invoke),
@@ -4330,6 +4532,180 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
         assert len(warnings) == 1
         assert "중복 dimension task" in warnings[0]
 
+    async def test_v4_primary_and_alternative_bindings_keep_grounded_multiple_parameters(self) -> None:
+        primary = {
+            "candidate_key": "gdp",
+            "mapping_strategy": "v4",
+            "mapping_method": "routing",
+            "binding_role": "primary",
+            "scenario_dimension_key": "d1",
+            "source_dimension_id": "d1",
+            "source_dimension_value_id": "d1_v1",
+            "lever_code": "economic_activity",
+            "canonical_parameter_name": "GDP",
+            "source_dimensions": [{"scenario_dimension_key": "d1"}],
+        }
+        alternative = {
+            **primary,
+            "candidate_key": "pmi",
+            "binding_role": "alternative",
+            "canonical_parameter_name": "PMI",
+        }
+
+        deterministic, routing_tasks = proposal_nodes._partition_candidate_validation_work(
+            [primary, alternative],
+        )
+
+        assert deterministic == []
+        assert len(routing_tasks) == 1
+        task = routing_tasks[0]
+        selected, warnings = proposal_nodes._sanitize_routing_decisions(
+            [
+                RoutingDecision(
+                    dimension_key=task["dimension_key"],
+                    selected_candidate_keys=["pmi", "gdp"],
+                ),
+            ],
+            routing_tasks,
+            max_candidates_per_dimension=3,
+        )
+        assert [candidate["candidate_key"] for candidate in selected] == ["gdp", "pmi"]
+        assert any("복수 binding" in warning for warning in warnings)
+
+        selected_alternative, _ = proposal_nodes._sanitize_routing_decisions(
+            [
+                RoutingDecision(
+                    dimension_key=task["dimension_key"],
+                    selected_candidate_keys=["pmi"],
+                ),
+            ],
+            routing_tasks,
+            max_candidates_per_dimension=3,
+        )
+        assert [candidate["candidate_key"] for candidate in selected_alternative] == ["pmi"]
+
+    async def test_v4_single_conditional_binding_empty_response_has_no_primary_default(self) -> None:
+        candidate = {
+            "candidate_key": "inventory-supply",
+            "mapping_strategy": "v4",
+            "mapping_method": "routing",
+            "binding_role": "alternative",
+            "binding_selection_mode": "conditional",
+            "scenario_dimension_key": "inventory_path",
+            "source_dimension_id": "inventory_path",
+            "source_dimension_value_id": "low_inventory",
+            "lever_code": "inventory_condition",
+            "canonical_parameter_name": "SupplyDisruption",
+            "source_dimensions": [{"scenario_dimension_key": "inventory_path"}],
+        }
+
+        deterministic, routing_tasks = proposal_nodes._partition_candidate_validation_work(  # noqa: SLF001
+            [candidate],
+        )
+        selected, warnings = proposal_nodes._sanitize_routing_decisions(  # noqa: SLF001
+            [
+                RoutingDecision(
+                    dimension_key=routing_tasks[0]["dimension_key"],
+                    selected_candidate_keys=[],
+                ),
+            ],
+            routing_tasks,
+            max_candidates_per_dimension=3,
+        )
+
+        assert deterministic == []
+        assert routing_tasks[0]["selection_mode"] == "conditional"
+        assert selected == []
+        assert not any("기본값" in warning for warning in warnings)
+
+    async def test_v4_step1_5_semantic_empty_keeps_safe_routing_trace(self) -> None:
+        candidate = {
+            "candidate_key": "v4|demandpath|weak|economicactivity",
+            "mapping_strategy": "v4",
+            "mapping_method": "routing",
+            "binding_selection_mode": "conditional",
+            "binding_role": "primary",
+            "scenario_dimension_key": "demand_path",
+            "source_dimension_id": "demand_path",
+            "source_dimension_value_id": "weak",
+            "source_dimension_value": "약세",
+            "lever_code": "economic_activity",
+            "parameter_name": "GDP",
+            "canonical_parameter_name": "GDP",
+        }
+        response = LLMCandidateValidationResponse(
+            routing_decisions=[
+                RoutingDecision(
+                    dimension_key="v4|demandpath|weak|economicactivity",
+                    selected_candidate_keys=[],
+                ),
+            ],
+        )
+
+        async def fake_invoke(*args, **kwargs):  # noqa: ANN002, ANN003
+            return SimpleNamespace(result=response, usage=None)
+
+        state = ModelParameterProposalState(
+            scenario_id=501,
+            scenario_context={
+                "scenario": {"scenario_id": 501, "dimension_values": {"demand_path": "약세"}},
+                "scenario_group": {
+                    "api_version": "v4",
+                    "generation_strategy": V4_GENERATION_STRATEGY,
+                },
+            },
+            candidate_mappings=[candidate],
+            mi_base_resources=MiBaseResourceSelection(
+                source="configured_fallback",
+                basecase_dir=Path("/not-exported/basecase"),
+                workbook_resource_root=Path("/not-exported/workbooks"),
+                workbook_contract=SimpleNamespace(
+                    workbooks={
+                        "demand": SimpleNamespace(sha256="demand-sha256"),
+                        "supply": SimpleNamespace(sha256="supply-sha256"),
+                        "trade": SimpleNamespace(sha256="trade-sha256"),
+                    },
+                ),
+                case_id=15,
+                run_seq=71,
+                linked_file_counts={"SCNRCASE": 3},
+                fallback_reason="not exported",
+            ),
+        )
+        with (
+            patch.object(
+                proposal_nodes,
+                "get_settings",
+                return_value=SimpleNamespace(
+                    model_parameter_max_routing_candidates_per_dimension=2,
+                ),
+            ),
+            patch.object(proposal_nodes, "_invoke_structured", side_effect=fake_invoke),
+            pytest.raises(MIBaseError) as caught,
+        ):
+            await validate_parameter_candidates(state)
+
+        trace = caught.value.trace_evidence  # type: ignore[attr-defined]
+        assert trace["observability_complete"] is True
+        assert trace["semantic_stage_evidence"]["stage"] == "step1_5"
+        assert trace["semantic_stage_evidence"]["routing_tasks"][0]["selection_mode"] == "conditional"
+        assert trace["semantic_stage_evidence"]["routing_decisions"][0]["selected_candidate_keys"] == []
+        assert [call["step"] for call in trace["llm_calls"]] == ["Step1.5 routing selection"]
+        assert trace["trace_mi_base_resource"] == {
+            "source": "configured_fallback",
+            "case_id": 15,
+            "run_seq": 71,
+            "workbook_sha256": {
+                "demand": "demand-sha256",
+                "supply": "supply-sha256",
+                "trade": "trade-sha256",
+            },
+        }
+        serialized_trace = json.dumps(trace, ensure_ascii=False)
+        assert "scenario_context" not in serialized_trace
+        assert "messages" not in serialized_trace
+        assert "/not-exported" not in serialized_trace
+
     async def test_routing_decision_is_not_overridden_by_server_comment_logic(self) -> None:
         supply_candidate = {
             "candidate_key": "11|affectedfacilitytype|supplydisruption|supply|volumeadjustment",
@@ -4553,6 +4929,13 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
                             axis_value="Plant-42",
                         ),
                     ],
+                    entity_coordinate_resolution={
+                        "plantEvidenceText": "플랜트 42",
+                        "trainEvidenceText": "플랜트 42 1호기",
+                        "coordinateMatchNoteKo": "문맥상 동일 설비로 판단",
+                        "periodEvidenceText": "2026년",
+                        "periodMatchNoteKo": "2026년 좌표와 일치",
+                    },
                 ),
             ],
         )
@@ -4604,6 +4987,13 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
             result = await propose_parameter_slots(state)
 
         assert result["parameter_slots"][0]["candidate_key"] == "c1"
+        assert result["parameter_slots"][0]["_llm_entity_coordinate_resolution"] == {
+            "plant_evidence_text": "플랜트 42",
+            "train_evidence_text": "플랜트 42 1호기",
+            "coordinate_match_note_ko": "문맥상 동일 설비로 판단",
+            "period_evidence_text": "2026년",
+            "period_match_note_ko": "2026년 좌표와 일치",
+        }
         assert result["slot_selection_diagnostics"] == {
             "catalog_candidate_count": 1,
             "raw_slot_count": 1,
@@ -4621,7 +5011,11 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
         assert "연관된 slot이 하나 이상 있으면 해당 parameter에서 최소 1개" in system_prompt
         assert "Cartesian product를 만들지 마십시오" in system_prompt
         assert "axis_name이 Year, Month, Period이면 axis_value를 JSON integer" in system_prompt
-        assert "각 항목에는 candidate_key와 slot_axes만 반환하십시오" in system_prompt
+        assert "entity_coordinate_resolution" in system_prompt
+        assert "세 evidence text는 입력 원문에서 그대로 복사" in system_prompt
+        assert "period_evidence_text" in system_prompt
+        assert "서버는 동일한" in system_prompt
+        assert "Plant·Train evidence 조합" in system_prompt
         assert "rationale_ko, selected, metadata, warning 필드는 반환하지 마십시오" in system_prompt
         assert "rationale_ko에는" not in system_prompt
         payload = json.loads(captured_contents[0].split("\n", 1)[1])
@@ -4952,9 +5346,20 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
             expected_title=V4_NO_MODEL_INPUT_TITLE,
         )
         assert "액화설비 가동률과 생산량 관련 항목" in error.exception.error_message
-        assert "적용 대상도 찾았지만" in error.exception.error_message
+        assert "적용 대상과 기간도 찾았지만" in error.exception.error_message
         assert "적용 연도·월" in error.exception.error_message
-        assert "적용 기간을 확인해 주세요" in error.exception.error_message
+        assert "사용 가능한 범위와 맞는지 확인해 주세요" in error.exception.error_message
+        trace = error.exception.trace_evidence  # type: ignore[attr-defined]
+        assert trace["observability_complete"] is True
+        assert trace["semantic_stage_evidence"]["stage"] == "step2"
+        assert trace["semantic_stage_evidence"]["slot_selection_diagnostics"] == {
+            "catalog_candidate_count": 1,
+            "raw_slot_count": 0,
+            "sanitized_slot_count": 0,
+            "exact_slot_count": 0,
+        }
+        assert trace["llm_calls"] == []
+        assert "scenario_context" not in json.dumps(trace, ensure_ascii=False)
 
     def test_v4_step2_empty_slots_explain_missing_catalog_positions(self) -> None:
         candidate = {
@@ -5306,6 +5711,16 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
         )
         assert "액화설비 가동률 항목과 적용 위치" in error.exception.error_message
         assert "기준값" in error.exception.error_message
+        trace = error.exception.trace_evidence  # type: ignore[attr-defined]
+        assert trace["observability_complete"] is True
+        assert trace["semantic_stage_evidence"]["stage"] == "step3"
+        assert trace["semantic_stage_evidence"]["value_selection_diagnostics"][
+            "generated_value_count"
+        ] == 0
+        assert [call["step"] for call in trace["llm_calls"]] == ["Step3 value proposal"]
+        serialized_trace = json.dumps(trace, ensure_ascii=False)
+        assert "아래 JSON만 근거로" not in serialized_trace
+        assert "messages" not in serialized_trace
 
     def test_v4_step3_abstention_reason_distinguishes_value_outcome(self) -> None:
         cases = [
@@ -5952,7 +6367,16 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
                     detail="Step3 candidate_key and slotKey validation failed",
                 )
 
-        with patch.object(propose_flow, "build_graph", return_value=FakeGraph()):
+        model_parameter_service = Mock()
+        model_parameter_service.load_active_mi_base_case_id.return_value = None
+        with (
+            patch.object(propose_flow, "build_graph", return_value=FakeGraph()),
+            patch.object(
+                propose_flow,
+                "ModelParameterService",
+                return_value=model_parameter_service,
+            ),
+        ):
             with self.assertRaises(MIBaseError) as caught:
                 await propose_flow.run_propose_parameters_sync({"scenario_id": 309})
 
@@ -6091,7 +6515,7 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
             semantic_error,
             expected_title=V4_NO_MODEL_INPUT_TITLE,
         )
-        assert "적용 대상도 찾았지만" in semantic_error.error_message
+        assert "적용 대상과 기간도 찾았지만" in semantic_error.error_message
         assert "적용 연도·월" in semantic_error.error_message
 
         class FakeGraph:

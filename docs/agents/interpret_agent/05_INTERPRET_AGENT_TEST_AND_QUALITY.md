@@ -52,6 +52,7 @@ repository root에서 다음 명령을 실행한다.
 ```bash
 PYTHONDONTWRITEBYTECODE=1 METADATA_DB_PORT=3306 pytest -p no:cacheprovider \
   tests/automated/test_interpret_callback_contract.py \
+  tests/automated/test_interpret_input_snapshot.py \
   tests/automated/test_interpret_plain_text.py \
   tests/automated/test_interpret_tracing.py \
   tests/automated/test_model_parameter_nullable_event_consumers.py
@@ -64,12 +65,30 @@ PYTHONDONTWRITEBYTECODE=1 METADATA_DB_PORT=3306 pytest -p no:cacheprovider \
 
 ```bash
 METADATA_DB_PORT=3306 pytest tests/automated/test_interpret_callback_contract.py
+METADATA_DB_PORT=3306 pytest tests/automated/test_interpret_input_snapshot.py
 METADATA_DB_PORT=3306 pytest tests/automated/test_interpret_plain_text.py
 METADATA_DB_PORT=3306 pytest tests/automated/test_interpret_tracing.py
 ```
 
 `envs/config.yaml`의 `${METADATA_DB_PORT}` placeholder가 shell에서 이미 치환되는 환경이면 기존 값을 사용해도
 된다. 위 3306은 DB를 호출하지 않는 이 단위 test 묶음의 Settings parsing을 위한 기본값이다.
+
+## Interpret 전용 Neuro 설정 검토
+
+Interpret 전용 ConfigMap·Secret은 Neuro 관리 화면에서 직접 관리하며 저장소나 로컬 작업 사본으로 보관하지
+않는다. 일반 CI도 외부 Neuro 설정의 존재에 의존하지 않는다. 검토를 위해 설정을 임시 반출해야 한다면 저장소
+밖의 보호된 임시 위치에서 확인하고 검토 직후 삭제한다. Neuro 반영 전에는 다음을 별도로 확인한다.
+
+1. `APP_CONFIG`가 실제 mount 경로를 가리키고, mount된 설정 YAML이 parse되는가.
+2. 설정 YAML의 최상위 key가 모두 `apps/common/configs/config.py`의 `Settings` field인가.
+3. DB·model·callback secret 환경변수를 주입했을 때 `Settings` 생성이 성공하는가.
+4. `agents.interpret_agent`의 experiment, AIP app ID, tracing 활성화가 의도한 값인가.
+5. `callback_price_interpretations_path`가 backend 계약과 같고 `skip_callback` 실효값이 명확한가.
+6. MCP/RDB search, Scenario Group admin, `model_parameter_*`, 다른 callback path와 다른 Agent profile이 없는가.
+
+`envs/config.yaml`과 Neuro 값은 환경 목적이 달라 endpoint, stream mode, strict structured output, MLflow
+experiment·접속 주소가 다를 수 있다. 차이를 무조건 덮어쓰지 말고 승인된 Neuro 값을 유지하며, code가 읽는
+key와 타입 및 의도한 실효값만 대조한다.
 
 ## 자동 테스트가 확인하는 것
 
@@ -91,16 +110,25 @@ callback 전송 함수는 mock이다. 실제 OAuth2 token 발급, network, 수�
 
 다음 표현을 일반 텍스트로 바꾸는 규칙을 검증한다.
 
-- Markdown heading과 blockquote
+- Markdown ATX·Setext heading과 중첩 blockquote
 - `**`, `__` 이중 강조와 inline code 표식
-- Markdown link
-- unordered·ordered list
-- code indentation과 horizontal rule
-- 알려진 HTML tag
+- inline·reference·autolink
+- unordered·ordered·task list와 table
+- code indentation, fence와 horizontal rule
+- 정상·entity 인코딩·불완전 HTML tag와 숨김 script 내용
 - 불완전하게 남은 강조 표식
 
-또한 Scenario output, Group synthesis, callback item의 모든 사용자 표시 필드가 schema 생성 시 정규화되는지
-확인한다. 프롬프트와 structured-output description이 일반 텍스트를 요구하는지도 확인한다.
+또한 Scenario output, Group synthesis, meta, response message, callback item의 사용자 표시 필드가 schema 생성 시
+정규화되는지 확인한다. 프롬프트와 structured-output description이 일반 텍스트를 요구하는지도 확인한다.
+
+### `test_interpret_input_snapshot.py`
+
+- 여러 proposal이 하나의 양수 `mi_base_case_id`를 공유하는지 확인
+- 첨부 가격 화면과 같은 `2026-04`~`2030-12` 57개월 partial-year 축 보존
+- 중복·누락·역순·잘못된 월 key 거부
+- Scenario와 pinned MI Base의 월 축 및 `base_case_prc` 일치 검증
+- exact MI Base case 조회와 Base·Scenario `run_seq` 단일성 확인
+- API meta 기간이 Feature가 아니라 수급모델 가격 축에서 정해지는지 확인
 
 ### `test_interpret_tracing.py`
 
@@ -108,8 +136,9 @@ callback 전송 함수는 mock이다. 실제 OAuth2 token 발급, network, 수�
 | --- | --- |
 | config profile | `interpret_agent` MLflow experiment·AIP app ID·enabled 값 |
 | startup | lifespan이 Interpret Agent 이름으로 tracing을 초기화함 |
+| version | FastAPI·OpenAPI version이 `v4.1.7`임 |
 | graph | `TraceContext`를 context schema로 선언함 |
-| top-level invoke | 하나의 transaction·session context를 graph에 전달함 |
+| top-level invoke | 하나의 transaction·session context와 `interpret_price`, `v4.1.7` tag를 graph에 전달함 |
 | LLM nodes | Scenario별 호출과 Group synthesis가 같은 trace context·callbacks를 받음 |
 | stream setting | `llm_stream_enabled`가 LLM connector로 전달됨 |
 
@@ -120,7 +149,7 @@ callback 전송 함수는 mock이다. 실제 OAuth2 token 발급, network, 수�
 Interpret 관련 검사는 다음 두 가지다.
 
 - 최신 proposal의 `mi_event_id`가 null이어도 Feature 정규화가 성공함
-- loader가 proposal Event ID를 요구하지 않고 target Scenario와 Feature를 구성함
+- loader가 proposal Event ID를 요구하지 않되 proposal ID와 pinned MI Base ID를 보존함
 
 가격 loader는 mock이므로 실제 모델 결과 SQL은 검증하지 않는다.
 
@@ -159,8 +188,8 @@ python tests/manual/interpret_agent/smoke_test_deployed_api.py \
   --output local/output/interpret_agent/manual/result.json
 ```
 
-실행 전에 Group의 최신 `PROPOSED` 또는 `CONFIRMED` proposal과 완료 가격 run이 있는지 확인한다. runner의
-default ID는 특정 배포 예시일 뿐 다른 환경에서 유효하다는 보장이 없다.
+`--base-url`, `--scenario-group-id`, 하나 이상의 `--scenario-id`는 모두 필수다. 실행 전에 Group의 최신
+`PROPOSED` 또는 `CONFIRMED` proposal에 `mi_base_case_id`가 있고 완료 가격 run이 있는지 확인한다.
 
 ### smoke check 목록
 
@@ -168,6 +197,7 @@ default ID는 특정 배포 예시일 뿐 다른 환경에서 유효하다는 �
 | --- | --- | --- |
 | `INT-DOCS-001` | `/docs` HTTP 200 | local docs 제공 문제 |
 | `INT-OPENAPI-002` | `/openapi.json` HTTP 200 | OpenAPI 제공 문제 |
+| `INT-VERSION-002B` | OpenAPI version이 `v4.1.7` | 잘못된 Interpret 이미지·버전 배포 |
 | `INT-ROUTE-ISOLATION-003` | 업무 path가 Interpret 두 개뿐 | 잘못된 app package 포함 또는 route 변경 |
 | `INT-VALIDATION-004` | 숫자로 변환할 수 없는 string Scenario ID가 HTTP 422 | request schema 회귀 |
 | `INT-PREVIEW-HTTP-005` | preview HTTP 200 | DB·LLM·서버 오류 |
@@ -179,9 +209,9 @@ default ID는 특정 배포 예시일 뿐 다른 환경에서 유효하다는 �
 성공하지만 smoke runner는 요청한 ID set 전체가 돌아오기를 기대한다. 따라서 이 check가 실패하면 먼저 실제
 proposal availability를 확인한다.
 
-`INT-PLAIN-TEXT-008`도 모든 Markdown 문법을 파싱하는 검사가 아니다. runner에 등록된 heading, link, 일부
-목록·code·HTML·강조 marker를 확인하므로, single emphasis, 취소선, `~~~` fence 같은 미등록 문법은 별도
-검토가 필요하다.
+`INT-PLAIN-TEXT-008`은 production sanitizer와 같은 marker detector를 사용해 heading·중첩 인용·link·목록·
+table·code·강조·취소선·HTML 잔여를 확인한다. 새로운 플랫폼 서식 문법을 지원할 때는 sanitizer와 detector,
+자동 테스트를 함께 확장한다.
 
 ### 결과 파일
 
@@ -242,6 +272,7 @@ smoke를 실행하지 않는다.
 확인할 질문은 다음과 같다.
 
 - 확정된 proposal이라면 `confirmationParameters`의 값이 반영되었는가?
+- 모든 proposal이 같은 pinned `mi_base_case_id`를 가리키는가?
 - monthly·annual Feature가 올바른 기간으로 해석되었는가?
 - Country·Region·qualifier가 다른 series가 섞이지 않았는가?
 - MI Base와 공통 기간이 없는 근거를 LLM이 있는 것처럼 말하지 않았는가?
@@ -250,6 +281,9 @@ smoke를 실행하지 않는다.
 
 JKM·TTF·HH의 방향과 상대 크기를 확인한다. `meta.indices`는 고정 목록이므로 세 값이 보인다는 사실만으로 세
 지수 price series가 모두 조회되었다고 판단하지 않는다.
+
+`meta.periodStart`·`periodEnd`가 가격 화면의 실제 monthly 축과 같은지도 확인한다. 예를 들어 2026-04부터
+2030-12인 결과를 2026-01부터로 넓히거나 annual Feature 기간으로 바꾸면 안 된다.
 
 Feature의 geo label과 시장 연결은 LLM 추론이다. 다음은 사람이 별도로 확인해야 한다.
 
@@ -271,14 +305,19 @@ Feature의 geo label과 시장 연결은 LLM 추론이다. 다음은 사람이 �
 
 - Markdown heading·link·code fence
 - `**`, `__`, backtick 같은 강조·code marker
-- `<strong>`, `<b>`, `<em>`, `<i>` 같은 HTML tag
-- Markdown bullet prefix와 horizontal rule
+- 정상·인코딩·불완전 HTML tag 또는 comment
+- Markdown 중첩 인용·목록·table·horizontal rule
 
 일반 텍스트의 개행, `■ ` 구분 문자, 음수 기호, 곱셈의 `*`처럼 의미 있는 문자는 허용한다.
 
-### 6. 길이
+### 6. 리포트 깊이와 길이
 
-prompt 기준은 45·220·220·260·600자다. 수동 runner는 초과를 `qualityWarnings`에 기록하지만 전체 smoke
+Scenario 해석은 핵심 market call, 물리적 수급 전이, 지수별 상대 민감도·비동조·정상화, 방향·수치 신뢰도,
+근거 기반 모니터링과 조건부 대응이 같은 순서로 이어지는지 확인한다. 전문 용어 자체보다 근거와 판단의 연결을
+우선하며, 입력에 없는 고유명사나 운영 사실을 추가하면 안 된다. 데이터 품질 신호가 있으면 수치 신뢰도와 활용
+범위를 낮추고 재검증 대상을 설명해야 한다.
+
+prompt 기준은 70·340·340·420·600자다. 수동 runner는 초과를 `qualityWarnings`에 기록하지만 전체 smoke
 `passed`를 false로 만들지 않는다. schema도 길이를 강제하지 않으므로 초과는 API contract failure가 아니라
 현재 prompt 품질 warning이다.
 
@@ -292,6 +331,7 @@ prompt 기준은 45·220·220·260·600자다. 수동 runner는 초과를 `quali
 현재 branch의 Interpret Agent 자동 테스트를 실행해 주세요.
 
 - callback contract
+- proposal/MI Base/run snapshot과 2026-04~2030-12 monthly 축
 - plain-text sanitizer와 output schema
 - MLflow trace context 전달
 - nullable proposal event 소비
@@ -334,11 +374,10 @@ Interpret Agent async callback 계약을 검증해 주세요.
 tracked 자동·수동 테스트만으로는 다음 내용을 보장하지 않는다.
 
 - 실제 MySQL에서 proposal 최신 row·CONFIRMED 우선 query가 기대대로 동작함
-- 세 모델 결과 table raw SQL과 최신 completed run 선택이 실제 schema에서 동작함
+- 세 모델 결과 table raw SQL의 exact MI Base case와 최신 completed Scenario run 선택이 실제 schema에서 동작함
 - 일부 `scenarioIds`만 존재할 때 subset으로 처리되는 API 동작
 - 일부 가격 지수만 없을 때 남은 지수로 해석되는 동작
 - Feature·가격 diff metric의 모든 threshold·segment·convergence 경계값
-- 여러 Scenario proposal의 `basecaseValue` 충돌 처리
 - 실제 LLM의 수치 충실도, 지역↔지수 연결 정확도, 문체·글자 수 준수율
 - Scenario 원문과 Event 사실에 대한 grounding
 - 실제 OAuth2 token 발급과 callback backend 수신
@@ -359,8 +398,8 @@ tracked 자동·수동 테스트만으로는 다음 내용을 보장하지 않�
 | API path·schema | callback contract + 배포 OpenAPI smoke |
 | plain-text sanitizer | plain text test + callback content + 배포 preview |
 | prompt | structured output test + 실제 preview 품질·길이 warning |
-| proposal loader | nullable Event test + MySQL read integration |
-| price repository | 실제 세 지수 read + completed run·period 정렬 |
+| proposal loader | snapshot test + nullable Event test + MySQL read integration |
+| price repository | snapshot test + 실제 세 지수 exact Base/latest Scenario run read |
 | diff metric | 경계값 단위 테스트 + LLM evidence snapshot |
 | callback client·URL | mock contract + 허용된 callback 환경 integration |
 | tracing | tracing automated test + 접근 가능한 MLflow trace 확인 |
@@ -372,6 +411,7 @@ tracked 자동·수동 테스트만으로는 다음 내용을 보장하지 않�
 - flow: `apps/agents/interpret_agent/flows/interpret_price/flow.py`
 - deterministic metric: `apps/agents/interpret_agent/utils/series_metrics.py`
 - callback automated test: `tests/automated/test_interpret_callback_contract.py`
+- input snapshot automated test: `tests/automated/test_interpret_input_snapshot.py`
 - plain-text automated test: `tests/automated/test_interpret_plain_text.py`
 - tracing automated test: `tests/automated/test_interpret_tracing.py`
 - nullable Event regression: `tests/automated/test_model_parameter_nullable_event_consumers.py`

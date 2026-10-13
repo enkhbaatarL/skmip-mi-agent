@@ -17,6 +17,8 @@ from apps.common.configs.config import get_settings
 from apps.common.exceptions.custom import MIBaseError
 from apps.common.values.error_codes import ErrorCode
 from apps.persistence.event.repository import EventRepository
+from apps.persistence.mi_base.schema import MiBaseSnapshot
+from apps.persistence.mi_base.service import MiBaseService
 from apps.persistence.model_impact_lever.schema import ModelImpactLeverPayload
 from apps.persistence.model_impact_lever.service import ModelImpactLeverService
 from apps.persistence.model_parameter.repository import ModelParameterRepository
@@ -1013,7 +1015,7 @@ def _normalize_v4_dimension_lineage(  # noqa: C901
                     },
                 )
                 continue
-            if lever.domain == "price_only":
+            if lever.domain == "price_only" and not lever.parameter_bindings:
                 support_issues.append(
                     {
                         "dimension_id": dimension_id,
@@ -1123,6 +1125,7 @@ def _load_v4_context(
     impact_levers: list[ModelImpactLeverPayload],
     catalog_version: str,
     catalog_checksum: str,
+    scenario_repository: ScenarioRepository | None = None,
 ) -> dict[str, Any]:
     api_version = str(_model_field(group, "api_version", "") or "")
     if api_version != "v4":
@@ -1207,6 +1210,23 @@ def _load_v4_context(
     reason_codes = sorted(
         {str(issue.get("reason_code") or "") for issue in support_issues if str(issue.get("reason_code") or "")},
     )
+    sibling_scenarios = []
+    if scenario_repository is not None:
+        current_scenario_id = _required_context_int(
+            _model_field(scenario, "scenario_id"),
+            field_name="scenario.scenario_id",
+        )
+        sibling_scenarios = [
+            _scenario_to_context_dict(item)
+            for item in scenario_repository.fetch_models_by_group_id(
+                scenario_group_id,
+            )
+            if _required_context_int(
+                _model_field(item, "scenario_id"),
+                field_name="scenario.scenario_id",
+            )
+            != current_scenario_id
+        ]
     return {
         "scenario": scenario_context,
         "scenario_group": group_context,
@@ -1216,6 +1236,7 @@ def _load_v4_context(
         "dimension_template": selected_dimension_template,
         "dimension_value_mappings": [],
         "dimension_lineage": dimension_lineage,
+        "sibling_scenarios": sibling_scenarios,
         "impact_levers": [lever.model_dump(mode="json") for lever in impact_levers],
         "impact_catalog_version": catalog_version,
         "impact_catalog_checksum": catalog_checksum,
@@ -1266,6 +1287,7 @@ class ModelParameterService:
                             group=group,
                             group_repository=group_repository,
                             event_repository=event_repository,
+                            scenario_repository=scenario_repository,
                             impact_levers=impact_levers,
                             catalog_version=catalog_version,
                             catalog_checksum=catalog_checksum,
@@ -1314,6 +1336,35 @@ class ModelParameterService:
             )
         return context
 
+    def load_active_mi_base_case_id(self) -> int | None:
+        return MiBaseService().load_active_case_id()
+
+    def load_mi_base_snapshot(self, case_id: int) -> MiBaseSnapshot:
+        return MiBaseService().load_snapshot(case_id)
+
+    def load_proposal_mi_base_case_id(
+        self,
+        model_param_proposal_id: int,
+    ) -> int | None:
+        from apps.common.configs.database.sync_database.connection import get_sync_session
+
+        session = get_sync_session()
+        try:
+            proposal = ModelParameterRepository(
+                session=session,
+            ).fetch_model_param_proposal(model_param_proposal_id)
+            if proposal is None:
+                raise MIBaseError(
+                    ErrorCode.ENTITY_NOT_FOUND,
+                    detail=(
+                        "Model parameter proposal not found: "
+                        f"model_param_proposal_id={model_param_proposal_id}"
+                    ),
+                )
+            return _optional_int(proposal.get("mi_base_case_id"))
+        finally:
+            session.close()
+
     def load_parameter_mapping_resources(self) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         from apps.common.configs.database.sync_database.connection import get_sync_session
 
@@ -1357,6 +1408,7 @@ class ModelParameterService:
             event=event,
         )
         request_usr_id = _optional_int(user_id)
+        mi_base_case_id = _optional_int(scenario_context.get("mi_base_case_id"))
         payload = _parameter_json_payload(proposal_parameters)
 
         session = get_sync_session()
@@ -1365,6 +1417,7 @@ class ModelParameterService:
                 scenario_id=scenario_id,
                 scenario_group_id=scenario_group_id,
                 mi_event_id=mi_event_id,
+                mi_base_case_id=mi_base_case_id,
                 request_usr_id=request_usr_id,
                 proposal_parameters=payload,
             )
@@ -1400,6 +1453,7 @@ class ModelParameterService:
             event=event,
         )
         request_usr_id = _optional_int(user_id)
+        mi_base_case_id = _optional_int(scenario_context.get("mi_base_case_id"))
 
         session = get_sync_session()
         try:
@@ -1409,6 +1463,7 @@ class ModelParameterService:
                 scenario_id=scenario_id,
                 scenario_group_id=scenario_group_id,
                 mi_event_id=mi_event_id,
+                mi_base_case_id=mi_base_case_id,
                 request_usr_id=request_usr_id,
             )
             session.commit()
@@ -1444,6 +1499,7 @@ class ModelParameterService:
             scenario_group=scenario_group,
             event=event,
         )
+        mi_base_case_id = _optional_int(scenario_context.get("mi_base_case_id"))
         session = get_sync_session()
         try:
             proposal_id = ModelParameterRepository(
@@ -1452,6 +1508,7 @@ class ModelParameterService:
                 scenario_id=scenario_id,
                 scenario_group_id=scenario_group_id,
                 mi_event_id=mi_event_id,
+                mi_base_case_id=mi_base_case_id,
                 request_usr_id=_optional_int(user_id),
                 reason_code=reason_code,
                 reason_message=reason_message,
@@ -1673,6 +1730,14 @@ def _scenario_to_context_dict(scenario: Any) -> dict[str, Any]:
             "hh": scenario.impact_hh,
         },
         "baseline_yn": scenario.baseline_yn,
+        "display_order": _json_safe(getattr(scenario, "display_order", None)),
+        "global_pressure_band": _json_safe(
+            getattr(scenario, "global_pressure_band", None),
+        ),
+        "scenario_role": _json_safe(getattr(scenario, "scenario_role", None)),
+        "global_pressure_rationale": _json_safe(
+            getattr(scenario, "global_pressure_rationale", None),
+        ),
     }
 
 

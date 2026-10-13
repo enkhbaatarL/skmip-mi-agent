@@ -1,3 +1,5 @@
+# Copyright (c) 2026 SK Innovation E&S.
+
 from __future__ import annotations
 
 # YAML 기반 앱 설정 로더.
@@ -9,8 +11,7 @@ from pathlib import Path
 import re
 from typing import Annotated, Any, Literal
 
-from pydantic import AliasChoices, BaseModel, Field, SecretStr, computed_field, field_validator, model_validator
-from pydantic import BaseModel, Field, SecretStr, field_validator, model_validator
+from pydantic import AliasChoices, BaseModel, Field, SecretStr, field_validator, model_validator
 from pydantic_settings import (
     BaseSettings,
     NoDecode,
@@ -116,6 +117,17 @@ class ModelParameterResourceStorageConfig(BaseModel):
     bootstrap_timeout_seconds: float = Field(default=420.0, gt=0)
     lock_timeout_seconds: float = Field(default=500.0, gt=0)
     download_chunk_size_bytes: int = Field(default=1024 * 1024, ge=64 * 1024)
+
+
+class ModelParameterMiBaseFallbackConfig(BaseModel):
+    """요청별 MI Base 입력을 준비하지 못했을 때 허용할 fallback 경계."""
+
+    no_active_case_mode: Literal["fail", "configured_fallback"] = "fail"
+    active_case_unavailable_mode: Literal[
+        "fail",
+        "verified_cache",
+        "configured_fallback",
+    ] = "verified_cache"
 
 
 class Settings(BaseSettings):
@@ -271,6 +283,10 @@ class Settings(BaseSettings):
     mi_mcp_timeout_sec: float = Field(default=60.0, gt=0)
 
     # Model parameter proposal
+    model_parameter_proposal_flow_release: str = Field(default="v4.1.7", min_length=1)
+    model_parameter_transient_retry_max_attempts: int = Field(default=2, ge=1, le=5)
+    model_parameter_transient_retry_base_delay_seconds: float = Field(default=0.5, ge=0.0, le=30.0)
+    model_parameter_transient_retry_max_jitter_seconds: float = Field(default=0.25, ge=0.0, le=30.0)
     model_parameter_lut_enabled: bool = Field(default=False)
     model_parameter_lut_horizon_start_year: int = Field(default=2026)
     model_parameter_lut_horizon_end_year: int = Field(default=2030)
@@ -284,8 +300,26 @@ class Settings(BaseSettings):
     model_parameter_max_step2_prompt_bytes: int = Field(default=262_144, ge=1)
     model_parameter_max_step3_prompt_bytes: int = Field(default=262_144, ge=1)
     model_parameter_max_routing_candidates_per_dimension: int = Field(default=2, ge=1)
+    model_parameter_v4_max_routing_candidates_per_dimension: int = Field(
+        default=3,
+        ge=1,
+    )
+    model_parameter_max_conditional_parameters_per_scenario: int = Field(
+        default=4,
+        ge=1,
+    )
+    model_parameter_variation_mode: Literal[
+        "strict",
+        "balanced",
+        "exploratory",
+    ] = "balanced"
+    model_parameter_variation_profile_enabled: bool = Field(default=True)
+    model_parameter_grounded_slot_recovery_enabled: bool = Field(default=True)
     model_parameter_resource_storage: ModelParameterResourceStorageConfig = Field(
         default_factory=ModelParameterResourceStorageConfig,
+    )
+    model_parameter_mi_base_fallback: ModelParameterMiBaseFallbackConfig = Field(
+        default_factory=ModelParameterMiBaseFallbackConfig,
     )
     # Agent 전용 parser가 업무 스키마를 검증한다. common 설정 계층은 YAML 구조만 보존한다.
     model_parameter_resources: dict[str, Any] = Field(default_factory=dict)
@@ -316,6 +350,7 @@ class Settings(BaseSettings):
     scenario_group_operation_reaper_interval_seconds: float = Field(default=30.0, gt=0)
     additional_dimension_stale_after_seconds: float = Field(default=240.0, gt=0)
     hide_price_pressure: bool = True
+    scenario_group_v4_impact_catalog_version: str = Field(default="v4.1", min_length=1)
 
     @model_validator(mode="after")
     def validate_scenario_group_operation_timing(self) -> Settings:
@@ -327,6 +362,15 @@ class Settings(BaseSettings):
             )
             raise ValueError(msg)
         return self
+
+    @field_validator("scenario_group_v4_impact_catalog_version")
+    @classmethod
+    def validate_v4_impact_catalog_version(cls, value: str) -> str:
+        normalized = value.strip()
+        if re.fullmatch(r"v\d+(?:\.\d+)?", normalized) is None:
+            message = "scenario_group_v4_impact_catalog_version must look like v4 or v4.1"
+            raise ValueError(message)
+        return normalized
 
     @field_validator("cors_allowed_origins", mode="before")
     @classmethod

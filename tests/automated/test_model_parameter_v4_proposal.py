@@ -25,6 +25,9 @@ from apps.agents.model_parameter_agent.flows.propose_parameters.nodes import (
     _build_value_proposal_prompt_packet,
     _merge_candidates_by_parameter,
     _partition_candidate_validation_work,
+    _routing_candidate_prompt_payload,
+    _routing_task_for_prompt,
+    _sanitize_llm_adjustments,
     _scenario_brief_for_value_prompt,
 )
 from apps.agents.model_parameter_agent.persistence.model_parameter_service import (
@@ -33,6 +36,10 @@ from apps.agents.model_parameter_agent.persistence.model_parameter_service impor
     _proposal_event_id,
 )
 from apps.agents.model_parameter_agent.presentation import _context_ids
+from apps.agents.model_parameter_agent.schemas.model_parameter_proposal import (
+    LLMValueAdjustment,
+    LLMValueCell,
+)
 from apps.agents.model_parameter_agent.utils.parameter_mapping import (
     MappingRule,
     ParameterDefinition,
@@ -47,6 +54,63 @@ from apps.persistence.model_impact_lever.schema import ModelImpactLeverPayload
 V4_STRATEGY = "multi_event_model_lever_dimensions"
 CATALOG_VERSION = "v4"
 CATALOG_CHECKSUM = "catalog-checksum-v4"
+
+
+@pytest.mark.parametrize(
+    ("proposed_value", "warning_fragment"),
+    [(4.5, "최대값"), (3.5, "정수 제약")],
+)
+def test_hurricane_step3_rejects_out_of_range_or_non_integer_values(
+    proposed_value: float,
+    warning_fragment: str,
+) -> None:
+    candidate_key = "parameter|12"
+    sanitized, warnings = _sanitize_llm_adjustments(
+        [
+            LLMValueAdjustment(
+                candidate_key=candidate_key,
+                slot_values=[
+                    LLMValueCell(slot_key="slot-1", proposed_value=proposed_value, rationale_ko="test"),
+                ],
+                rationale_ko="test",
+            ),
+        ],
+        [
+            {
+                "candidate_key": candidate_key,
+                "canonical_parameter_name": "HurricaneIntensity",
+                "proposal_constraints": {"minimum": 0, "maximum": 4, "integer_only": True},
+            },
+        ],
+        [
+            {
+                "candidate_key": candidate_key,
+                "slot_key": "slot-1",
+                "slot_axes": [
+                    {"axis_name": "Year", "axis_value": 2027},
+                    {"axis_name": "Month", "axis_value": 8},
+                ],
+            },
+        ],
+        [
+            {
+                "candidate_key": candidate_key,
+                "slot_key": "slot-1",
+                "axes": {"Year": 2027, "Month": 8},
+                "value": 0,
+                "reference_id": "test:hurricane",
+            },
+        ],
+        scenario_context={
+            "scenario_group": {
+                "api_version": "v4",
+                "generation_strategy": V4_STRATEGY,
+            },
+        },
+    )
+
+    assert sanitized == []
+    assert any(warning_fragment in warning for warning in warnings)
 
 
 def _parameter_definition(
@@ -94,6 +158,7 @@ def _binding(
     parameter_name: str,
     *,
     role: str = "primary",
+    selection_mode: str = "deterministic",
     applicability: str = "",
     support_status: str = "executable",
     unsupported_reason_code: str | None = None,
@@ -101,6 +166,7 @@ def _binding(
     return {
         "parameter_name": parameter_name,
         "role": role,
+        "selection_mode": selection_mode,
         "applicability": applicability,
         "support_status": support_status,
         "unsupported_reason_code": unsupported_reason_code,
@@ -535,6 +601,7 @@ def test_v4_service_load_context_skips_legacy_mapping_repository_and_uses_active
         group=group,
         group_repository=group_repository_cls.return_value,
         event_repository=event_repository_cls.return_value,
+        scenario_repository=scenario_repository_cls.return_value,
         impact_levers=impact_levers,
         catalog_version=CATALOG_VERSION,
         catalog_checksum=CATALOG_CHECKSUM,
@@ -546,7 +613,7 @@ def test_v4_service_load_context_skips_legacy_mapping_repository_and_uses_active
     session.close.assert_called_once_with()
 
 
-def test_v4_candidates_skip_step15_routing_prompt() -> None:
+def test_v4_multiple_deterministic_bindings_use_step15_routing_prompt() -> None:
     context = _load_context(selected_value_id="high")
     kb = _knowledge_base(
         _parameter_definition("GDP"),
@@ -563,9 +630,12 @@ def test_v4_candidates_skip_step15_routing_prompt() -> None:
     )
 
     assert warnings == []
-    assert deterministic == candidates
-    assert routing_tasks == []
-    assert packet["routing_tasks"] == []
+    assert [candidate["canonical_parameter_name"] for candidate in deterministic] == [
+        "User-Adjusted Gas Demand",
+    ]
+    assert len(routing_tasks) == 1
+    assert routing_tasks[0]["selection_mode"] == "deterministic"
+    assert len(packet["routing_tasks"]) == 1
 
 
 def test_v4_context_rejects_catalog_checksum_mismatch() -> None:
@@ -776,7 +846,7 @@ def test_v4_unchanged_only_lineage_has_no_change_candidate() -> None:
     assert "UNCHANGED_LEVER_STATE" in warnings[0]
 
 
-def test_v4_primary_and_alternative_bindings_are_deterministic_candidates() -> None:
+def test_v4_primary_and_alternative_bindings_form_one_deterministic_routing_task() -> None:
     economic_state = _lever_state(
         "economic_activity",
         101,
@@ -807,7 +877,7 @@ def test_v4_primary_and_alternative_bindings_are_deterministic_candidates() -> N
         candidates,
     )
 
-    assert deterministic == candidates
+    assert deterministic == []
     assert non_inputs == []
     assert warnings == []
     assert {(candidate["canonical_parameter_name"], candidate["binding_role"]) for candidate in candidates} == {
@@ -815,10 +885,12 @@ def test_v4_primary_and_alternative_bindings_are_deterministic_candidates() -> N
         ("Population", "alternative"),
     }
     assert all(candidate["mapping_method"] == "routing" for candidate in candidates)
-    assert routing_tasks == []
+    assert len(routing_tasks) == 1
+    assert routing_tasks[0]["selection_mode"] == "deterministic"
+    assert routing_tasks[0]["candidates"] == candidates
 
 
-def test_v4_deterministic_candidates_preserve_each_binding_lineage() -> None:
+def test_v4_deterministic_routing_task_preserves_each_binding_lineage() -> None:
     economic_state = _lever_state(
         "economic_activity",
         101,
@@ -842,12 +914,106 @@ def test_v4_deterministic_candidates_preserve_each_binding_lineage() -> None:
     )
     deterministic, routing_tasks = _partition_candidate_validation_work(candidates)
 
-    assert routing_tasks == []
-    assert {(item["canonical_parameter_name"], item["binding_role"]) for item in deterministic} == {
+    assert deterministic == []
+    assert len(routing_tasks) == 1
+    assert {(item["canonical_parameter_name"], item["binding_role"]) for item in routing_tasks[0]["candidates"]} == {
         ("GDP", "primary"),
         ("Population", "alternative"),
     }
-    assert all(item["lever_code"] == "economic_activity" for item in deterministic)
+    assert all(
+        item["lever_code"] == "economic_activity"
+        for item in routing_tasks[0]["candidates"]
+    )
+
+
+def test_v4_single_conditional_price_only_binding_routes_without_default() -> None:
+    state = _lever_state(
+        "inventory_condition",
+        110,
+        direction="decrease",
+        domain="price_only",
+        bindings=[
+            _binding(
+                "SupplyDisruption",
+                role="alternative",
+                selection_mode="conditional",
+                applicability="Country/Year/Month upstream supply cause is explicit.",
+            ),
+        ],
+    )
+    candidates, non_inputs, warnings = match_parameter_candidates(
+        _knowledge_base(_parameter_definition("SupplyDisruption")),
+        _matcher_context(_lineage("inventory_path", [state])),
+    )
+    deterministic, routing_tasks = _partition_candidate_validation_work(candidates)
+
+    assert non_inputs == []
+    assert warnings == []
+    assert deterministic == []
+    assert len(routing_tasks) == 1
+    assert routing_tasks[0]["selection_mode"] == "conditional"
+    assert candidates[0]["binding_selection_mode"] == "conditional"
+
+
+def test_v4_routing_prompt_deduplicates_large_binding_provenance() -> None:
+    repeated_provenance = [{"evidence": "x" * 8_000}]
+    candidate = {
+        "candidate_key": "inventory-supply",
+        "mapping_strategy": "v4",
+        "canonical_parameter_name": "SupplyDisruption",
+        "parameter_hint": "country/year/month upstream supply",
+        "semantic_axes": ["Country", "Year", "Month"],
+        "binding_role": "alternative",
+        "binding_selection_mode": "conditional",
+        "binding_applicability": "Explicit upstream supply cause only.",
+        "source_refs": repeated_provenance,
+        "approved_source_projections": repeated_provenance,
+        "binding_provenance": repeated_provenance,
+        "lever_provenance": repeated_provenance,
+    }
+
+    payload = _routing_candidate_prompt_payload(candidate)
+
+    assert payload["candidate_key"] == "inventory-supply"
+    assert payload["binding_applicability"] == "Explicit upstream supply cause only."
+    assert "source_refs" not in payload
+    assert "approved_source_projections" not in payload
+    assert "binding_provenance" not in payload
+    assert "lever_provenance" not in payload
+
+
+def test_v4_routing_prompt_keeps_shared_evidence_once_per_lever_task() -> None:
+    repeated_source = {"evidence": "x" * 8_000}
+    candidates = [
+        {
+            "candidate_key": f"inventory-{index}",
+            "mapping_strategy": "v4",
+            "canonical_parameter_name": parameter_name,
+            "binding_selection_mode": "conditional",
+            "binding_applicability": f"Applicability {index}",
+            "source_refs": [repeated_source],
+            "approved_source_projections": [repeated_source],
+            "lever_provenance": [repeated_source],
+            "source_dimensions": [{"source_dimension_id": "d1"}],
+        }
+        for index, parameter_name in enumerate(
+            ["GDP", "PMI", "PowerMix", "SupplyDisruption"],
+            start=1,
+        )
+    ]
+    task = {
+        "is_v4": True,
+        "selection_mode": "conditional",
+        "dimension_key": "v4|d1|d1v3|inventory_condition",
+        "lever_code": "inventory_condition",
+        "candidates": candidates,
+    }
+
+    payload = _routing_task_for_prompt(task)
+
+    assert payload["lever_context"]["source_refs"] == [repeated_source]
+    assert all("source_refs" not in candidate for candidate in payload["candidates"])
+    assert str(payload).count("x" * 8_000) == 3
 
 
 def test_v4_same_parameter_merges_all_event_dimension_and_lever_provenance() -> None:

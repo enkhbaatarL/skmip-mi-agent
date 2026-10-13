@@ -477,6 +477,7 @@ def test_v4_scenario_prompt_blocks_interaction_already_covered_by_dimension() ->
         impact_analysis=_analysis_with_interaction_question(),
         dimension_definitions=dimensions,
         validation_warnings=[],
+        analysis_as_of="2026-08-07",
     )
 
     d1 = prompt.split("### [D1]", maxsplit=1)[1].split("### [D2]", maxsplit=1)[0]

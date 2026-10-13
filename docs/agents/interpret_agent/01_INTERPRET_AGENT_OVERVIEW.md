@@ -1,5 +1,7 @@
 # Interpret Agent 처음 이해하기
 
+현재 Interpret Agent 런타임·OpenAPI 버전은 `v4.1.7`이다.
+
 ## 이 Agent는 무엇을 하나요?
 
 Interpret Agent는 Scenario별 수급모델 입력과 가격 예측 결과를 `MI Base`와 비교하고, 그 차이가 어떤 시장
@@ -27,9 +29,9 @@ Agent는 수치를 그대로 나열하는 데서 끝나지 않는다. 여러 입
 ```text
 1. Scenario Group ID와 선택적인 Scenario ID를 받는다
    ↓
-2. 저장된 Model Parameter proposal에서 MI Base 입력과 Scenario 입력을 읽는다
+2. 저장된 Model Parameter proposal에서 입력과 고정된 MI Base case ID를 읽는다
    ↓
-3. 완료된 수급모델 실행 결과에서 MI Base·Scenario 가격을 읽는다
+3. 고정된 MI Base case와 완료된 Scenario run의 가격을 읽고 snapshot 정합성을 검증한다
    ↓
 4. 같은 기간끼리 맞춰 입력·가격 차이와 이상 신호를 계산한다
    ↓
@@ -59,7 +61,8 @@ Scenario만 고를 수 있다. 이 목록을 비우거나 body를 생략하면, 
 ### MI Base
 
 Scenario를 비교하는 기준 입력과 기준 가격이다. Interpret Agent는 결과를 항상 `MI Base 대비`로 설명한다.
-MI Base의 절대값만 따로 평가하는 기능은 없다.
+MI Base의 절대값만 따로 평가하는 기능은 없다. `v4.1.7`은 각 Model Parameter proposal에 저장된
+`mi_base_case_id`를 사용하며, 한 요청의 모든 proposal이 같은 case를 가리킬 때만 실행한다.
 
 ### Model Parameter proposal
 
@@ -130,8 +133,9 @@ callback을 보내지 않는다.
 ### Plain text
 
 사용자에게 보이는 해석은 Markdown이나 HTML이 아닌 일반 텍스트 계약을 따른다. 프롬프트가 일반 텍스트를
-요구하고, 응답 schema가 남아 있는 표현용 서식도 한 번 더 제거한다. 문단 구분 개행과 Group synthesis의
-`■ ` 문자는 허용된다.
+요구하고, 응답 schema가 남아 있는 표현용 서식도 한 번 더 제거한다. heading·중첩 인용·목록·표·link·강조·
+code 표식과 정상·인코딩·불완전 HTML을 정규화하며 `script`, `style` 같은 비표시 내용도 버린다. 문단 구분
+개행, `• ` 일반 텍스트 bullet과 Group synthesis의 `■ ` 문자는 허용된다.
 
 ## 사용자는 어떤 결과를 보나요?
 
@@ -153,11 +157,14 @@ preview 결과는 다음 공통 정보를 함께 제공한다.
 - 기준 ID인 `MI Base`
 - 실제 proposal에서 발견한 Feature 이름
 - 고정 가격 지수 순서 `JKM`, `TTF`, `HH`
-- 월간 Feature와 가격 자료를 합쳐 계산한 전체 표시 기간
+- 수급모델 월별 가격 결과의 실제 시작·종료 기간
 - 가격 단위 `$/MMBtu`
 
 `meta.indices`는 해석 설정의 고정 지수 목록이다. 특정 지수의 DB 시계열이 없더라도 현재 구현은 이 목록 자체를
 줄이지 않는다.
+
+`meta.periodStart`와 `meta.periodEnd`는 가격 화면과 같은 수급모델 monthly 축을 따른다. 예를 들어 모델 결과가
+2026년 4월부터 2030년 12월까지라면 각각 `2026-04`, `2030-12`이며, 첫해가 1월부터 시작한다고 보정하지 않는다.
 
 ## 두 가지 실행 방식
 
@@ -186,6 +193,39 @@ Interpret Agent의 업무 흐름은 DB read-only다.
 
 callback 전송에 실패하면 로그만 남고, 다시 조회할 Interpret operation ID나 결과 row는 만들어지지 않는다.
 일반적인 durable retry·polling·replay API도 현재 없다.
+
+## 설정 파일과 Neuro 배포
+
+Interpret Agent는 별도 설정 loader를 만들지 않고 공통 `Settings`를 사용한다. 파일별 역할은 다음과 같다.
+
+| 파일 | 역할 | Neuro 관계 |
+| --- | --- | --- |
+| `apps/common/configs/config.py` | YAML·환경변수를 읽는 schema, 기본값, 타입·범위 검증 | Agent 이미지에 포함되며 Neuro에서도 반드시 사용된다 |
+| `envs/config.yaml` | 로컬 실행 설정이자 `Dockerfile_interpret`가 이미지의 `/workdir/config.yaml`로 복사하는 기본 설정 | 외부 ConfigMap mount가 없을 때의 image fallback이다 |
+| Neuro ConfigMap·Secret(저장소 외부 관리) | Interpret 전용 runtime 설정과 credential | Neuro 관리 화면에서 직접 관리하며, 저장소나 로컬 작업 사본을 source of truth로 두지 않는다 |
+| `devops/k8s/configmap.yaml` | 여러 Agent가 공유하는 일반 Kubernetes 예시 | Interpret 전용 Neuro 설정의 source of truth가 아니며 전용 설정 정리를 위해 수정하지 않는다 |
+
+`APP_CONFIG`는 실제 읽을 YAML 경로를 정한다. 현재 Interpret 이미지와 Kubernetes 예시는
+`/workdir/config.yaml`을 사용한다. Neuro에서 ConfigMap을 같은 경로에 mount하면 이미지에 복사된
+`envs/config.yaml`보다 mount된 설정이 우선한다. 다만 설정을 해석하는 `config.py`와 Agent 코드는 여전히
+이미지의 것이므로 code/schema 변경에는 새 이미지가 필요하다.
+
+Interpret 전용 Neuro 설정에는 다음 영역만 둔다.
+
+- Metadata DB 연결·pool
+- AI model endpoint·deployment와 LLM/HTTP runtime 제한
+- `agents.interpret_agent` profile과 MLflow 연결
+- callback OAuth2, `callback_base_url`, `callback_price_interpretations_path`, `skip_callback`
+- logging
+
+MCP pool, RDB search, Scenario Group admin, `model_parameter_*`, 다른 Agent profile, 가격 해석 외 callback path는
+현재 Interpret flow가 읽지 않으므로 전용 설정에서 제외한다. `ai_platform_host_url`과 `api_key`는 현재 Interpret
+flow가 VDB를 호출하지 않더라도 공통 `Settings`의 필수 호환 필드라 유지한다.
+
+`llm_max_retries`는 공통 schema에 필드가 있지만 현재 Interpret structured-output 호출이 읽지 않는다. 현재
+실효 retry는 LLM connector 호출 기본값 `2`이므로, 배포자가 `llm_max_retries` 값이 적용된다고 오해하지 않도록
+전용 설정에는 선언하지 않는다. 이 값을 실제 운영 knob로 만들려면 connector 호출 계약을 별도로 변경하고
+회귀 테스트를 추가해야 한다.
 
 ## 이 Agent가 하지 않는 일
 
@@ -237,6 +277,10 @@ callback 전송에 실패하면 로그만 남고, 다시 조회할 Interpret ope
 7. `apps/agents/interpret_agent/prompts/`: Scenario 해석과 Group 종합 지시문
 8. `apps/persistence/model_parameter/repository.py`: proposal 조회
 9. `apps/persistence/model_result/repository.py`: 모델 결과 가격 read-only SQL
+10. `apps/common/configs/config.py`: 공통 설정 schema·기본값·`APP_CONFIG` loader
+
+Neuro runtime 설정은 저장소 파일이 아니라 Neuro 관리 화면에서 확인한다. 검토 목적으로 설정을 임시
+반출하더라도 저장소 안에 보관하지 않고 검토 직후 삭제한다.
 
 코드를 변경하기 전에는 [AGENTS.md](../../../AGENTS.md)와
 [Python conventions](../../../.claude/rules/python-conventions.md)를 함께 확인한다.

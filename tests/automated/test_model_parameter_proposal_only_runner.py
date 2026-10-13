@@ -11,7 +11,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from tests.manual.model_parameter_agent import run_proposal_only as runner
+from tests.manual.model_parameter_agent import evaluate_proposals, run_proposal_only as runner
 
 
 def _context(
@@ -20,6 +20,8 @@ def _context(
     api_version: str = "v4",
     strategy: str = runner.V4_STRATEGY,
     scenario_group_id: int | None = None,
+    catalog_version: str = "v4.1",
+    catalog_checksum: str = runner.EXPECTED_V4_1_CATALOG_CHECKSUM,
 ) -> dict[str, object]:
     resolved_group_id = scenario_group_id or scenario_id + 1_000
     return {
@@ -37,8 +39,8 @@ def _context(
             "generation_strategy": strategy,
             "status": "created",
             "stage": "completed",
-            "impact_catalog_version": "v4",
-            "impact_catalog_checksum": runner.EXPECTED_0032_CATALOG_CHECKSUM,
+            "impact_catalog_version": catalog_version,
+            "impact_catalog_checksum": catalog_checksum,
         },
         "events": [
             {
@@ -48,8 +50,8 @@ def _context(
                 "detail_analysis": "baseline event detail",
             },
         ],
-        "impact_catalog_version": "v4",
-        "impact_catalog_checksum": runner.EXPECTED_0032_CATALOG_CHECKSUM,
+        "impact_catalog_version": catalog_version,
+        "impact_catalog_checksum": catalog_checksum,
     }
 
 
@@ -85,6 +87,7 @@ def _options(
     *scenario_ids: int,
     execute: bool = True,
     scenario_group_id: int | None = None,
+    replay_covered: bool = False,
 ) -> runner.ProposalOnlyOptions:
     return runner.ProposalOnlyOptions(
         execute=execute,
@@ -92,12 +95,15 @@ def _options(
         scenario_group_id=scenario_group_id,
         capability_release=runner.BASELINE_CAPABILITY_RELEASE,
         evidence_path=tmp_path / "proposal-only.json",
+        replay_covered=replay_covered,
     )
 
 
 def _quality_evidence(
     *,
     errors: tuple[str, ...] = (),
+    catalog_version: str = "v4.1",
+    catalog_checksum: str = runner.EXPECTED_V4_1_CATALOG_CHECKSUM,
     runtime_candidates: tuple[dict[str, object], ...] = (
         {
             "candidate_key": "gdp-candidate",
@@ -107,13 +113,109 @@ def _quality_evidence(
 ) -> SimpleNamespace:
     return SimpleNamespace(
         errors=errors,
-        active_catalog_version="v4",
-        active_catalog_checksum=runner.EXPECTED_0032_CATALOG_CHECKSUM,
+        active_catalog_version=catalog_version,
+        active_catalog_checksum=catalog_checksum,
         raw_candidates=runtime_candidates,
         runtime_candidates=runtime_candidates,
         blocked_candidates=(),
         dimension_lineage=(),
     )
+
+
+def _v4_routing_candidate(candidate_key: str, *, with_evidence: bool = True) -> dict[str, object]:
+    raw_candidate_key = f"raw-{candidate_key}"
+    candidate: dict[str, object] = {
+        "candidate_key": candidate_key,
+        "mapping_method": "routing",
+        "mapping_strategy": "v4",
+        "merged_candidate_keys": [raw_candidate_key],
+    }
+    if with_evidence:
+        candidate["routing_evidence"] = [
+            {
+                "candidate_key": raw_candidate_key,
+                "decision": "DIRECT",
+                "evidence_basis": "DERIVED",
+                "causal_path_ko": "독립 인과 경로",
+                "target_scope_ko": "독립 적용 대상",
+                "direction": "decrease",
+                "time_scope_ko": "2026년",
+                "confidence": "high",
+                "rationale_ko": "후보별 근거를 확인했습니다.",
+            },
+        ]
+    return candidate
+
+
+def test_v4_all_selected_routing_candidates_pass_with_independent_evidence() -> None:
+    candidates = [
+        _v4_routing_candidate("candidate-a"),
+        _v4_routing_candidate("candidate-b"),
+    ]
+    result = {
+        "parameter_adjustments": [
+            {"candidate_key": "candidate-a"},
+            {"candidate_key": "candidate-b"},
+        ],
+    }
+
+    status, messages = evaluate_proposals._review_routing_selection(  # noqa: SLF001
+        1925,
+        candidates,
+        result,
+    )
+
+    assert status == "PASS"
+    assert messages == []
+
+
+def test_v4_all_selected_routing_candidates_review_missing_independent_evidence() -> None:
+    candidates = [
+        _v4_routing_candidate("candidate-a"),
+        _v4_routing_candidate("candidate-b", with_evidence=False),
+    ]
+    result = {
+        "parameter_adjustments": [
+            {"candidate_key": "candidate-a"},
+            {"candidate_key": "candidate-b"},
+        ],
+    }
+
+    status, messages = evaluate_proposals._review_routing_selection(  # noqa: SLF001
+        1925,
+        candidates,
+        result,
+    )
+
+    assert status == "REVIEW"
+    assert messages == [
+        "v4 routing 후보가 모두 selected이지만 독립 applicability 근거가 누락되었습니다: "
+        "candidate_keys=['candidate-b']",
+    ]
+
+
+def test_legacy_all_selected_routing_candidates_still_require_review() -> None:
+    candidates = [
+        {"candidate_key": "candidate-a", "mapping_method": "routing"},
+        {"candidate_key": "candidate-b", "mapping_method": "routing"},
+    ]
+    result = {
+        "parameter_adjustments": [
+            {"candidate_key": "candidate-a"},
+            {"candidate_key": "candidate-b"},
+        ],
+    }
+
+    status, messages = evaluate_proposals._review_routing_selection(  # noqa: SLF001
+        100,
+        candidates,
+        result,
+    )
+
+    assert status == "REVIEW"
+    assert messages == [
+        "routing 후보가 모두 selected입니다. DB scenario dimension에 따른 선택/제외 사유 검토가 필요합니다.",
+    ]
 
 
 def test_parser_accepts_repeatable_scenario_ids_and_defaults_to_read_only(tmp_path: Path) -> None:
@@ -133,8 +235,56 @@ def test_parser_accepts_repeatable_scenario_ids_and_defaults_to_read_only(tmp_pa
 
     assert options.execute is False
     assert options.scenario_ids == (101, 102)
+    assert options.required_mi_base_fallback_mode is None
     with pytest.raises(ValueError, match="duplicate --scenario-id"):
         asyncio.run(runner.run_campaign(_options(tmp_path, 101, 101)))
+
+
+def test_required_mi_base_fallback_mode_blocks_before_resource_or_scenario_work(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    resource_manifest = runner._resource_manifest()  # noqa: SLF001
+    fallback_policy = SimpleNamespace(
+        model_dump=lambda **_kwargs: {
+            "no_active_case_mode": "fail",
+            "active_case_unavailable_mode": "verified_cache",
+        },
+    )
+    monkeypatch.setattr(runner, "_resource_manifest", lambda: resource_manifest)
+    monkeypatch.setattr(
+        runner,
+        "get_settings",
+        lambda: SimpleNamespace(
+            model_parameter_mi_base_fallback=fallback_policy,
+            model_dump=lambda **_kwargs: {},
+        ),
+    )
+    options = runner.ProposalOnlyOptions(
+        execute=True,
+        scenario_ids=(101,),
+        scenario_group_id=None,
+        capability_release=runner.BASELINE_CAPABILITY_RELEASE,
+        evidence_path=tmp_path / "fallback-mismatch.json",
+        required_mi_base_fallback_mode="configured_fallback",
+    )
+    dependencies = runner.RunnerDependencies(
+        load_context=lambda _scenario_id: (_ for _ in ()).throw(AssertionError("must not load context")),
+        snapshot_proposal_rows=lambda _group_id, _scenario_ids: (),
+        evaluate_scenario=lambda _scenario_id: (_ for _ in ()).throw(AssertionError("must not evaluate")),
+        fetch_proposal=lambda _proposal_id: {},
+        failure_trace=lambda _exc: {},
+        prepare_resources=lambda: (_ for _ in ()).throw(AssertionError("must not prepare resources")),
+    )
+
+    evidence = asyncio.run(runner.run_campaign(options, dependencies=dependencies))
+
+    assert evidence["status"] == "BLOCKED"
+    assert evidence["attempts"] == []
+    assert evidence["manifest"]["required_mi_base_fallback_mode"] == "configured_fallback"
+    assert evidence["selection"]["errors"] == [
+        "MI Base fallback mode mismatch: required='configured_fallback', actual='verified_cache'",
+    ]
 
 
 def test_evidence_path_is_reserved_exclusively(tmp_path: Path) -> None:
@@ -146,6 +296,20 @@ def test_evidence_path_is_reserved_exclusively(tmp_path: Path) -> None:
     with pytest.raises(FileExistsError):
         runner._reserve_evidence_path(path, {"status": "SHOULD_NOT_OVERWRITE"})  # noqa: SLF001
     assert json.loads(path.read_text(encoding="utf-8"))["status"] == "RESERVED"
+
+
+def test_config_snapshot_captures_local_neuro_and_runtime_without_secrets() -> None:
+    snapshot = runner._model_parameter_config_snapshot()  # noqa: SLF001
+
+    assert snapshot["top_level_key_parity"] is True
+    for section in ("local_declared", "neuro_declared", "runtime_effective"):
+        values = snapshot[section]
+        assert values["model_parameter_proposal_flow_release"] == "v4.1.7"
+        assert values["model_parameter_variation_profile_enabled"] is True
+        assert values["model_parameter_grounded_slot_recovery_enabled"] is True
+        storage = values["model_parameter_resource_storage"]
+        assert storage["access_key_id"] == "<redacted>"
+        assert storage["secret_access_key"] == "<redacted>"
 
 
 @pytest.mark.parametrize(
@@ -212,6 +376,32 @@ def test_uncovered_guard_hard_stops_identity_mismatch() -> None:
     assert result["decision"] == "HARD_STOP"
     assert result["reason_code"] == "PROPOSAL_GUARD_IDENTITY_MISMATCH"
     assert result["hard_stop"] is True
+
+
+def test_release_replay_allows_proposed_but_not_confirmed_or_processing() -> None:
+    proposed = runner._classify_uncovered_guard(  # noqa: SLF001
+        scenario_id=101,
+        scenario_group_id=1_101,
+        rows=(_proposal_row(101, 1, status="PROPOSED"),),
+        replay_covered=True,
+    )
+    confirmed = runner._classify_uncovered_guard(  # noqa: SLF001
+        scenario_id=101,
+        scenario_group_id=1_101,
+        rows=(_proposal_row(101, 2, status="CONFIRMED"),),
+        replay_covered=True,
+    )
+    processing = runner._classify_uncovered_guard(  # noqa: SLF001
+        scenario_id=101,
+        scenario_group_id=1_101,
+        rows=(_proposal_row(101, 3, status="PROCESSING"),),
+        replay_covered=True,
+    )
+
+    assert proposed["reason_code"] == "PROPOSED_RELEASE_REPLAY"
+    assert proposed["eligible"] is True
+    assert confirmed["eligible"] is False
+    assert processing["hard_stop"] is True
 
 
 def test_read_only_default_discovers_without_evaluating_or_writing(tmp_path: Path) -> None:
@@ -710,7 +900,7 @@ def test_exact_v4_strategy_preflight_blocks_every_write(tmp_path: Path) -> None:
     assert [item["status"] for item in evidence["preflight"]] == ["PASS", "FAIL"]
 
 
-def test_approved_release_requires_exact_0032_catalog_pin(tmp_path: Path) -> None:
+def test_approved_release_requires_exact_v4_1_catalog_pin(tmp_path: Path) -> None:
     stale_context = _context(101)
     stale_context["scenario_group"]["impact_catalog_checksum"] = "a" * 64  # type: ignore[index]
     dependencies = runner.RunnerDependencies(
@@ -734,6 +924,42 @@ def test_approved_release_requires_exact_0032_catalog_pin(tmp_path: Path) -> Non
     assert any("approved capability release" in error for error in evidence["preflight"][0]["errors"])
 
 
+def test_v8_compat_release_accepts_existing_v4_0_catalog_pin(tmp_path: Path) -> None:
+    context = _context(
+        101,
+        catalog_version="v4.0",
+        catalog_checksum=runner.EXPECTED_V4_0_CATALOG_CHECKSUM,
+    )
+    options = runner.ProposalOnlyOptions(
+        execute=False,
+        scenario_ids=(101,),
+        scenario_group_id=None,
+        capability_release="extend16-v8-v4.0-compat",
+        evidence_path=tmp_path / "v4-0-compat.json",
+    )
+    dependencies = runner.RunnerDependencies(
+        load_context=lambda _scenario_id: context,
+        snapshot_proposal_rows=lambda _group_id, _scenario_ids: (),
+        evaluate_scenario=lambda _scenario_id: (_ for _ in ()).throw(
+            AssertionError("read-only campaign must not execute"),
+        ),
+        fetch_proposal=lambda _proposal_id: {},
+        failure_trace=lambda _exc: {},
+        build_quality_evidence=lambda _scenario_id, _context_value: _quality_evidence(
+            catalog_version="v4.0",
+            catalog_checksum=runner.EXPECTED_V4_0_CATALOG_CHECKSUM,
+        ),
+    )
+
+    evidence = asyncio.run(
+        runner.run_campaign(options, dependencies=dependencies),
+    )
+
+    assert evidence["status"] == "PASS"
+    assert evidence["preflight"][0]["stored_catalog_version"] == "v4.0"
+    assert evidence["preflight"][0]["active_catalog_version"] == "v4.0"
+
+
 def test_approved_release_blocks_runtime_allowlist_drift_before_database(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -741,7 +967,7 @@ def test_approved_release_blocks_runtime_allowlist_drift_before_database(
     monkeypatch.setattr(
         runner,
         "RUNTIME_PROPOSAL_CAPABILITY_NAMES",
-        frozenset({*runner.EXPECTED_EXTEND7_ALLOWLIST, "ShippingCost"}),
+        frozenset({*runner.EXPECTED_EXTEND16_ALLOWLIST, "RemainingUnrestrictedAmount"}),
     )
 
     dependencies = runner.RunnerDependencies(
@@ -1003,6 +1229,8 @@ def test_successful_scenarios_execute_once_sequentially_and_update_sanitized_evi
         ("evaluate", 102),
         ("fetch", 102),
         ("snapshot", 102),
+        ("fetch", 101),
+        ("fetch", 102),
     ]
     assert write_attempt_counts[-3:] == [1, 2, 2]
     serialized = _options(tmp_path, 101, 102).evidence_path.read_text(encoding="utf-8")
@@ -1017,10 +1245,148 @@ def test_successful_scenarios_execute_once_sequentially_and_update_sanitized_evi
         "processing_policy": "any active PROCESSING row hard-stops the entire campaign",
         "required_api_version": "v4",
         "required_generation_strategy": runner.V4_STRATEGY,
+        "scenario_failure_policy": "isolate ABSTAINED/FAIL and continue; BLOCKED hard-stops the campaign",
         "sequential": True,
         "single_worker_best_effort": True,
         "uncovered_only": True,
+        "append_only_release_replay": False,
+        "existing_proposal_rows_preserved": True,
     }
+
+
+def test_scenario_failure_is_isolated_and_later_candidate_executes_once(tmp_path: Path) -> None:
+    history = {
+        101: [_proposal_row(101, 400, status="FAILED")],
+        102: [_proposal_row(102, 401, status="FAILED")],
+    }
+    evaluated: list[int] = []
+
+    def snapshot(_scenario_group_id: int, scenario_ids: object) -> tuple[dict[str, object], ...]:
+        scenario_id = int(next(iter(scenario_ids)))  # type: ignore[arg-type]
+        return tuple(history[scenario_id])
+
+    async def evaluate(scenario_id: int) -> dict[str, object]:
+        evaluated.append(scenario_id)
+        if scenario_id == 101:
+            message = "semantic proposal failure"
+            raise RuntimeError(message)
+        history[scenario_id].append(_proposal_row(scenario_id, 502))
+        return {
+            "final_response": {
+                "status": "success",
+                "message": "done",
+                "data": {
+                    "modelParamProposalId": 502,
+                    "scenarioId": scenario_id,
+                    "scenarioGroupId": scenario_id + 1_000,
+                    "eventId": None,
+                    "proposalParameters": [{"parameterName": "GDP"}],
+                },
+            },
+        }
+
+    dependencies = runner.RunnerDependencies(
+        load_context=_context,
+        snapshot_proposal_rows=snapshot,
+        evaluate_scenario=evaluate,
+        fetch_proposal=lambda proposal_id: _proposal_row(102, int(proposal_id or 0)),
+        failure_trace=lambda _exc: {},
+    )
+
+    evidence = asyncio.run(
+        runner.run_campaign(
+            _options(tmp_path, 101, 102),
+            dependencies=dependencies,
+        ),
+    )
+
+    assert evidence["status"] == "FAIL"
+    assert evaluated == [101, 102]
+    assert [attempt["status"] for attempt in evidence["attempts"]] == ["FAIL", "PASS"]
+    assert evidence["selection"]["counts"]["attempted"] == 2
+    assert evidence["selection"]["counts"]["succeeded"] == 1
+    assert evidence["selection"]["counts"]["failed"] == 1
+
+
+def test_structured_semantic_empty_is_abstained_with_complete_trace(tmp_path: Path) -> None:
+    history = {101: [_proposal_row(101, 400, status="FAILED")]}
+
+    def snapshot(_scenario_group_id: int, scenario_ids: object) -> tuple[dict[str, object], ...]:
+        scenario_id = int(next(iter(scenario_ids)))  # type: ignore[arg-type]
+        return tuple(history[scenario_id])
+
+    async def evaluate(_scenario_id: int) -> dict[str, object]:
+        raise runner.ModelParameterSemanticEmptyError(
+            reason_code="ABSTAINED_INSUFFICIENT_EVIDENCE",
+            stage="step1_5",
+            title="파라미터로 반영할 변경 항목이 없습니다.",
+            detail="시나리오 근거가 부족합니다.",
+        )
+
+    def failure_trace(_exc: BaseException) -> dict[str, object]:
+        return {
+            "failed_stage": "semantic abstention: step1_5",
+            "semantic_empty": {
+                "reason_code": "ABSTAINED_INSUFFICIENT_EVIDENCE",
+                "stage": "step1_5",
+                "message": "safe",
+            },
+            "semantic_stage_evidence": {
+                "stage": "step1_5",
+                "routing_tasks": [],
+                "prompt": "MUST_NOT_BE_WRITTEN",
+            },
+            "step_summary": {"termination_stage": "Step1.5 종료"},
+            "trace_mi_base_resource": {
+                "source": "configured_fallback",
+                "case_id": 15,
+                "run_seq": 71,
+                "workbook_sha256": {
+                    "demand": "demand-sha256",
+                    "supply": "supply-sha256",
+                    "trade": "trade-sha256",
+                },
+            },
+            "llm_calls": [
+                {
+                    "step": "Step1.5 routing selection",
+                    "success": True,
+                    "usage": {"total_tokens": 42},
+                },
+            ],
+            "observability_complete": True,
+            "partial_state_captured": True,
+            "proposal_persisted": False,
+        }
+
+    evidence = asyncio.run(
+        runner.run_campaign(
+            _options(tmp_path, 101),
+            dependencies=runner.RunnerDependencies(
+                load_context=_context,
+                snapshot_proposal_rows=snapshot,
+                evaluate_scenario=evaluate,
+                fetch_proposal=lambda _proposal_id: {},
+                failure_trace=failure_trace,
+            ),
+        ),
+    )
+
+    assert evidence["status"] == "REVIEW"
+    assert evidence["selection"]["counts"]["abstained"] == 1
+    assert evidence["selection"]["counts"]["failed"] == 0
+    attempt = evidence["attempts"][0]
+    assert attempt["status"] == "ABSTAINED"
+    assert attempt["semantic_empty"] == {
+        "reason_code": "ABSTAINED_INSUFFICIENT_EVIDENCE",
+        "stage": "step1_5",
+        "message": "파라미터로 반영할 변경 항목이 없습니다.\n시나리오 근거가 부족합니다.",
+        "structured": True,
+        "observability_complete": True,
+    }
+    assert attempt["failure_trace"]["llm_calls"][0]["usage"]["total_tokens"] == 42
+    assert attempt["failure_trace"]["trace_mi_base_resource"]["source"] == "configured_fallback"
+    assert "MUST_NOT_BE_WRITTEN" not in _options(tmp_path, 101).evidence_path.read_text(encoding="utf-8")
 
 
 def test_second_campaign_skips_proposed_row_created_by_first_campaign(tmp_path: Path) -> None:
@@ -1079,6 +1445,53 @@ def test_second_campaign_skips_proposed_row_created_by_first_campaign(tmp_path: 
     assert evaluated == [101]
 
 
+def test_release_replay_appends_one_new_row_and_pins_final_campaign_readback(
+    tmp_path: Path,
+) -> None:
+    history = [_proposal_row(101, 700)]
+
+    async def evaluate(scenario_id: int) -> dict[str, object]:
+        history.append(_proposal_row(scenario_id, 701))
+        return {
+            "final_response": {
+                "status": "success",
+                "message": "done",
+                "data": {
+                    "modelParamProposalId": 701,
+                    "scenarioId": scenario_id,
+                    "scenarioGroupId": scenario_id + 1_000,
+                    "eventId": None,
+                    "proposalParameters": [{"parameterName": "GDP"}],
+                },
+            },
+        }
+
+    dependencies = runner.RunnerDependencies(
+        load_context=_context,
+        snapshot_proposal_rows=lambda _group_id, _scenario_ids: tuple(history),
+        evaluate_scenario=evaluate,
+        fetch_proposal=lambda proposal_id: next(
+            dict(row) for row in history if row["model_param_proposal_id"] == proposal_id
+        ),
+        failure_trace=lambda _exc: {},
+    )
+
+    evidence = asyncio.run(
+        runner.run_campaign(
+            _options(tmp_path, 101, replay_covered=True),
+            dependencies=dependencies,
+        ),
+    )
+
+    assert evidence["status"] == "PASS"
+    assert [row["model_param_proposal_id"] for row in history] == [700, 701]
+    assert evidence["manifest"]["execution_policy_version"] == "release-replay-v1"
+    assert evidence["safety"]["append_only_release_replay"] is True
+    assert evidence["selection"]["preexisting_proposal_scenario_ids"] == [101]
+    assert evidence["selection"]["campaign_proposal_ids_by_scenario"] == {"101": 701}
+    assert [row["model_param_proposal_id"] for row in evidence["final_campaign_readback"]] == [701]
+
+
 def test_success_integrity_rejects_empty_or_mismatched_persisted_payload() -> None:
     row = _proposal_row(101, 777)
     row["proposal_parameters"] = []
@@ -1104,6 +1517,147 @@ def test_success_integrity_rejects_empty_or_mismatched_persisted_payload() -> No
     )
 
     assert "proposal DB row contains no proposal_parameters" in errors
+    assert "proposal DB payload does not match the API response after excluding lutValue" in errors
+
+
+def test_success_integrity_applies_persistence_precision_to_basecase_values() -> None:
+    row = _proposal_row(101, 779)
+    row["proposal_parameters"] = [
+        {
+            "parameterName": "PowerMix",
+            "values": [
+                {
+                    "Country": "Japan",
+                    "Year": 2026,
+                    "basecaseValue": 0.03562,
+                    "proposedValue": 0.04062525965932699,
+                },
+            ],
+        },
+    ]
+
+    errors = runner._success_integrity_errors(  # noqa: SLF001
+        scenario_id=101,
+        scenario_group_id=1_101,
+        model_param_proposal_id=779,
+        new_proposal_ids=(779,),
+        proposal_row=row,
+        readback_error=None,
+        final_response={
+            "status": "success",
+            "data": {
+                "modelParamProposalId": 779,
+                "scenarioId": 101,
+                "scenarioGroupId": 1_101,
+                "eventId": None,
+                "proposalParameters": [
+                    {
+                        "parameterName": "PowerMix",
+                        "values": [
+                            {
+                                "Country": "Japan",
+                                "Year": 2026,
+                                "basecaseValue": 0.03562525965932699,
+                                "lutValue": 0.03562525965932699,
+                                "proposedValue": 0.04062525965932699,
+                            },
+                        ],
+                    },
+                ],
+            },
+        },
+        allowed_parameter_names={"PowerMix"},
+    )
+
+    assert errors == []
+
+
+def test_success_integrity_tolerates_json_float_round_trip_noise() -> None:
+    row = _proposal_row(101, 780)
+    row["proposal_parameters"] = [
+        {
+            "parameterName": "PowerMix",
+            "values": [
+                {
+                    "Country": "Japan",
+                    "Year": 2026,
+                    "basecaseValue": 0.11247,
+                    "proposedValue": 0.11247403406730376,
+                },
+            ],
+        },
+    ]
+
+    errors = runner._success_integrity_errors(  # noqa: SLF001
+        scenario_id=101,
+        scenario_group_id=1_101,
+        model_param_proposal_id=780,
+        new_proposal_ids=(780,),
+        proposal_row=row,
+        readback_error=None,
+        final_response={
+            "status": "success",
+            "data": {
+                "modelParamProposalId": 780,
+                "scenarioId": 101,
+                "scenarioGroupId": 1_101,
+                "eventId": None,
+                "proposalParameters": [
+                    {
+                        "parameterName": "PowerMix",
+                        "values": [
+                            {
+                                "Country": "Japan",
+                                "Year": 2026,
+                                "basecaseValue": 0.11247403406730375,
+                                "lutValue": 0.11247403406730375,
+                                "proposedValue": 0.11247403406730375,
+                            },
+                        ],
+                    },
+                ],
+            },
+        },
+        allowed_parameter_names={"PowerMix"},
+    )
+
+    assert errors == []
+
+
+def test_success_integrity_rejects_material_proposed_value_difference() -> None:
+    row = _proposal_row(101, 781)
+    row["proposal_parameters"] = [
+        {
+            "parameterName": "GDP",
+            "values": [{"Year": 2026, "proposedValue": 4.1}],
+        },
+    ]
+
+    errors = runner._success_integrity_errors(  # noqa: SLF001
+        scenario_id=101,
+        scenario_group_id=1_101,
+        model_param_proposal_id=781,
+        new_proposal_ids=(781,),
+        proposal_row=row,
+        readback_error=None,
+        final_response={
+            "status": "success",
+            "data": {
+                "modelParamProposalId": 781,
+                "scenarioId": 101,
+                "scenarioGroupId": 1_101,
+                "eventId": None,
+                "proposalParameters": [
+                    {
+                        "parameterName": "GDP",
+                        "values": [{"Year": 2026, "proposedValue": 4.2}],
+                    },
+                ],
+            },
+        },
+        allowed_parameter_names={"GDP"},
+    )
+
     assert "proposal DB payload does not match the API response after excluding lutValue" in errors
 
 
@@ -1271,4 +1825,39 @@ def test_runtime_evaluator_checks_frozen_graph_context_before_persistence() -> N
     assert source.index('raw_state.get("scenario_context")') < source.index("_serialize_output_with_persistence_trace")
     assert source.index("proposal pre-persistence quality gate failed") < source.index(
         "_serialize_output_with_persistence_trace",
+    )
+
+
+def test_frozen_graph_context_ignores_only_request_local_mi_base_pin() -> None:
+    expected = _context(101)
+    actual = json.loads(json.dumps(expected))
+    actual["mi_base_case_id"] = 15
+
+    assert evaluate_proposals._matches_frozen_graph_context(actual, expected)  # noqa: SLF001
+
+    actual["scenario"]["title"] = "mutated title"  # type: ignore[index]
+    assert not evaluate_proposals._matches_frozen_graph_context(actual, expected)  # noqa: SLF001
+
+
+def test_post_graph_trace_allows_only_mi_base_transport_source_change() -> None:
+    graph_identity = {
+        "source": "mi_base",
+        "case_id": 15,
+        "run_seq": 71,
+        "workbook_sha256": {"demand": "a", "supply": "b", "trade": "c"},
+    }
+    cache_identity = {
+        **graph_identity,
+        "source": "verified_cache",
+    }
+
+    assert evaluate_proposals._same_mi_base_content_identity(  # noqa: SLF001
+        graph_identity,
+        cache_identity,
+    )
+
+    cache_identity["workbook_sha256"] = {"demand": "changed", "supply": "b", "trade": "c"}
+    assert not evaluate_proposals._same_mi_base_content_identity(  # noqa: SLF001
+        graph_identity,
+        cache_identity,
     )

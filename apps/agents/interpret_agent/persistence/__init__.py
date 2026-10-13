@@ -1,5 +1,5 @@
 """interpret_agent 유스케이스 persistence 계층.
 
-현재는 temp_data 샘플 파일에서 입력을 로드하지만, 추후 공유 DB(repository)
-기반으로 교체할 수 있도록 service 경계를 유지한다.
+Model Parameter proposal과 외부 수급모델 가격 결과를 read-only repository로 읽고,
+Interpret flow가 소비하는 pinned input snapshot으로 조립한다.
 """

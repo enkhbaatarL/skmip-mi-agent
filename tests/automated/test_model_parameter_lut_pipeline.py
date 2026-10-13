@@ -203,6 +203,16 @@ def test_prompt_and_request_limit_settings_have_safe_defaults() -> None:
     assert Settings.model_fields["model_parameter_max_total_selected_slots"].default == 300
     assert Settings.model_fields["model_parameter_max_step2_prompt_bytes"].default == 262_144
     assert Settings.model_fields["model_parameter_max_step3_prompt_bytes"].default == 262_144
+    assert Settings.model_fields["model_parameter_proposal_flow_release"].default == "v4.1.7"
+    assert Settings.model_fields["model_parameter_max_routing_candidates_per_dimension"].default == 2
+    assert Settings.model_fields["model_parameter_v4_max_routing_candidates_per_dimension"].default == 3
+    assert Settings.model_fields["model_parameter_max_conditional_parameters_per_scenario"].default == 4
+    assert Settings.model_fields["model_parameter_variation_mode"].default == "balanced"
+    assert Settings.model_fields["model_parameter_variation_profile_enabled"].default is True
+    assert Settings.model_fields["model_parameter_grounded_slot_recovery_enabled"].default is True
+    assert Settings.model_fields["model_parameter_transient_retry_max_attempts"].default == 2
+    assert Settings.model_fields["model_parameter_transient_retry_base_delay_seconds"].default == 0.5
+    assert Settings.model_fields["model_parameter_transient_retry_max_jitter_seconds"].default == 0.25
 
 
 def test_v4_power_mix_lut_fallback_preserves_raw_vector_precision(
@@ -249,6 +259,9 @@ def test_step2_prompt_explains_period_group_hierarchy_contract() -> None:
     assert "FID·Planned·Under Construction" in SLOT_PROPOSAL_SYSTEM
     assert "FID·착공·COD·startup·commissioning·ramp-up" in SLOT_PROPOSAL_SYSTEM
     assert "applicability_attributes 자체를 slot_axes로 반환하지 마십시오" in SLOT_PROPOSAL_SYSTEM
+    assert "Stage/단계, Train/T/호기" in SLOT_PROPOSAL_SYSTEM
+    assert "상위 Plant명만으로 하위 Train을 추정하지 마십시오" in SLOT_PROPOSAL_SYSTEM
+    assert "각 Train 번호(명시적 범위 포함)와 각 기간" in SLOT_PROPOSAL_SYSTEM
     assert "leaves[]" not in SLOT_PROPOSAL_SYSTEM
 
 
@@ -984,7 +997,8 @@ def test_step3_prompt_requires_one_slot_key_value_for_every_input_slot() -> None
     assert "관련 없는 시장 숫자를" in VALUE_PROPOSAL_SYSTEM
     assert "proposed_value로 복사" in VALUE_PROPOSAL_SYSTEM
     assert '"제안하기 어렵다", "추가 정보가 필요하다"는 결론으로 끝내지 마십시오' in VALUE_PROPOSAL_SYSTEM
-    assert "한두 문장으로 제한하지 말고" in VALUE_PROPOSAL_SYSTEM
+    assert "핵심만 2~3문장으로 요약" in VALUE_PROPOSAL_SYSTEM
+    assert "일관된 존댓말" in VALUE_PROPOSAL_SYSTEM
 
 
 def test_proposal_prompts_treat_scenario_natural_language_as_data() -> None:

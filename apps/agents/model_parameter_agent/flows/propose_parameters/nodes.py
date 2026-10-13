@@ -1,15 +1,20 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Mapping
+from dataclasses import dataclass
 from datetime import date
 import json
 import math
+import random
 import re
 import time
 from typing import Any, Optional
+import unicodedata
 
 from langchain_core.runnables.config import RunnableConfig
 from langgraph.runtime import Runtime
+from pydantic import ValidationError
 
 from apps.agents.model_parameter_agent.flows.propose_parameters.state import ModelParameterProposalState
 from apps.agents.model_parameter_agent.flows.propose_parameters.validation import (
@@ -25,12 +30,14 @@ from apps.agents.model_parameter_agent.prompts.model_parameter_proposal import (
     VALUE_PROPOSAL_SYSTEM,
 )
 from apps.agents.model_parameter_agent.schemas.model_parameter_proposal import (
+    CandidateRoutingAssessment,
     LLMCandidateValidationResponse,
     LLMSlotProposal,
     LLMSlotProposalResponse,
     LLMValueAdjustment,
     LLMValueCell,
     LLMValueProposalResponse,
+    LLMVariationFactors,
     ParameterAdjustment,
     ParameterSlotAxis,
     ParameterSlotProposal,
@@ -59,6 +66,10 @@ from apps.agents.model_parameter_agent.utils.lut.models import (
     CanonicalValue,
     SlotCatalog,
 )
+from apps.agents.model_parameter_agent.utils.mi_base_resources import (
+    mi_base_resource_identity,
+    resolve_mi_base_resources,
+)
 from apps.agents.model_parameter_agent.utils.parameter_mapping import (
     ParameterKnowledgeBase,
     get_parameter_knowledge_base_from_resources,
@@ -72,14 +83,31 @@ from apps.agents.model_parameter_agent.utils.proposal_policy import (
     POWER_MIX_ENERGY_SOURCES,
     POWER_MIX_PARAMETER,
     POWER_MIX_SUM_TOLERANCE,
+    ApprovedCoordinateAliasIndex,
+    build_approved_coordinate_alias_index,
     evaluate_liq_util_evidence,
     expand_power_mix_atomic_slots,
     is_v4_contract_context,
     parameter_name,
+    time_evidence_matches_slot,
     validate_power_mix_atomic_values,
 )
 from apps.agents.model_parameter_agent.utils.resource_runtime import (
     get_model_parameter_resource_paths,
+)
+from apps.agents.model_parameter_agent.utils.variation_policy import (
+    VARIATION_POLICY_RELEASE,
+    ParameterVariationPolicy,
+    VariationDirection,
+    VariationFactors,
+    VariationMode,
+    VariationSeverity,
+    calculate_bounded_assumption,
+    conditional_routing_policy_prompt_payload,
+    get_conditional_routing_policy,
+    get_parameter_variation_policy,
+    policy_prompt_payload,
+    validate_atomic_share_assumption,
 )
 from apps.common.exceptions.custom import MIBaseError
 from apps.common.logging.logger_config import logger
@@ -94,6 +122,238 @@ DEFAULT_MAX_TOTAL_SELECTED_SLOTS = 300
 DEFAULT_MAX_PROMPT_BYTES = 262_144
 V3_EVENT_DETAIL_MAX_CHARS = 1_200
 V4_EVENT_DETAIL_MAX_CHARS = 6_000
+DEFAULT_TRANSIENT_RETRY_MAX_ATTEMPTS = 2
+DEFAULT_TRANSIENT_RETRY_BASE_DELAY_SECONDS = 0.5
+DEFAULT_TRANSIENT_RETRY_MAX_JITTER_SECONDS = 0.25
+DEFAULT_MAX_ROUTING_CANDIDATES_PER_DIMENSION = 2
+DEFAULT_V4_MAX_ROUTING_CANDIDATES_PER_DIMENSION = 3
+DEFAULT_MAX_CONDITIONAL_PARAMETERS_PER_SCENARIO = 4
+DEFAULT_VARIATION_MODE: VariationMode = "balanced"
+
+_CAPACITY_DIRECTION_MAP: Mapping[str, VariationDirection] = {
+    "increase": "increase",
+    "recover": "increase",
+    "decrease": "decrease",
+    "disrupt": "decrease",
+}
+_COST_DIRECTION_MAP: Mapping[str, VariationDirection] = {
+    "increase": "increase",
+    "disrupt": "increase",
+    "decrease": "decrease",
+    "recover": "decrease",
+}
+
+_USER_AXIS_LABELS: Mapping[str, str] = {
+    "Year": "연도",
+    "Month": "월",
+    "Period": "기간",
+    "Country": "국가",
+    "Province/Country": "지역",
+    "Region": "권역",
+    "Continent": "대륙",
+    "LNG Plant": "LNG 설비",
+    "LNG Plant Train": "트레인",
+    "Pipeline Name": "파이프라인",
+    "From Country": "출발 국가",
+    "To Country": "도착 국가",
+    "Energy Source": "발전원",
+    "Canal": "운하",
+}
+_USER_EVIDENCE_LABELS: Mapping[str, str] = {
+    "OBSERVED": "시나리오에 직접 제시된 수치를 사용했습니다",
+    "DERIVED": "시나리오 근거로 계산했습니다",
+    "BOUNDED_ASSUMPTION": "직접 수치가 없어 정성 정보를 보수적으로 수치화했습니다",
+    "NEUTRAL": "영향 방향이 상충하거나 변화 근거가 없어 현재 값을 유지했습니다",
+}
+_USER_DURATION_LABELS: Mapping[str, str] = {
+    "short": "단기",
+    "medium": "중기",
+    "long": "장기",
+}
+_USER_SCOPE_LABELS: Mapping[str, str] = {
+    "narrow": "제한적",
+    "medium": "중간",
+    "broad": "광범위",
+}
+_USER_OFFSET_LABELS: Mapping[str, str] = {
+    "none": "상쇄 없음",
+    "partial": "일부 상쇄",
+    "strong": "큰 폭 상쇄",
+}
+_USER_CONFIDENCE_LABELS: Mapping[str, str] = {
+    "low": "낮은 수준",
+    "medium": "중간 수준",
+    "high": "높은 수준",
+}
+_USER_SIBLING_POSITION_LABELS: Mapping[str, str] = {
+    "lower": "낮은 수준",
+    "middle": "중간 수준",
+    "upper": "높은 수준",
+}
+_USER_UNIT_LABELS: Mapping[str, str] = {
+    "fractional_yoy_growth": "연간 성장률",
+    "index": "지수",
+    "fraction": "비중",
+    "celsius": "°C",
+    "thousand_people": "천 명",
+    "integer_intensity": "단계",
+    "Mt LNG/month": "Mt LNG/월",
+    "utilization_fraction": "이용률",
+    "Mt/y": "Mt/년",
+    "Mt": "Mt",
+    "Mt LNG": "Mt LNG",
+    "$/d": "달러/일",
+    "Bcm": "Bcm",
+    "$/tonne": "달러/톤",
+    "$/crossing": "달러/회",
+}
+_INTERNAL_RATIONALE_REPLACEMENTS: tuple[tuple[str, str], ...] = (
+    (r"\bconditional_assumption_policy\b", "정성 근거 적용 기준"),
+    (r"\bbounded_assumption_allowed\s*=\s*true\b", "정성 근거를 제한적으로 수치화할 수 있는 조건"),
+    (r"\bbounded[-_ ]assumption\b", "보수적 추정"),
+    (r"\bBOUNDED_ASSUMPTION\b", "보수적 추정"),
+    (r"\bASSUMPTION_ELIGIBLE\b", "보수적 추정 가능"),
+    (r"\bNOT_APPLICABLE\b", "적용하지 않음"),
+    (r"\bOBSERVED\b", "직접 확인된 수치"),
+    (r"\bDERIVED\b", "계산한 값"),
+    (r"\bNEUTRAL\b", "현재 값 유지"),
+    (r"\bbounded-expert-v\d+\b", "보수적 산정 기준"),
+    (r"\bStep\s*1\.5\b", "영향 연결 판단"),
+    (r"\bStep\s*[23]\b", "값 산정 과정"),
+    (r"\bcandidate_key\b", "제안 대상 식별값"),
+    (r"\bslot_key\b", "적용 위치 식별값"),
+    (r"\bexact\s+slot\b", "정확히 일치하는 적용 위치"),
+    (r"\bcatalog-pinned\b", "사전 정의된"),
+    (r"\bcatalog\b", "사전 정의된 범위"),
+    (r"\bbinding\b", "연결 관계"),
+    (r"\brouting\b", "영향 연결"),
+    (r"\bparameter\b", "모델 입력값"),
+    (r"\bScenario\b", "시나리오"),
+    (r"\bEvent\b", "사건"),
+    (r"\bLever\b", "영향 요인"),
+    (r"\bbranch\b", "시나리오 경로"),
+    (r"\bLLM\b", "AI"),
+    (r"\btrio\b", "비교 시나리오"),
+    (r"\bsibling(?:\s+position)?\b", "비교 시나리오의 상대 수준"),
+    (r"\bmapping_comment\b", "연결 조건"),
+    (r"\btime_window\b", "적용 기간"),
+    (r"\bscope\b", "적용 범위"),
+    (r"\bdirection\b", "변화 방향"),
+    (r"\bconfidence\b", "근거 신뢰도"),
+    (r"\bbalanced\b", "표준 검토 수준"),
+    (r"\bexploratory\b", "확장 검토 수준"),
+    (r"\bstrict\b", "엄격 검토 수준"),
+    (r"\bweak\b", "작은 폭"),
+    (r"\bmedium\b", "중간 폭"),
+    (r"\bstrong\b", "큰 폭"),
+    (r"\bexact\s+Year\b", "정확한 적용 연도"),
+    (r"\bYear\b", "연도"),
+    (r"\bMonth\b", "월"),
+    (r"\bcharter rate\b", "용선료"),
+    (r"\bd\d+_v\d+\b", "선택한 시나리오 조건"),
+)
+_INTERNAL_RATIONALE_ASCII_TOKEN_REPLACEMENTS: tuple[tuple[str, str], ...] = (
+    ("conditional_assumption_policy", "정성 근거 적용 기준"),
+    ("BOUNDED_ASSUMPTION", "보수적 추정"),
+    ("ASSUMPTION_ELIGIBLE", "보수적 추정 가능"),
+    ("NOT_APPLICABLE", "적용하지 않음"),
+    ("bounded-expert-v3", "보수적 산정 기준"),
+    ("bounded_assumption", "보수적 추정"),
+    ("candidate_key", "제안 대상 식별값"),
+    ("slot_key", "적용 위치 식별값"),
+    ("exact slot", "정확히 일치하는 적용 위치"),
+    ("reference_value", "현재 모델값"),
+    ("catalog-pinned", "사전 정의된"),
+    ("mapping_comment", "연결 조건"),
+    ("time_window", "적용 기간"),
+    ("charter rate", "용선료"),
+    ("bounded assumption", "보수적 추정"),
+    ("OBSERVED", "직접 확인된 수치"),
+    ("DERIVED", "계산한 값"),
+    ("NEUTRAL", "현재 값 유지"),
+    ("Scenario", "시나리오"),
+    ("Event", "사건"),
+    ("Lever", "영향 요인"),
+    ("catalog", "사전 정의된 범위"),
+    ("binding", "연결 관계"),
+    ("routing", "영향 연결"),
+    ("parameter", "모델 입력값"),
+    ("Basecase", "현재 모델값"),
+    ("branch", "시나리오 경로"),
+    ("sibling", "비교 시나리오의 상대 수준"),
+    ("trio", "비교 시나리오"),
+    ("balanced", "표준 검토 수준"),
+    ("exploratory", "확장 검토 수준"),
+    ("strict", "엄격 검토 수준"),
+    ("confidence", "근거 신뢰도"),
+    ("severity", "조정 강도"),
+    ("direction", "변화 방향"),
+    ("scope", "적용 범위"),
+    ("profile", "영향 수준"),
+    ("policy", "산정 기준"),
+    ("mode", "검토 수준"),
+    ("fallback", "보완 적용"),
+    ("deterministic", "일관된 기준"),
+    ("exact", "정확히 일치하는"),
+    ("slot", "적용 위치"),
+    ("strong", "큰 폭"),
+    ("medium", "중간 폭"),
+    ("weak", "작은 폭"),
+    ("Year", "연도"),
+    ("Month", "월"),
+    ("LLM", "AI"),
+)
+_USER_POLITE_ENDING_REPLACEMENTS: tuple[tuple[str, str], ...] = (
+    ("낮췄다", "낮췄습니다"),
+    ("높였다", "높였습니다"),
+    ("보았다", "보았습니다"),
+    ("두었다", "두었습니다"),
+    ("않는다", "않습니다"),
+    ("아니다", "아닙니다"),
+    ("어렵다", "어렵습니다"),
+    ("충분하다", "충분합니다"),
+    ("필요하다", "필요합니다"),
+    ("가능하다", "가능합니다"),
+    ("보인다", "보입니다"),
+    ("따른다", "따릅니다"),
+    ("다룬다", "다룹니다"),
+    ("본다", "봅니다"),
+    ("했다", "했습니다"),
+    ("된다", "됩니다"),
+    ("한다", "합니다"),
+    ("있다", "있습니다"),
+    ("없다", "없습니다"),
+    ("이다", "입니다"),
+)
+_SAFE_LEVER_PARAMETER_DIRECTIONS: Mapping[
+    tuple[str, str],
+    Mapping[str, VariationDirection],
+] = {
+    ("economic_activity", "GDP"): _CAPACITY_DIRECTION_MAP,
+    ("economic_activity", "PMI"): _CAPACITY_DIRECTION_MAP,
+    ("population_demographics", "Population"): _CAPACITY_DIRECTION_MAP,
+    ("liquefaction_utilization", "LiqUtilAdjustment"): _CAPACITY_DIRECTION_MAP,
+    ("liquefaction_production_override", "LiqProdAdjustment"): _CAPACITY_DIRECTION_MAP,
+    ("pipeline_capacity", "PipelineAdjustment"): _CAPACITY_DIRECTION_MAP,
+    ("regasification_capacity", "RegasAdjustment"): _CAPACITY_DIRECTION_MAP,
+    ("png_contract_volume", "PNG Contract Volume"): _CAPACITY_DIRECTION_MAP,
+    ("regional_upstream_production", "RegionalProductionAdjustment"): _CAPACITY_DIRECTION_MAP,
+    ("lng_charter_rate", "ShippingCost"): _COST_DIRECTION_MAP,
+    ("lng_vessel_fuel_cost", "ShippingFuelCost"): _COST_DIRECTION_MAP,
+    ("canal_toll", "CanalToll"): _COST_DIRECTION_MAP,
+    ("us_gom_hurricane_disruption", "HurricaneIntensity"): _COST_DIRECTION_MAP,
+}
+
+
+@dataclass(frozen=True, slots=True)
+class _StructuredInvocationResult:
+    result: Any
+    usage: Any
+    model: str | None
+    attempt_count: int
+    retry_count: int
+    retry_reasons: tuple[str, ...]
+    retry_delays_seconds: tuple[float, ...]
 
 
 def _debug_stage_payload(
@@ -233,13 +493,225 @@ def _adjustment_debug_summary(
     return summaries
 
 
+def _candidate_trace_summary(
+    candidates: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Return only the candidate identity needed for quality diagnosis."""
+    return [
+        {
+            key: candidate.get(key)
+            for key in (
+                "candidate_key",
+                "canonical_parameter_name",
+                "parameter_name",
+                "mapping_method",
+                "mapping_strategy",
+                "scenario_dimension_key",
+                "source_dimension_id",
+                "lever_code",
+                "binding_selection_mode",
+                "binding_role",
+            )
+            if candidate.get(key) is not None
+        }
+        for candidate in candidates
+    ]
+
+
+def _routing_task_trace_summary(
+    routing_tasks: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    return [
+        {
+            "dimension_key": task.get("dimension_key"),
+            "selection_mode": task.get("selection_mode"),
+            "candidate_keys": [
+                str(candidate.get("candidate_key") or "")
+                for candidate in task.get("candidates") or []
+                if isinstance(candidate, dict) and str(candidate.get("candidate_key") or "")
+            ],
+            "parameter_names": _parameter_names(
+                [candidate for candidate in task.get("candidates") or [] if isinstance(candidate, dict)],
+            ),
+        }
+        for task in routing_tasks
+    ]
+
+
+def _routing_decision_trace_summary(
+    decisions: list[RoutingDecision],
+) -> list[dict[str, Any]]:
+    return [
+        {
+            "dimension_key": decision.dimension_key,
+            "selected_candidate_keys": list(decision.selected_candidate_keys),
+            "candidate_assessments": [
+                {
+                    "candidate_key": assessment.candidate_key,
+                    "decision": assessment.decision,
+                    "evidence_basis": assessment.evidence_basis,
+                    "direction": assessment.direction,
+                    "confidence": assessment.confidence,
+                }
+                for assessment in decision.candidate_assessments
+            ],
+        }
+        for decision in decisions
+    ]
+
+
+def _semantic_trace_evidence(
+    state: ModelParameterProposalState,
+    *,
+    stage: str,
+    candidates: list[dict[str, Any]] | None = None,
+    parameter_slots: list[dict[str, Any]] | None = None,
+    parameter_adjustments: list[dict[str, Any]] | None = None,
+    llm_calls: list[dict[str, Any]] | None = None,
+    stage_details: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Keep safe partial-state evidence when a semantic abstention exits the graph.
+
+    Full prompts, messages, Scenario context, and workbook rows are deliberately
+    excluded. The evidence is request-local and consumed only by quality runners.
+    """
+    selected_candidates = list(state.candidate_mappings if candidates is None else candidates)
+    selected_slots = list(state.parameter_slots if parameter_slots is None else parameter_slots)
+    selected_adjustments = list(
+        state.parameter_adjustments if parameter_adjustments is None else parameter_adjustments,
+    )
+    calls = list(state.llm_calls if llm_calls is None else llm_calls)
+    selected_slot_count = sum(slot.get("selected", True) is not False for slot in selected_slots)
+    selected_adjustment_count = sum(
+        adjustment.get("selected", True) is not False for adjustment in selected_adjustments
+    )
+    trace_mi_base_resource = (
+        mi_base_resource_identity(state.mi_base_resources) if state.mi_base_resources is not None else {}
+    )
+    termination_by_stage = {
+        "candidate_generation": "Step1 종료 - runtime candidate 없음",
+        "step1_5": "Step1.5 종료 - 후보 검증 후 selected parameter 없음",
+        "step2": "Step2 종료 - exact selected slot 없음",
+        "step3": "Step3 종료 - 변경 가능한 value 없음",
+    }
+    parameter_status = "ABSTAINED" if stage in {"candidate_generation", "step1_5"} else "PASS"
+    slot_status = "ABSTAINED" if stage == "step2" else "PASS" if stage == "step3" else "N/A"
+    value_status = "ABSTAINED" if stage == "step3" else "N/A"
+    return {
+        "observability_complete": True,
+        "partial_state_captured": True,
+        "trace_mi_base_resource": trace_mi_base_resource,
+        "llm_calls": calls,
+        "step_summary": {
+            "termination_stage": termination_by_stage.get(stage, stage),
+            "parameter_status": parameter_status,
+            "slot_status": slot_status,
+            "basecase_status": "PASS" if stage == "step3" else "N/A",
+            "value_status": value_status,
+            "validated_candidate_count": len(selected_candidates),
+            "selected_parameter_count": len(_parameter_names(selected_candidates)),
+            "proposal_parameter_count": 0,
+            "selected_slot_count": selected_slot_count,
+            "value_cell_count": sum(
+                len(adjustment.get("value_grid") or [])
+                for adjustment in selected_adjustments
+                if adjustment.get("selected", True) is not False
+            ),
+            "llm_steps": [str(call.get("step") or "") for call in calls],
+        },
+        "semantic_stage_evidence": {
+            "stage": stage,
+            "candidates": _candidate_trace_summary(selected_candidates),
+            "candidate_count": len(selected_candidates),
+            "parameter_names": _parameter_names(selected_candidates),
+            "selected_slot_count": selected_slot_count,
+            "selected_slots": _slot_debug_summary(selected_slots, selected_candidates),
+            "selected_adjustment_count": selected_adjustment_count,
+            "adjustments": _adjustment_debug_summary(selected_adjustments),
+            **(stage_details or {}),
+        },
+    }
+
+
+def _llm_retry_trace_from_exception(exc: BaseException) -> dict[str, Any]:
+    context = getattr(exc, "context", None)
+    raw = context.get("model_parameter_llm_retry") if isinstance(context, Mapping) else None
+    if not isinstance(raw, Mapping):
+        raw = getattr(exc, "_model_parameter_llm_retry", None)
+    return dict(raw) if isinstance(raw, Mapping) else {}
+
+
+def _attach_node_failure_trace(
+    exc: BaseException,
+    state: ModelParameterProposalState,
+    *,
+    stage: str,
+    step: str,
+    llm_started: float,
+    prompt_bytes: int,
+    prompt_limit_bytes: int,
+    parameter_bytes: dict[str, int],
+) -> None:
+    retry = _llm_retry_trace_from_exception(exc)
+    failed_call = _llm_call_trace(
+        step=step,
+        model_name=state.model_name,
+        elapsed_seconds=time.perf_counter() - llm_started,
+        usage=None,
+        success=False,
+        error=type(exc).__name__,
+        prompt_bytes=prompt_bytes,
+        prompt_limit_bytes=prompt_limit_bytes,
+        parameter_bytes=parameter_bytes,
+        attempt_count=int(retry.get("attempt_count") or 1),
+        retry_count=int(retry.get("retry_count") or 0),
+        retry_reasons=tuple(str(item) for item in retry.get("retry_reasons") or []),
+        retry_delays_seconds=tuple(float(item) for item in retry.get("retry_delays_seconds") or []),
+    )
+    evidence = {
+        "observability_complete": True,
+        "partial_state_captured": True,
+        "trace_mi_base_resource": (
+            mi_base_resource_identity(state.mi_base_resources) if state.mi_base_resources is not None else {}
+        ),
+        "llm_calls": [*state.llm_calls, failed_call],
+        "node_failure_stage": stage,
+        "node_stage_evidence": {
+            "stage": stage,
+            "candidate_count": len(state.candidate_mappings),
+            "parameter_names": _parameter_names(state.candidate_mappings),
+            "selected_slot_count": sum(slot.get("selected", True) is not False for slot in state.parameter_slots),
+            "exception_type": type(exc).__name__,
+        },
+    }
+    try:
+        exc.__dict__["_model_parameter_node_trace"] = evidence
+    except Exception:
+        return
+
+
 def _value_selection_diagnostics(
     adjustments: list[dict[str, Any]],
     warnings: list[str],
 ) -> dict[str, int]:
     unchanged_value_count = 0
     changed_value_count = 0
+    evidence_basis_counts = {
+        "observed_value_count": 0,
+        "derived_value_count": 0,
+        "bounded_assumption_value_count": 0,
+        "neutral_value_count": 0,
+    }
     for adjustment in adjustments:
+        for trace in adjustment.get("_variation_policy_trace") or []:
+            basis_key = {
+                "OBSERVED": "observed_value_count",
+                "DERIVED": "derived_value_count",
+                "BOUNDED_ASSUMPTION": "bounded_assumption_value_count",
+                "NEUTRAL": "neutral_value_count",
+            }.get(str(trace.get("evidence_basis") or ""))
+            if basis_key is not None:
+                evidence_basis_counts[basis_key] += 1
         for cell in adjustment.get("value_grid") or []:
             proposed_value = cell.get("proposed_value")
             reference_value = cell.get("basecase_value")
@@ -284,15 +756,14 @@ def _value_selection_diagnostics(
         or "candidate_key가 누락" in warning
     )
     if not any("proposedValue가 null" in warning for warning in warnings):
-        invalid_response_value_count += sum(
-            1 for warning in warnings if "요청한 slotKey가 누락" in warning
-        )
+        invalid_response_value_count += sum(1 for warning in warnings if "요청한 slotKey가 누락" in warning)
     return {
         "generated_value_count": unchanged_value_count + changed_value_count,
         "changed_value_count": changed_value_count,
         "unchanged_value_count": unchanged_value_count,
         "out_of_range_value_count": out_of_range_value_count,
         "invalid_response_value_count": invalid_response_value_count,
+        **evidence_basis_counts,
     }
 
 
@@ -480,6 +951,39 @@ def _configured_positive_int(
     return raw_value
 
 
+def _configured_variation_mode(settings: object) -> VariationMode:
+    mode = str(
+        getattr(
+            settings,
+            "model_parameter_variation_mode",
+            DEFAULT_VARIATION_MODE,
+        ),
+    ).strip()
+    if mode not in {"strict", "balanced", "exploratory"}:
+        raise MIBaseError(
+            ErrorCode.INVALID_REQUEST,
+            detail=f"model_parameter_variation_mode is invalid: {mode!r}",
+        )
+    return mode  # type: ignore[return-value]
+
+
+def _configured_routing_candidate_limit(
+    settings: object,
+    scenario_context: Mapping[str, Any] | None,
+) -> int:
+    if is_v4_contract_context(scenario_context):
+        return _configured_positive_int(
+            settings,
+            "model_parameter_v4_max_routing_candidates_per_dimension",
+            DEFAULT_V4_MAX_ROUTING_CANDIDATES_PER_DIMENSION,
+        )
+    return _configured_positive_int(
+        settings,
+        "model_parameter_max_routing_candidates_per_dimension",
+        DEFAULT_MAX_ROUTING_CANDIDATES_PER_DIMENSION,
+    )
+
+
 def _prompt_parameter_bytes(
     packet: dict[str, Any],
     *,
@@ -562,7 +1066,14 @@ def _effective_reference_to_state(
 
 
 def load_scenario_context(state: ModelParameterProposalState) -> dict[str, Any]:
-    context = ModelParameterService().load_context(state.scenario_id)
+    service = ModelParameterService()
+    context = service.load_context(state.scenario_id)
+    mi_base_case_id = state.mi_base_case_id
+    if not state.mi_base_selection_resolved:
+        mi_base_case_id = _valid_mi_base_case_id(
+            service.load_active_mi_base_case_id(),
+        )
+    context = {**context, "mi_base_case_id": mi_base_case_id}
     scenario = context.get("scenario") or {}
     kb = _knowledge_base_from_context(state, context)
     logger.info(
@@ -580,6 +1091,8 @@ def load_scenario_context(state: ModelParameterProposalState) -> dict[str, Any]:
     )
     return {
         "scenario_context": context,
+        "mi_base_case_id": mi_base_case_id,
+        "mi_base_selection_resolved": True,
         "parameter_knowledge_base": kb,
         "validation_warnings": [
             *state.validation_warnings,
@@ -591,6 +1104,8 @@ def load_scenario_context(state: ModelParameterProposalState) -> dict[str, Any]:
 def _knowledge_base_from_context(
     _state: ModelParameterProposalState,
     context: dict[str, Any],
+    *,
+    basecase_dir_path: str | None = None,
 ) -> ParameterKnowledgeBase:
     resources = context.get("parameter_mapping_resources") or {}
     mapping_rules = resources.get("mapping_rules") or []
@@ -605,9 +1120,57 @@ def _knowledge_base_from_context(
     return get_parameter_knowledge_base_from_resources(
         mapping_rows=mapping_rules,
         parameter_rows=parameter_definitions,
-        basecase_dir_path=str(resource_paths.basecase_dir),
+        basecase_dir_path=(basecase_dir_path if basecase_dir_path is not None else str(resource_paths.basecase_dir)),
         allow_empty_mapping_rows=is_v4,
     )
+
+
+def _valid_mi_base_case_id(value: Any) -> int | None:  # noqa: ANN401
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        return None
+    return value
+
+
+async def prepare_mi_base_resources(
+    state: ModelParameterProposalState,
+) -> dict[str, Any]:
+    snapshot = None
+    if state.mi_base_case_id is not None:
+        snapshot = await asyncio.to_thread(
+            ModelParameterService().load_mi_base_snapshot,
+            state.mi_base_case_id,
+        )
+    selection = await resolve_mi_base_resources(snapshot)
+    context = state.scenario_context or {}
+    knowledge_base = _knowledge_base_from_context(
+        state,
+        context,
+        basecase_dir_path=str(selection.basecase_dir),
+    )
+    warnings = list(state.validation_warnings)
+    if selection.source == "configured_fallback":
+        if state.mi_base_case_id is None:
+            warnings.append(
+                "활성 MI Base가 없어 기존 Basecase 리소스를 사용했습니다.",
+            )
+        else:
+            warnings.append(
+                "현재 MI Base 입력을 사용할 수 없어 기존 Basecase 리소스를 사용했습니다.",
+            )
+    logger.info(
+        "[model-parameter] resolved Basecase resources | scenario_id={} case_id={} "
+        "run_seq={} source={} linked_file_counts={}",
+        state.scenario_id,
+        selection.case_id,
+        selection.run_seq,
+        selection.source,
+        dict(selection.linked_file_counts),
+    )
+    return {
+        "parameter_knowledge_base": knowledge_base,
+        "mi_base_resources": selection,
+        "validation_warnings": warnings,
+    }
 
 
 def resolve_event_type_l2_id(scenario_context: dict[str, Any] | None) -> int | None:
@@ -701,6 +1264,21 @@ async def validate_parameter_candidates(
             stage="candidate_generation",
             scenario_context=state.scenario_context,
             non_input_items=state.non_input_items,
+            trace_evidence=_semantic_trace_evidence(
+                state,
+                stage="candidate_generation",
+                candidates=[],
+                stage_details={
+                    "candidate_generation_count": 0,
+                    "exclusion_reason_codes": sorted(
+                        {
+                            str(item.get("reason_code") or "")
+                            for item in state.non_input_items
+                            if isinstance(item, dict) and str(item.get("reason_code") or "")
+                        },
+                    ),
+                },
+            ),
         )
         return output
 
@@ -710,13 +1288,23 @@ async def validate_parameter_candidates(
     deterministic_candidates, routing_tasks = _partition_candidate_validation_work(
         validation_candidates,
     )
+    deterministic_candidates = [
+        _decorate_v4_deterministic_candidate(candidate) for candidate in deterministic_candidates
+    ]
     selected_routing_candidates: list[dict[str, Any]] = []
     validation_warnings: list[str] = []
     usage: dict[str, Any] | None = None
     llm_call: dict[str, Any] | None = None
+    routing_decisions: list[RoutingDecision] = []
+    policy_recovered_candidates: list[dict[str, Any]] = []
 
     if routing_tasks:
-        max_routing_candidates_per_dimension = get_settings().model_parameter_max_routing_candidates_per_dimension
+        settings = get_settings()
+        max_routing_candidates_per_dimension = _configured_routing_candidate_limit(
+            settings,
+            state.scenario_context,
+        )
+        variation_mode = _configured_variation_mode(settings)
         packet = _build_candidate_validation_prompt_packet(
             state.scenario_context or {},
             routing_tasks,
@@ -756,6 +1344,7 @@ async def validate_parameter_candidates(
                 config=config,
             )
             llm_payload = result.result
+            routing_decisions = list(llm_payload.routing_decisions)
             usage = result.usage.model_dump() if result.usage is not None else None
             llm_call = _llm_call_trace(
                 step="Step1.5 routing selection",
@@ -766,6 +1355,10 @@ async def validate_parameter_candidates(
                 prompt_bytes=prompt_bytes,
                 prompt_limit_bytes=prompt_limit_bytes,
                 parameter_bytes=parameter_bytes,
+                attempt_count=getattr(result, "attempt_count", 1),
+                retry_count=getattr(result, "retry_count", 0),
+                retry_reasons=getattr(result, "retry_reasons", ()),
+                retry_delays_seconds=getattr(result, "retry_delays_seconds", ()),
             )
         except Exception as exc:
             logger.warning(
@@ -773,20 +1366,48 @@ async def validate_parameter_candidates(
                 state.scenario_id,
                 repr(exc),
             )
+            _attach_node_failure_trace(
+                exc,
+                state,
+                stage="step1_5",
+                step="Step1.5 routing selection",
+                llm_started=llm_started,
+                prompt_bytes=prompt_bytes,
+                prompt_limit_bytes=prompt_limit_bytes,
+                parameter_bytes=parameter_bytes,
+            )
             raise
 
         selected_routing_candidates, validation_warnings = _sanitize_routing_decisions(
             llm_payload.routing_decisions,
             routing_tasks,
             max_candidates_per_dimension=max_routing_candidates_per_dimension,
+            variation_mode=variation_mode,
         )
+        policy_recovered_candidates, recovery_warnings = _recover_all_not_applicable_v4_conditional_candidates(
+            llm_payload.routing_decisions,
+            routing_tasks,
+            selected_routing_candidates,
+            variation_mode=variation_mode,
+        )
+        selected_routing_candidates.extend(policy_recovered_candidates)
+        validation_warnings.extend(recovery_warnings)
 
-    selected_candidate_keys = {
-        str(candidate.get("candidate_key") or "")
-        for candidate in [*deterministic_candidates, *selected_routing_candidates]
+    selected_candidates, conditional_limit_warnings = _limit_v4_conditional_parameters(
+        [*deterministic_candidates, *selected_routing_candidates],
+        limit=_configured_positive_int(
+            get_settings(),
+            "model_parameter_max_conditional_parameters_per_scenario",
+            DEFAULT_MAX_CONDITIONAL_PARAMETERS_PER_SCENARIO,
+        ),
+    )
+    validation_warnings.extend(conditional_limit_warnings)
+    selected_candidate_keys = {str(candidate.get("candidate_key") or "") for candidate in selected_candidates}
+    selected_candidate_by_key = {
+        str(candidate.get("candidate_key") or ""): candidate for candidate in selected_candidates
     }
     candidates = [
-        candidate
+        selected_candidate_by_key[str(candidate.get("candidate_key") or "")]
         for candidate in validation_candidates
         if str(candidate.get("candidate_key") or "") in selected_candidate_keys
     ]
@@ -815,13 +1436,18 @@ async def validate_parameter_candidates(
     if llm_call is not None:
         output["llm_usage"] = usage
         output["llm_calls"] = [*state.llm_calls, llm_call]
+    debug_payload: dict[str, Any] = {
+        "selection_method": "llm" if llm_call is not None else "skip_llm",
+        "selected_parameters": _parameter_names(merged_candidates),
+    }
+    if policy_recovered_candidates:
+        debug_payload["policy_recovered_candidate_keys"] = [
+            str(candidate.get("candidate_key") or "") for candidate in policy_recovered_candidates
+        ]
     _debug_stage_payload(
         "step1.5.result",
         state.scenario_id,
-        {
-            "selection_method": "llm" if llm_call is not None else "skip_llm",
-            "selected_parameters": _parameter_names(merged_candidates),
-        },
+        debug_payload,
     )
     if not merged_candidates:
         _raise_v4_semantic_empty_if_applicable(
@@ -829,6 +1455,27 @@ async def validate_parameter_candidates(
             scenario_context=state.scenario_context,
             candidates=state.candidate_mappings,
             non_input_items=state.non_input_items,
+            trace_evidence=_semantic_trace_evidence(
+                state,
+                stage="step1_5",
+                candidates=merged_candidates,
+                llm_calls=([*state.llm_calls, llm_call] if llm_call is not None else list(state.llm_calls)),
+                stage_details={
+                    "input_candidates": _candidate_trace_summary(validation_candidates),
+                    "deterministic_candidate_keys": [
+                        str(candidate.get("candidate_key") or "")
+                        for candidate in deterministic_candidates
+                        if str(candidate.get("candidate_key") or "")
+                    ],
+                    "routing_tasks": _routing_task_trace_summary(routing_tasks),
+                    "routing_decisions": _routing_decision_trace_summary(routing_decisions),
+                    "policy_recovered_candidate_keys": [
+                        str(candidate.get("candidate_key") or "") for candidate in policy_recovered_candidates
+                    ],
+                    "sanitized_selected_candidate_keys": sorted(selected_candidate_keys),
+                    "validation_warnings": [*validation_warnings, *merge_warnings],
+                },
+            ),
         )
     return output
 
@@ -848,11 +1495,14 @@ def load_basecase_samples(state: ModelParameterProposalState) -> dict[str, Any]:
     )
     resource_paths = get_model_parameter_resource_paths()
     registry = resource_paths.lut_registry
+    selected_resources = state.mi_base_resources
     records, warnings = build_basecase_records(
         state.parameter_knowledge_base,
         state.candidate_mappings,
         state.scenario_context or {},
         registry=registry,
+        workbook_contract=(selected_resources.workbook_contract if selected_resources is not None else None),
+        workbook_resource_root=(selected_resources.workbook_resource_root if selected_resources is not None else None),
     )
     lut_catalog = (
         get_lut_catalog(
@@ -869,6 +1519,8 @@ def load_basecase_samples(state: ModelParameterProposalState) -> dict[str, Any]:
         state.candidate_mappings,
         state.scenario_context or {},
         lut_catalog=lut_catalog,
+        workbook_contract=(selected_resources.workbook_contract if selected_resources is not None else None),
+        workbook_resource_root=(selected_resources.workbook_resource_root if selected_resources is not None else None),
     )
     basecase_index = build_basecase_index(
         records,
@@ -904,7 +1556,51 @@ def load_basecase_samples(state: ModelParameterProposalState) -> dict[str, Any]:
         "slot_candidate_mappings": [],
         "lut_version": lut_catalog.version if lut_catalog is not None else None,
         "resolved_config": {
+            "model_parameter_proposal_flow_release": getattr(
+                cfg,
+                "model_parameter_proposal_flow_release",
+                "v4.1.7",
+            ),
+            "model_parameter_variation_mode": _configured_variation_mode(cfg),
+            "model_parameter_variation_profile_enabled": bool(
+                getattr(cfg, "model_parameter_variation_profile_enabled", True),
+            ),
+            "model_parameter_grounded_slot_recovery_enabled": bool(
+                getattr(cfg, "model_parameter_grounded_slot_recovery_enabled", True),
+            ),
+            "model_parameter_max_conditional_parameters_per_scenario": (
+                _configured_positive_int(
+                    cfg,
+                    "model_parameter_max_conditional_parameters_per_scenario",
+                    DEFAULT_MAX_CONDITIONAL_PARAMETERS_PER_SCENARIO,
+                )
+            ),
+            "model_parameter_variation_policy_release": VARIATION_POLICY_RELEASE,
+            "model_parameter_transient_retry_max_attempts": (
+                getattr(
+                    cfg,
+                    "model_parameter_transient_retry_max_attempts",
+                    DEFAULT_TRANSIENT_RETRY_MAX_ATTEMPTS,
+                )
+            ),
+            "model_parameter_transient_retry_base_delay_seconds": (
+                getattr(
+                    cfg,
+                    "model_parameter_transient_retry_base_delay_seconds",
+                    DEFAULT_TRANSIENT_RETRY_BASE_DELAY_SECONDS,
+                )
+            ),
+            "model_parameter_transient_retry_max_jitter_seconds": (
+                getattr(
+                    cfg,
+                    "model_parameter_transient_retry_max_jitter_seconds",
+                    DEFAULT_TRANSIENT_RETRY_MAX_JITTER_SECONDS,
+                )
+            ),
             "model_parameter_lut_enabled": cfg.model_parameter_lut_enabled,
+            "mi_base_resource": (
+                mi_base_resource_identity(selected_resources) if selected_resources is not None else None
+            ),
             "model_parameter_lut_horizon_start_year": policy.start_year,
             "model_parameter_lut_horizon_end_year": policy.end_year,
             "model_parameter_basecase_value_max_decimal_places": (
@@ -936,6 +1632,39 @@ def load_basecase_samples(state: ModelParameterProposalState) -> dict[str, Any]:
         "validation_warnings": [*state.validation_warnings, *warnings],
     }
     return output
+
+
+def _llm_entity_resolution_evidence_key(
+    slot: dict[str, Any],
+) -> tuple[str, str, str] | None:
+    resolution = slot.get("_llm_entity_coordinate_resolution")
+    if not isinstance(resolution, dict):
+        return None
+    plant_evidence = _field_key(resolution.get("plant_evidence_text"))
+    train_evidence = _field_key(resolution.get("train_evidence_text"))
+    if not plant_evidence or not train_evidence:
+        return None
+    return (
+        str(slot.get("candidate_key") or ""),
+        plant_evidence,
+        train_evidence,
+    )
+
+
+def _conflicted_llm_entity_resolution_keys(
+    slots: list[dict[str, Any]],
+) -> set[tuple[str, str, str]]:
+    targets_by_evidence: dict[tuple[str, str, str], set[tuple[str, str]]] = {}
+    for slot in slots:
+        evidence_key = _llm_entity_resolution_evidence_key(slot)
+        if evidence_key is None:
+            continue
+        coordinates = _coordinates_for_selected_slot(slot)
+        plant = str(coordinates.get("LNG Plant") or coordinates.get("Plant") or "").strip()
+        train = str(coordinates.get("LNG Plant Train") or coordinates.get("Train") or "").strip()
+        if plant and train:
+            targets_by_evidence.setdefault(evidence_key, set()).add((plant, train))
+    return {evidence_key for evidence_key, targets in targets_by_evidence.items() if len(targets) > 1}
 
 
 def filter_basecase_records_by_slots(state: ModelParameterProposalState) -> dict[str, Any]:
@@ -986,6 +1715,7 @@ def filter_basecase_records_by_slots(state: ModelParameterProposalState) -> dict
     reserved_atomic_groups: set[str] = set()
     liq_evidence_failures: dict[str, set[str]] = {}
     liq_evidence_failure_counts: dict[str, int] = {}
+    liq_alias_indexes: dict[str, ApprovedCoordinateAliasIndex] = {}
 
     candidate_by_key = {str(candidate.get("candidate_key") or ""): candidate for candidate in state.candidate_mappings}
     selected_slot_counts_by_candidate: dict[str, int] = {}
@@ -994,6 +1724,9 @@ def filter_basecase_records_by_slots(state: ModelParameterProposalState) -> dict
         selected_slot_counts_by_candidate[selected_candidate_key] = (
             selected_slot_counts_by_candidate.get(selected_candidate_key, 0) + 1
         )
+    conflicted_resolution_keys = _conflicted_llm_entity_resolution_keys(
+        selected_slots,
+    )
     for raw_slot in selected_slots:
         slot = dict(raw_slot)
         candidate_key = str(slot.get("candidate_key") or "")
@@ -1011,7 +1744,8 @@ def filter_basecase_records_by_slots(state: ModelParameterProposalState) -> dict
             ):
                 truncated_atomic_groups.add(atomic_group_key)
                 truncated_slot_counts[candidate_key] = truncated_slot_counts.get(candidate_key, 0) + max(
-                    atomic_group_size, 1
+                    atomic_group_size,
+                    1,
                 )
                 continue
             reserved_atomic_groups.add(atomic_group_key)
@@ -1065,6 +1799,12 @@ def filter_basecase_records_by_slots(state: ModelParameterProposalState) -> dict
 
         candidate = candidate_by_key.get(candidate_key) or {}
         if is_v4_contract_context(state.scenario_context) and parameter_name(candidate) == LIQ_UTIL_PARAMETER:
+            coordinate_alias_index = liq_alias_indexes.get(candidate_key)
+            if coordinate_alias_index is None:
+                coordinate_alias_index = build_approved_coordinate_alias_index(
+                    list(state.basecase_index.records_for_candidate(candidate_key)),
+                )
+                liq_alias_indexes[candidate_key] = coordinate_alias_index
             canonical_slot = {
                 **slot,
                 "slot_axes": [
@@ -1077,6 +1817,8 @@ def filter_basecase_records_by_slots(state: ModelParameterProposalState) -> dict
                 canonical_slot,
                 state.scenario_context,
                 exact_candidate_count=selected_slot_counts_by_candidate.get(candidate_key),
+                coordinate_alias_index=coordinate_alias_index,
+                llm_resolution_conflicted=(_llm_entity_resolution_evidence_key(slot) in conflicted_resolution_keys),
             )
             if not evidence.allowed:
                 policy_excluded_slot_count += 1
@@ -1085,6 +1827,8 @@ def filter_basecase_records_by_slots(state: ModelParameterProposalState) -> dict
                 )
                 liq_evidence_failure_counts[candidate_key] = liq_evidence_failure_counts.get(candidate_key, 0) + 1
                 continue
+            if evidence.user_notes:
+                slot["_user_notes"] = list(evidence.user_notes)
 
         selected_key = (
             candidate_key,
@@ -1282,6 +2026,14 @@ def finalize_empty_parameter_values(state: ModelParameterProposalState) -> dict[
             non_input_items=state.non_input_items,
             slot_catalog=state.slot_catalog,
             slot_selection_diagnostics=state.slot_selection_diagnostics,
+            trace_evidence=_semantic_trace_evidence(
+                state,
+                stage="step2",
+                stage_details={
+                    "slot_selection_diagnostics": dict(state.slot_selection_diagnostics),
+                    "validation_warnings": list(state.validation_warnings),
+                },
+            ),
         )
     output = {
         "parameter_adjustments": _unselected_adjustments_for_missing_slots(
@@ -1313,6 +2065,15 @@ async def propose_parameter_values(
             non_input_items=state.non_input_items,
             slot_catalog=state.slot_catalog,
             slot_selection_diagnostics=state.slot_selection_diagnostics,
+            trace_evidence=_semantic_trace_evidence(
+                state,
+                stage="step2",
+                stage_details={
+                    "slot_selection_diagnostics": dict(state.slot_selection_diagnostics),
+                    "slot_candidate_count": len(state.slot_candidate_mappings),
+                    "validation_warnings": list(state.validation_warnings),
+                },
+            ),
         )
         output = {
             "parameter_adjustments": [],
@@ -1394,6 +2155,10 @@ async def propose_parameter_values(
             prompt_bytes=prompt_bytes,
             prompt_limit_bytes=prompt_limit_bytes,
             parameter_bytes=parameter_bytes,
+            attempt_count=getattr(result, "attempt_count", 1),
+            retry_count=getattr(result, "retry_count", 0),
+            retry_reasons=getattr(result, "retry_reasons", ()),
+            retry_delays_seconds=getattr(result, "retry_delays_seconds", ()),
         )
     except Exception as exc:
         logger.warning(
@@ -1401,15 +2166,71 @@ async def propose_parameter_values(
             state.scenario_id,
             repr(exc),
         )
+        _attach_node_failure_trace(
+            exc,
+            state,
+            stage="step3",
+            step="Step3 value proposal",
+            llm_started=llm_started,
+            prompt_bytes=prompt_bytes,
+            prompt_limit_bytes=prompt_limit_bytes,
+            parameter_bytes=parameter_bytes,
+        )
         raise
 
+    raw_adjustments = list(llm_payload.parameter_adjustments)
+    variation_profile_enabled = bool(
+        state.resolved_config.get(
+            "model_parameter_variation_profile_enabled",
+            getattr(cfg, "model_parameter_variation_profile_enabled", True),
+        ),
+    )
+    fallback_candidate_keys = _value_repair_candidate_keys(
+        raw_adjustments,
+        value_candidates,
+        state.parameter_slots,
+        require_structured_evidence=is_v4_contract_context(
+            state.scenario_context,
+        ),
+        require_variation_factors=variation_profile_enabled,
+    )
+    variation_mode = str(
+        state.resolved_config.get(
+            "model_parameter_variation_mode",
+            _configured_variation_mode(cfg),
+        ),
+    )
+    if is_v4_contract_context(state.scenario_context):
+        fallback_candidate_keys.update(
+            _derived_no_change_candidate_keys(
+                raw_adjustments,
+                state.parameter_slots,
+                value_references,
+            ),
+        )
+        raw_adjustments, fallback_warnings = _apply_deterministic_value_fallbacks(
+            raw_adjustments,
+            value_candidates,
+            state.parameter_slots,
+            value_references,
+            fallback_candidate_keys=fallback_candidate_keys,
+            variation_mode=variation_mode,  # type: ignore[arg-type]
+        )
+    else:
+        fallback_warnings = []
     adjustments, validation_warnings = _sanitize_llm_adjustments(
-        llm_payload.parameter_adjustments,
+        raw_adjustments,
         value_candidates,
         state.parameter_slots,
         value_references,
         scenario_context=state.scenario_context,
+        variation_mode=variation_mode,  # type: ignore[arg-type]
+        require_structured_evidence=is_v4_contract_context(
+            state.scenario_context,
+        ),
+        variation_profile_enabled=variation_profile_enabled,
     )
+    validation_warnings = [*fallback_warnings, *validation_warnings]
     selected_adjustments = [adjustment for adjustment in adjustments if adjustment.get("selected", True)]
     value_selection_diagnostics = _value_selection_diagnostics(
         selected_adjustments,
@@ -1449,6 +2270,17 @@ async def propose_parameter_values(
             candidates=value_candidates,
             non_input_items=state.non_input_items,
             value_selection_diagnostics=value_selection_diagnostics,
+            trace_evidence=_semantic_trace_evidence(
+                state,
+                stage="step3",
+                candidates=value_candidates,
+                parameter_adjustments=adjustments,
+                llm_calls=[*state.llm_calls, llm_call],
+                stage_details={
+                    "value_selection_diagnostics": dict(value_selection_diagnostics),
+                    "validation_warnings": list(validation_warnings),
+                },
+            ),
         )
     return output
 
@@ -1529,6 +2361,10 @@ async def propose_parameter_slots(
             prompt_bytes=prompt_bytes,
             prompt_limit_bytes=prompt_limit_bytes,
             parameter_bytes=parameter_bytes,
+            attempt_count=getattr(result, "attempt_count", 1),
+            retry_count=getattr(result, "retry_count", 0),
+            retry_reasons=getattr(result, "retry_reasons", ()),
+            retry_delays_seconds=getattr(result, "retry_delays_seconds", ()),
         )
     except Exception as exc:
         logger.warning(
@@ -1536,12 +2372,43 @@ async def propose_parameter_slots(
             state.scenario_id,
             repr(exc),
         )
+        _attach_node_failure_trace(
+            exc,
+            state,
+            stage="step2",
+            step="Step2 slot proposal",
+            llm_started=llm_started,
+            prompt_bytes=prompt_bytes,
+            prompt_limit_bytes=prompt_limit_bytes,
+            parameter_bytes=parameter_bytes,
+        )
         raise
 
     slots, validation_warnings = _sanitize_llm_slots(
         llm_payload.parameter_slots,
         state.candidate_mappings,
     )
+    grounded_recovery_warnings: list[str] = []
+    if bool(
+        state.resolved_config.get(
+            "model_parameter_grounded_slot_recovery_enabled",
+            getattr(cfg, "model_parameter_grounded_slot_recovery_enabled", True),
+        ),
+    ):
+        slots, grounded_recovery_warnings = _grounded_v4_slot_recovery(
+            slots,
+            state.candidate_mappings,
+            slot_catalog,
+            scenario_context=state.scenario_context,
+        )
+        validation_warnings.extend(grounded_recovery_warnings)
+    slots, recovery_warnings = _conservative_v4_slot_recovery(
+        slots,
+        state.candidate_mappings,
+        slot_catalog,
+        scenario_context=state.scenario_context,
+    )
+    validation_warnings.extend(recovery_warnings)
     logger.info(
         "[model-parameter] proposed parameter slots | scenario_id={} slot_count={} "
         "slot_counts_by_parameter={} warning_count={}",
@@ -1550,15 +2417,24 @@ async def propose_parameter_slots(
         _slot_counts_by_parameter(slots, state.candidate_mappings),
         len(validation_warnings),
     )
+    slot_selection_diagnostics = {
+        "catalog_candidate_count": _selectable_slot_catalog_candidate_count(
+            slot_catalog,
+        ),
+        "raw_slot_count": len(llm_payload.parameter_slots),
+        "sanitized_slot_count": len(slots),
+    }
+    if recovery_warnings:
+        slot_selection_diagnostics["conservative_recovery_count"] = len(
+            recovery_warnings,
+        )
+    if grounded_recovery_warnings:
+        slot_selection_diagnostics["grounded_recovery_count"] = len(
+            grounded_recovery_warnings,
+        )
     output = {
         "parameter_slots": slots,
-        "slot_selection_diagnostics": {
-            "catalog_candidate_count": _selectable_slot_catalog_candidate_count(
-                slot_catalog,
-            ),
-            "raw_slot_count": len(llm_payload.parameter_slots),
-            "sanitized_slot_count": len(slots),
-        },
+        "slot_selection_diagnostics": slot_selection_diagnostics,
         "non_input_items": state.non_input_items,
         "validation_warnings": [
             *state.validation_warnings,
@@ -1591,13 +2467,23 @@ def _llm_call_trace(
     prompt_bytes: int | None = None,
     prompt_limit_bytes: int | None = None,
     parameter_bytes: dict[str, int] | None = None,
+    attempt_count: int = 1,
+    retry_count: int = 0,
+    retry_reasons: tuple[str, ...] = (),
+    retry_delays_seconds: tuple[float, ...] = (),
 ) -> dict[str, Any]:
     trace: dict[str, Any] = {
         "step": step,
         "success": success,
         "model_name": model_name,
         "elapsed_seconds": round(max(0.0, elapsed_seconds), 3),
+        "attempt_count": max(1, attempt_count),
+        "retry_count": max(0, retry_count),
     }
+    if retry_reasons:
+        trace["retry_reasons"] = list(retry_reasons)
+    if retry_delays_seconds:
+        trace["retry_delays_seconds"] = [round(max(0.0, value), 3) for value in retry_delays_seconds]
     if usage is not None:
         trace["usage"] = usage
     if prompt_bytes is not None:
@@ -1609,12 +2495,15 @@ def _llm_call_trace(
     if error:
         trace["error"] = error
     logger.info(
-        "[model-parameter] LLM call timing | step={} model_name={} success={} elapsed_seconds={} total_tokens={}",
+        "[model-parameter] LLM call timing | step={} model_name={} success={} "
+        "elapsed_seconds={} total_tokens={} attempt_count={} retry_count={}",
         step,
         model_name,
         success,
         trace["elapsed_seconds"],
         (usage or {}).get("total_tokens"),
+        trace["attempt_count"],
+        trace["retry_count"],
     )
     return trace
 
@@ -1645,6 +2534,96 @@ def _value_counts_by_parameter(adjustments: list[dict[str, Any]]) -> dict[str, i
     return counts
 
 
+def _exception_chain(exc: BaseException) -> tuple[BaseException, ...]:
+    chain: list[BaseException] = []
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen:
+        chain.append(current)
+        seen.add(id(current))
+        current = current.__cause__ or current.__context__
+    return tuple(chain)
+
+
+def _is_incomplete_json_validation_error(exc: ValidationError) -> bool:
+    errors = exc.errors(include_url=False)
+    if not errors or any(error.get("type") != "json_invalid" for error in errors):
+        return False
+    return all(
+        "EOF while parsing" in str((error.get("ctx") or {}).get("error") or error.get("msg") or "")
+        for error in errors
+    )
+
+
+def _transient_llm_error_reason(exc: BaseException) -> str | None:
+    transient_error_codes = {
+        ErrorCode.LLM_RESPONSE_TIMEOUT,
+        ErrorCode.HTTP_CONNECTION_ERROR,
+    }
+    transient_class_names = {
+        "APIConnectionError",
+        "APITimeoutError",
+        "ConnectError",
+        "ConnectTimeout",
+        "ConnectionError",
+        "InternalServerError",
+        "PoolTimeout",
+        "RateLimitError",
+        "ReadError",
+        "ReadTimeout",
+        "RemoteProtocolError",
+        "TimeoutError",
+        "WriteError",
+        "WriteTimeout",
+    }
+    for item in _exception_chain(exc):
+        if isinstance(item, ValidationError) and _is_incomplete_json_validation_error(item):
+            return "LLM_INCOMPLETE_JSON"
+        if isinstance(item, MIBaseError):
+            if item.error_code in transient_error_codes:
+                return item.error_code.name
+            # Domain/semantic errors may use an HTTP 5xx public status. That
+            # status alone must never make them retryable; inspect only an
+            # attached transport cause on the next loop iteration.
+            continue
+        status_code = getattr(item, "status_code", None)
+        response = getattr(item, "response", None)
+        if status_code is None and response is not None:
+            status_code = getattr(response, "status_code", None)
+        try:
+            status = int(status_code)
+        except (TypeError, ValueError):
+            status = None
+        if status in {408, 425, 429} or (status is not None and status >= 500):
+            return f"HTTP_{status}"
+        class_name = type(item).__name__
+        if class_name in transient_class_names:
+            return class_name
+    return None
+
+
+def _attach_llm_retry_context(
+    exc: BaseException,
+    *,
+    attempt_count: int,
+    retry_reasons: list[str],
+    retry_delays_seconds: list[float],
+) -> None:
+    retry_context = {
+        "attempt_count": attempt_count,
+        "retry_count": len(retry_reasons),
+        "retry_reasons": list(retry_reasons),
+        "retry_delays_seconds": [round(max(0.0, value), 3) for value in retry_delays_seconds],
+    }
+    if isinstance(exc, MIBaseError):
+        exc.context["model_parameter_llm_retry"] = retry_context
+        return
+    try:
+        exc.__dict__["_model_parameter_llm_retry"] = retry_context
+    except Exception:  # Third-party exceptions may reject attributes.
+        return
+
+
 async def _invoke_structured(
     *,
     output_schema: type[Any],
@@ -1658,6 +2637,36 @@ async def _invoke_structured(
     cfg = get_settings()
     stream = cfg.llm_stream_enabled
     reasoning_effort = cfg.llm_reasoning_effort
+    max_attempts = max(
+        1,
+        int(
+            getattr(
+                cfg,
+                "model_parameter_transient_retry_max_attempts",
+                DEFAULT_TRANSIENT_RETRY_MAX_ATTEMPTS,
+            ),
+        ),
+    )
+    base_delay_seconds = max(
+        0.0,
+        float(
+            getattr(
+                cfg,
+                "model_parameter_transient_retry_base_delay_seconds",
+                DEFAULT_TRANSIENT_RETRY_BASE_DELAY_SECONDS,
+            ),
+        ),
+    )
+    max_jitter_seconds = max(
+        0.0,
+        float(
+            getattr(
+                cfg,
+                "model_parameter_transient_retry_max_jitter_seconds",
+                DEFAULT_TRANSIENT_RETRY_MAX_JITTER_SECONDS,
+            ),
+        ),
+    )
     # LangGraph 노드 config의 callbacks를 전파해야 LLM 호출이 그래프 trace의 child span으로 묶임
     callbacks = config.get("callbacks") if isinstance(config, dict) else None
     logger.debug(
@@ -1669,27 +2678,72 @@ async def _invoke_structured(
     logger.debug(
         "[model-parameter][llm] invoke | output_schema={} model_name={} "
         "stream={} reasoning_effort={} timeout_sec={} connect_timeout_sec={} "
-        "max_retries={}",
+        "connector_max_retries={} transient_max_attempts={} transient_base_delay_seconds={} "
+        "transient_max_jitter_seconds={}",
         output_schema.__name__,
         model_name,
         stream,
         reasoning_effort,
         getattr(cfg, "llm_timeout_sec", None),
         getattr(cfg, "http_connect_timeout", None),
-        cfg.llm_max_retries,
+        0,
+        max_attempts,
+        base_delay_seconds,
+        max_jitter_seconds,
     )
-    with langchain_callbacks_context(callbacks):
-        return await invoke_llm_structured_output(
-            output_schema=output_schema,
-            messages=messages,
-            model_name=model_name,
-            preference=ModelPreference.QUALITY,
-            temperature=0.0,
-            max_retries=cfg.llm_max_retries,
-            trace_context=trace_context,
-            stream=stream,
-            reasoning_effort=reasoning_effort,
-        )
+    retry_reasons: list[str] = []
+    retry_delays_seconds: list[float] = []
+    for attempt_index in range(1, max_attempts + 1):
+        try:
+            with langchain_callbacks_context(callbacks):
+                result = await invoke_llm_structured_output(
+                    output_schema=output_schema,
+                    messages=messages,
+                    model_name=model_name,
+                    preference=ModelPreference.QUALITY,
+                    temperature=0.0,
+                    max_retries=0,
+                    trace_context=trace_context,
+                    stream=stream,
+                    reasoning_effort=reasoning_effort,
+                )
+            return _StructuredInvocationResult(
+                result=result.result,
+                usage=result.usage,
+                model=getattr(result, "model", None),
+                attempt_count=attempt_index,
+                retry_count=len(retry_reasons),
+                retry_reasons=tuple(retry_reasons),
+                retry_delays_seconds=tuple(retry_delays_seconds),
+            )
+        except Exception as exc:
+            transient_reason = _transient_llm_error_reason(exc)
+            if transient_reason is None or attempt_index >= max_attempts:
+                _attach_llm_retry_context(
+                    exc,
+                    attempt_count=attempt_index,
+                    retry_reasons=retry_reasons,
+                    retry_delays_seconds=retry_delays_seconds,
+                )
+                raise
+            retry_reasons.append(transient_reason)
+            delay_seconds = base_delay_seconds * (2 ** (attempt_index - 1))
+            if max_jitter_seconds:
+                delay_seconds += random.uniform(0.0, max_jitter_seconds)  # noqa: S311 - retry jitter only.
+            retry_delays_seconds.append(delay_seconds)
+            logger.warning(
+                "[model-parameter][llm] transient failure; retrying one LLM call | "
+                "output_schema={} attempt={} max_attempts={} reason={} delay_seconds={}",
+                output_schema.__name__,
+                attempt_index,
+                max_attempts,
+                transient_reason,
+                round(delay_seconds, 3),
+            )
+            await asyncio.sleep(delay_seconds)
+
+    message = "unreachable Model Parameter transient retry state"
+    raise RuntimeError(message)
 
 
 def _field_key(value: Any) -> str:
@@ -1793,6 +2847,7 @@ def _source_dimension_for_prompt(candidate: dict[str, Any]) -> dict[str, Any]:
         "lever_time_window": candidate.get("time_window"),
         "is_primary_lever": candidate.get("is_primary_lever"),
         "binding_role": candidate.get("binding_role"),
+        "binding_selection_mode": candidate.get("binding_selection_mode"),
         "binding_applicability": candidate.get("binding_applicability"),
         "binding_provenance": candidate.get("binding_provenance"),
         "lever_provenance": candidate.get("lever_provenance"),
@@ -1954,6 +3009,7 @@ def _merge_candidates_by_parameter(  # noqa: C901
         approved_source_projections: list[dict[str, Any]] = []
         lever_provenance: list[dict[str, Any]] = []
         binding_provenance: list[dict[str, Any]] = []
+        routing_evidence: list[dict[str, Any]] = []
         source_impact_path_ids: list[str] = []
         source_uncertainty_ids: list[str] = []
         for candidate in group_candidates:
@@ -1987,6 +3043,12 @@ def _merge_candidates_by_parameter(  # noqa: C901
                         binding_provenance,
                         provenance,
                     )
+            for evidence in candidate.get("routing_evidence") or []:
+                if isinstance(evidence, dict):
+                    _append_unique_source_dimension(
+                        routing_evidence,
+                        evidence,
+                    )
             for impact_path_id in candidate.get("source_impact_path_ids") or []:
                 _append_unique_text(source_impact_path_ids, impact_path_id)
             for uncertainty_id in candidate.get("source_uncertainty_ids") or []:
@@ -2009,6 +3071,7 @@ def _merge_candidates_by_parameter(  # noqa: C901
                 "approved_source_projections": approved_source_projections,
                 "lever_provenance": lever_provenance,
                 "binding_provenance": binding_provenance,
+                "routing_evidence": routing_evidence,
                 "source_impact_path_ids": source_impact_path_ids,
                 "source_uncertainty_ids": source_uncertainty_ids,
             },
@@ -2019,12 +3082,32 @@ def _merge_candidates_by_parameter(  # noqa: C901
 
 
 def _routing_candidate_prompt_payload(candidate: dict[str, Any]) -> dict[str, Any]:
+    canonical_name = candidate.get("canonical_parameter_name") or candidate.get(
+        "parameter_name",
+    )
+    payload = {
+        "candidate_key": candidate.get("candidate_key"),
+        "parameter_name": canonical_name,
+        "parameter_hint": candidate.get("parameter_hint"),
+        "semantic_axes": candidate.get("semantic_axes"),
+        "mapping_comment": candidate.get("mapping_comment"),
+        "binding_role": candidate.get("binding_role"),
+        "binding_selection_mode": candidate.get("binding_selection_mode"),
+        "binding_applicability": candidate.get("binding_applicability"),
+        "conditional_assumption_policy": conditional_routing_policy_prompt_payload(
+            lever_code=candidate.get("lever_code"),
+            parameter_name=canonical_name,
+        ),
+    }
+    if str(candidate.get("mapping_strategy") or "").lower() == "v4":
+        # v4 source/dimension/Lever evidence is identical across a task's bindings and is
+        # emitted once in task.lever_context below. Repeating the full provenance for every
+        # conditional binding can exceed the prompt byte guard without adding evidence,
+        # especially for inventory/price-spread tasks with 11-14 bindings.
+        return _drop_none_or_empty(payload)
     return _drop_none_or_empty(
         {
-            "candidate_key": candidate.get("candidate_key"),
-            "parameter_name": (candidate.get("canonical_parameter_name") or candidate.get("parameter_name")),
-            "parameter_hint": candidate.get("parameter_hint"),
-            "semantic_axes": candidate.get("semantic_axes"),
+            **payload,
             "scenario_dimension_key": candidate.get(
                 "scenario_dimension_key",
             ),
@@ -2038,7 +3121,6 @@ def _routing_candidate_prompt_payload(candidate: dict[str, Any]) -> dict[str, An
                 "approved_source_projections",
             ),
             "source_dimensions": _source_dimensions_for_prompt(candidate),
-            "mapping_comment": candidate.get("mapping_comment"),
             "lever_code": candidate.get("lever_code"),
             "impact_lever_id": candidate.get("impact_lever_id"),
             "lever_domain": candidate.get("lever_domain"),
@@ -2046,8 +3128,6 @@ def _routing_candidate_prompt_payload(candidate: dict[str, Any]) -> dict[str, An
             "lever_level": candidate.get("level"),
             "lever_scope": candidate.get("scope"),
             "lever_time_window": candidate.get("time_window"),
-            "binding_role": candidate.get("binding_role"),
-            "binding_applicability": candidate.get("binding_applicability"),
             "binding_provenance": candidate.get("binding_provenance"),
             "lever_provenance": candidate.get("lever_provenance"),
         },
@@ -2074,17 +3154,39 @@ def _partition_candidate_validation_work(
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     deterministic: list[dict[str, Any]] = []
     routing_candidates: list[dict[str, Any]] = []
+    v4_candidates_by_task: dict[str, list[dict[str, Any]]] = {}
     for candidate in candidates:
         mapping_method = str(candidate.get("mapping_method") or "").lower()
         if str(candidate.get("mapping_strategy") or "").lower() == "v4":
-            deterministic.append(candidate)
+            v4_candidates_by_task.setdefault(
+                _v4_routing_task_key(candidate),
+                [],
+            ).append(candidate)
         elif mapping_method == "direct":
             deterministic.append(candidate)
         elif mapping_method == "routing":
             routing_candidates.append(candidate)
 
     routing_tasks: list[dict[str, Any]] = []
-    for group_candidates in _routing_groups_by_dimension(routing_candidates).values():
+    routing_groups = [
+        group_candidates
+        for group_candidates in v4_candidates_by_task.values()
+        if len(group_candidates) > 1
+        or any(
+            str(candidate.get("binding_selection_mode") or "deterministic").lower() == "conditional"
+            for candidate in group_candidates
+        )
+    ]
+    deterministic.extend(
+        group_candidates[0]
+        for group_candidates in v4_candidates_by_task.values()
+        if len(group_candidates) == 1
+        and str(group_candidates[0].get("binding_selection_mode") or "deterministic").lower() != "conditional"
+    )
+    routing_groups.extend(
+        _routing_groups_by_dimension(routing_candidates).values(),
+    )
+    for group_candidates in routing_groups:
         first = group_candidates[0]
         first_source = _source_dimensions_for_prompt(first)[0]
         is_v4 = str(first.get("mapping_strategy") or "").lower() == "v4"
@@ -2106,6 +3208,15 @@ def _partition_candidate_validation_work(
                 "dimension_value": (first.get("source_dimension_value") or first_source.get("source_dimension_value")),
                 "lever_code": first.get("lever_code"),
                 "is_v4": is_v4,
+                "selection_mode": (
+                    "conditional"
+                    if is_v4
+                    and any(
+                        str(candidate.get("binding_selection_mode") or "deterministic").lower() == "conditional"
+                        for candidate in group_candidates
+                    )
+                    else "deterministic"
+                ),
                 "candidates": group_candidates,
             },
         )
@@ -2174,6 +3285,8 @@ def _merge_v3_routing_candidates_for_validation(
 
 
 def _routing_task_for_prompt(task: dict[str, Any]) -> dict[str, Any]:
+    candidates = [candidate for candidate in task.get("candidates") or [] if isinstance(candidate, dict)]
+    first_candidate = candidates[0] if candidates else {}
     return _drop_none_or_empty(
         {
             "dimension_key": task.get("dimension_key"),
@@ -2181,12 +3294,41 @@ def _routing_task_for_prompt(task: dict[str, Any]) -> dict[str, Any]:
             "dimension_value": task.get("dimension_value"),
             "scenario_dimension_key": task.get("scenario_dimension_key"),
             "lever_code": task.get("lever_code"),
-            "default_selection_rule": (
-                "primary binding을 기본 선택하고 applicability 근거가 있으면 alternative 또는 둘 다 선택"
+            "lever_context": (
+                {
+                    "impact_lever_id": first_candidate.get("impact_lever_id"),
+                    "domain": first_candidate.get("lever_domain"),
+                    "direction": first_candidate.get("direction"),
+                    "level": first_candidate.get("level"),
+                    "scope": first_candidate.get("scope"),
+                    "time_window": first_candidate.get("time_window"),
+                    "source_event_ids": first_candidate.get("source_event_ids"),
+                    "source_refs": first_candidate.get("source_refs"),
+                    "approved_source_projections": first_candidate.get(
+                        "approved_source_projections",
+                    ),
+                    "source_dimensions": _source_dimensions_for_prompt(
+                        first_candidate,
+                    ),
+                    "lever_provenance": first_candidate.get("lever_provenance"),
+                }
                 if task.get("is_v4")
                 else None
             ),
-            "candidates": [_routing_candidate_prompt_payload(candidate) for candidate in task.get("candidates") or []],
+            "default_selection_rule": (
+                (
+                    "각 applicability의 실제 모델 대상·필수 좌표·기간 인과 근거가 독립적으로 확인된 후보만 "
+                    "설정 상한까지 선택하고, 근거가 없으면 0개를 선택"
+                    if task.get("selection_mode") == "conditional"
+                    else (
+                        "primary binding을 기본 선택하되 applicability 근거가 독립적으로 확인된 "
+                        "alternative는 설정 상한까지 함께 선택"
+                    )
+                )
+                if task.get("is_v4")
+                else None
+            ),
+            "candidates": [_routing_candidate_prompt_payload(candidate) for candidate in candidates],
         },
     )
 
@@ -2203,10 +3345,17 @@ def _build_candidate_validation_prompt_packet(
         routing_candidates,
         non_input_items,
     )
+    settings = get_settings()
     return {
         "scenario_brief": _scenario_brief_for_value_prompt(
             scenario_context,
             allowed_dimension_keys=allowed_dimension_keys,
+        ),
+        "variation_mode": _configured_variation_mode(settings),
+        "conditional_parameter_limit": _configured_positive_int(
+            settings,
+            "model_parameter_max_conditional_parameters_per_scenario",
+            DEFAULT_MAX_CONDITIONAL_PARAMETERS_PER_SCENARIO,
         ),
         "routing_tasks": [_routing_task_for_prompt(task) for task in routing_tasks],
     }
@@ -2249,6 +3398,7 @@ def _build_slot_proposal_prompt_packet(
             ],
         },
         "parameter_slot_tasks": _build_parameter_slot_tasks(
+            scenario_context,
             candidates,
             slot_catalog,
             non_input_items,
@@ -2491,6 +3641,25 @@ def _scenario_brief_for_value_prompt(
             for item in events
             if isinstance(item, dict)
         ]
+        if is_v4:
+            brief["comparison_only_sibling_scenarios"] = [
+                _drop_none_or_empty(
+                    {
+                        "scenario_id": item.get("scenario_id"),
+                        "title": item.get("title"),
+                        "narrative_excerpt": str(item.get("narrative") or "")[:1_200],
+                        "dimension_values": _filter_dimension_values(
+                            item.get("dimension_values"),
+                            allowed_dimension_keys,
+                        ),
+                        "baseline_yn": item.get("baseline_yn"),
+                        "global_pressure_band": item.get("global_pressure_band"),
+                        "scenario_role": item.get("scenario_role"),
+                    },
+                )
+                for item in scenario_context.get("sibling_scenarios") or []
+                if isinstance(item, dict)
+            ]
     else:
         brief["event"] = event_brief
     return _drop_none_or_empty(brief)
@@ -2767,8 +3936,10 @@ def _parameter_prompt_payload(
             "parameter_name": (candidate.get("canonical_parameter_name") or candidate.get("parameter_name")),
             "parameter_hint": candidate.get("parameter_hint"),
             "semantic_axes": candidate.get("semantic_axes"),
+            "proposal_constraints": candidate.get("proposal_constraints"),
             "lever_provenance": candidate.get("lever_provenance"),
             "binding_provenance": candidate.get("binding_provenance"),
+            "routing_evidence": candidate.get("routing_evidence"),
             "allowed_slot_axes_field_names": (
                 allowed_slot_axes if allowed_slot_axes is not None else _allowed_slot_axes_field_names(candidate)
             ),
@@ -2777,6 +3948,7 @@ def _parameter_prompt_payload(
 
 
 def _build_parameter_slot_tasks(
+    scenario_context: Mapping[str, Any],
     candidates: list[dict[str, Any]],
     slot_catalog: list[dict[str, Any]],
     non_input_items: list[dict[str, Any]],
@@ -2822,6 +3994,29 @@ def _build_parameter_slot_tasks(
             ),
             "slot_catalog": candidate_catalog,
         }
+        if bool(
+            getattr(
+                get_settings(),
+                "model_parameter_grounded_slot_recovery_enabled",
+                True,
+            ),
+        ) and is_v4_contract_context(scenario_context):
+            grounded_hints = _grounded_v4_slot_candidates(
+                candidate,
+                candidate_catalog,
+                scenario_context,
+            )
+            if grounded_hints:
+                task["evidence_grounded_coordinate_hints"] = [
+                    {
+                        "coordinates": coordinates,
+                        "policy": (
+                            "현재 Scenario/Event/Lever 원문과 실제 catalog에서 유일 일치한 대상·기간; "
+                            "LLM은 현재 task applicability를 재확인하되 다른 target으로 확대하지 않음"
+                        ),
+                    }
+                    for coordinates in grounded_hints
+                ]
         tasks.append(_drop_none_or_empty(task))
     return tasks
 
@@ -2868,6 +4063,10 @@ def _build_parameter_value_tasks(
                 "absolute_tolerance": POWER_MIX_SUM_TOLERANCE,
                 "partial_group_allowed": False,
             }
+        if v4_contract_context:
+            task["variation_policy"] = policy_prompt_payload(
+                parameter_name(candidate),
+            )
         tasks.append(_drop_none_or_empty(task))
     return tasks
 
@@ -2887,6 +4086,15 @@ def _build_value_proposal_prompt_packet(
                 non_input_items,
             ),
         ),
+        "variation_mode": _configured_variation_mode(get_settings()),
+        "variation_policy_release": VARIATION_POLICY_RELEASE,
+        "variation_profile_enabled": bool(
+            getattr(
+                get_settings(),
+                "model_parameter_variation_profile_enabled",
+                True,
+            ),
+        ),
         "parameter_value_tasks": _build_parameter_value_tasks(
             candidates,
             parameter_slots,
@@ -2895,6 +4103,284 @@ def _build_value_proposal_prompt_packet(
             v4_contract_context=is_v4_contract_context(scenario_context),
         ),
     }
+
+
+def _value_repair_candidate_keys(  # noqa: C901
+    adjustments: list[LLMValueAdjustment],
+    candidates: list[dict[str, Any]],
+    parameter_slots: list[dict[str, Any]],
+    *,
+    require_structured_evidence: bool = False,
+    require_variation_factors: bool = False,
+) -> set[str]:
+    expected_by_candidate: dict[str, set[str]] = {}
+    for slot in _assign_slot_keys(parameter_slots):
+        candidate_key = str(slot.get("candidate_key") or "")
+        slot_key = str(slot.get("slot_key") or "")
+        if candidate_key and slot_key:
+            expected_by_candidate.setdefault(candidate_key, set()).add(slot_key)
+    adjustments_by_candidate: dict[str, list[LLMValueAdjustment]] = {}
+    for adjustment in adjustments:
+        adjustments_by_candidate.setdefault(adjustment.candidate_key, []).append(
+            adjustment,
+        )
+    repair_keys: set[str] = set()
+    for candidate in candidates:
+        candidate_key = str(candidate.get("candidate_key") or "")
+        expected = expected_by_candidate.get(candidate_key) or set()
+        returned = adjustments_by_candidate.get(candidate_key) or []
+        if len(returned) != 1:
+            repair_keys.add(candidate_key)
+            continue
+        returned_slot_keys = []
+        for item in returned[0].slot_values:
+            slot_key = str(item.slot_key or "")
+            if not slot_key:
+                continue
+            if require_structured_evidence and not _has_complete_v4_value_evidence(
+                item,
+                candidate,
+                require_variation_factors=require_variation_factors,
+            ):
+                continue
+            if item.proposed_value is None and item.evidence_basis not in {
+                "BOUNDED_ASSUMPTION",
+                "NEUTRAL",
+            }:
+                continue
+            returned_slot_keys.append(slot_key)
+        if (
+            len(returned_slot_keys) != len(set(returned_slot_keys))
+            or set(
+                returned_slot_keys,
+            )
+            != expected
+        ):
+            repair_keys.add(candidate_key)
+    return repair_keys
+
+
+def _derived_no_change_candidate_keys(
+    adjustments: list[LLMValueAdjustment],
+    parameter_slots: list[dict[str, Any]],
+    reference_records: list[dict[str, Any]],
+) -> set[str]:
+    """Find complete DERIVED outputs that merely repeat every reference value."""
+
+    contexts = _slot_reference_contexts(parameter_slots, reference_records)
+    by_candidate: dict[str, list[LLMValueAdjustment]] = {}
+    for adjustment in adjustments:
+        by_candidate.setdefault(adjustment.candidate_key, []).append(adjustment)
+
+    no_change_keys: set[str] = set()
+    for candidate_key, expected_contexts in contexts.items():
+        candidate_adjustments = by_candidate.get(candidate_key) or []
+        if len(candidate_adjustments) != 1 or not expected_contexts:
+            continue
+        slot_values = candidate_adjustments[0].slot_values
+        values_by_key = {
+            str(slot_value.slot_key or ""): slot_value for slot_value in slot_values if str(slot_value.slot_key or "")
+        }
+        if len(values_by_key) != len(slot_values) or set(values_by_key) != set(expected_contexts):
+            continue
+        is_derived_no_change = True
+        for slot_key, context in expected_contexts.items():
+            slot_value = values_by_key[slot_key]
+            if slot_value.evidence_basis != "DERIVED" or slot_value.direction != "unchanged":
+                is_derived_no_change = False
+                break
+            try:
+                proposed_value = strict_float(
+                    slot_value.proposed_value,
+                    label="Step3 DERIVED no-change proposed_value",
+                )
+                reference_value = _numeric_reference_value(context["reference"])
+            except (MIBaseError, TypeError, ValueError):
+                is_derived_no_change = False
+                break
+            if not math.isclose(
+                proposed_value,
+                reference_value,
+                rel_tol=0.0,
+                abs_tol=1e-12,
+            ):
+                is_derived_no_change = False
+                break
+        if is_derived_no_change:
+            no_change_keys.add(candidate_key)
+    return no_change_keys
+
+
+def _safe_candidate_parameter_direction(
+    candidate: Mapping[str, Any],
+) -> VariationDirection | None:
+    """Resolve one direction only when every routing lineage item agrees."""
+
+    name = parameter_name(candidate)
+    if name == POWER_MIX_PARAMETER:
+        return None
+    evidence_items = [item for item in candidate.get("routing_evidence") or [] if isinstance(item, Mapping)]
+    if not evidence_items:
+        return None
+
+    directions: set[VariationDirection] = set()
+    for evidence in evidence_items:
+        raw_direction = str(evidence.get("direction") or "").strip().casefold()
+        semantics = str(evidence.get("direction_semantics") or "").strip().casefold()
+        if semantics == "parameter":
+            if raw_direction not in {"increase", "decrease"}:
+                return None
+            directions.add(raw_direction)  # type: ignore[arg-type]
+            continue
+        if semantics != "lever":
+            return None
+        lever_code = str(evidence.get("lever_code") or "").strip().casefold()
+        direction_map = _SAFE_LEVER_PARAMETER_DIRECTIONS.get(
+            (lever_code, name),
+        )
+        if direction_map is None:
+            return None
+        mapped_direction = direction_map.get(raw_direction)
+        if mapped_direction is None:
+            return None
+        directions.add(mapped_direction)
+    if len(directions) != 1:
+        return None
+    return next(iter(directions))
+
+
+def _deterministic_variation_factors(
+    candidate: Mapping[str, Any],
+) -> LLMVariationFactors:
+    evidence_items = [item for item in candidate.get("routing_evidence") or [] if isinstance(item, Mapping)]
+    duration_text = " ".join(
+        [str(candidate.get("time_window") or "")] + [str(item.get("time_scope_ko") or "") for item in evidence_items],
+    ).casefold()
+    scope_text = " ".join(
+        [str(candidate.get("scope") or "")] + [str(item.get("target_scope_ko") or "") for item in evidence_items],
+    ).casefold()
+    if any(token in duration_text for token in ("장기", "long", "연간", "수년")):
+        duration = "long"
+    elif any(token in duration_text for token in ("단기", "short", "월", "개월")):
+        duration = "short"
+    else:
+        duration = "medium"
+    if any(token in scope_text for token in ("전역", "글로벌", "global", "광역", "다수")):
+        scope = "broad"
+    elif any(token in scope_text for token in ("train", "설비", "터미널", "pipeline", "단일")):
+        scope = "narrow"
+    else:
+        scope = "medium"
+    return LLMVariationFactors(
+        duration=duration,
+        scope=scope,
+        offset="partial",
+        confidence="medium",
+        sibling_position="standalone",
+        rationale_ko=(
+            "명시된 적용 기간과 대상 범위를 반영하고, 확인되지 않은 상쇄 효과는 일부만 있는 것으로 "
+            "보수적으로 보았습니다. 비교 시나리오의 상대 강도는 값 산정에 사용하지 않았습니다."
+        ),
+    )
+
+
+def _apply_deterministic_value_fallbacks(
+    adjustments: list[LLMValueAdjustment],
+    candidates: list[dict[str, Any]],
+    parameter_slots: list[dict[str, Any]],
+    reference_records: list[dict[str, Any]],
+    *,
+    fallback_candidate_keys: set[str],
+    variation_mode: VariationMode,
+) -> tuple[list[LLMValueAdjustment], list[str]]:
+    """Replace only invalid/no-change results with reviewable weak assumptions."""
+
+    if variation_mode == "strict" or not fallback_candidate_keys:
+        return adjustments, []
+    contexts = _slot_reference_contexts(parameter_slots, reference_records)
+    replacements: list[LLMValueAdjustment] = []
+    replacement_keys: set[str] = set()
+    warnings: list[str] = []
+    for candidate in candidates:
+        candidate_key = str(candidate.get("candidate_key") or "")
+        if candidate_key not in fallback_candidate_keys:
+            continue
+        direction = _safe_candidate_parameter_direction(candidate)
+        candidate_contexts = contexts.get(candidate_key) or {}
+        if direction is None or not candidate_contexts:
+            continue
+        factors = _deterministic_variation_factors(candidate)
+        slot_values = [
+            LLMValueCell(
+                slot_key=slot_key,
+                proposed_value=None,
+                rationale_ko=(
+                    "시나리오 근거에서 확인된 변화 방향을 바탕으로, 현재 모델값에서 작은 폭으로 조정한 초기값입니다."
+                ),
+                evidence_basis="BOUNDED_ASSUMPTION",
+                direction=direction,
+                severity="weak",
+                assumption_ko=(
+                    "직접 관측된 값은 없으며, 관련 근거가 모두 같은 변화 방향을 가리킨다는 조건에서만 "
+                    "보수적인 작은 조정폭을 적용했습니다."
+                ),
+                variation_factors=factors,
+            )
+            for slot_key in candidate_contexts
+        ]
+        replacements.append(
+            LLMValueAdjustment(
+                candidate_key=candidate_key,
+                slot_values=slot_values,
+                rationale_ko=(
+                    "직접 수치 근거는 없지만 시나리오에서 변화 방향이 일관되게 확인되어, 현재 모델값을 "
+                    "기준으로 작은 폭의 초기값을 제안했습니다."
+                ),
+            ),
+        )
+        replacement_keys.add(candidate_key)
+        warnings.append(
+            "Step3 불완전/DERIVED no-change 응답을 exact-slot deterministic weak fallback으로 대체했습니다: "
+            f"candidate={candidate_key}, direction={direction}, slots={len(slot_values)}, "
+            f"policy={VARIATION_POLICY_RELEASE}",
+        )
+    if not replacement_keys:
+        return adjustments, warnings
+    retained = [adjustment for adjustment in adjustments if adjustment.candidate_key not in replacement_keys]
+    return [*retained, *replacements], warnings
+
+
+def _has_complete_v4_value_evidence(
+    slot_value: LLMValueCell,
+    candidate: Mapping[str, Any],
+    *,
+    require_variation_factors: bool = False,
+) -> bool:
+    basis = slot_value.evidence_basis
+    direction = slot_value.direction
+    if basis is None or direction is None:
+        return False
+    if basis == "OBSERVED":
+        return slot_value.proposed_value is not None and bool(
+            str(slot_value.evidence_ko or "").strip(),
+        )
+    if basis == "DERIVED":
+        return slot_value.proposed_value is not None and bool(
+            str(slot_value.calculation_ko or "").strip(),
+        )
+    if basis == "BOUNDED_ASSUMPTION":
+        if direction not in {"increase", "decrease"} or slot_value.severity is None:
+            return False
+        if not str(slot_value.assumption_ko or "").strip():
+            return False
+        if require_variation_factors and slot_value.variation_factors is None:
+            return False
+        return slot_value.proposed_value is not None if parameter_name(candidate) == POWER_MIX_PARAMETER else True
+    if basis == "NEUTRAL":
+        return direction == "unchanged" and bool(
+            str(slot_value.evidence_ko or slot_value.assumption_ko or "").strip(),
+        )
+    return False
 
 
 AMBIGUOUS_AXIS_TOKENS = (
@@ -3099,6 +4585,8 @@ def _v4_default_primary_candidate_keys(
 ) -> list[str]:
     if not task.get("is_v4"):
         return []
+    if str(task.get("selection_mode") or "deterministic").lower() == "conditional":
+        return []
     keys = [
         str(candidate.get("candidate_key") or "")
         for candidate in task.get("candidates") or []
@@ -3108,14 +4596,304 @@ def _v4_default_primary_candidate_keys(
     return keys[:limit]
 
 
+def _routing_assessment_priority(
+    assessment: CandidateRoutingAssessment,
+) -> int:
+    decision_rank = {
+        "DIRECT": 0,
+        "ASSUMPTION_ELIGIBLE": 10,
+        "NOT_APPLICABLE": 100,
+    }[assessment.decision]
+    confidence_rank = {"high": 0, "medium": 1, "low": 2}[assessment.confidence]
+    return decision_rank + confidence_rank
+
+
+def _routing_assessment_is_selectable(
+    assessment: CandidateRoutingAssessment,
+    *,
+    variation_mode: VariationMode,
+    is_v4: bool,
+) -> tuple[bool, str | None]:
+    if assessment.decision == "NOT_APPLICABLE":
+        return False, None
+    if assessment.direction == "unknown":
+        return False, "parameter 방향을 설명하지 못함"
+    if assessment.decision == "DIRECT" and assessment.evidence_basis not in {
+        "OBSERVED",
+        "DERIVED",
+    }:
+        return False, "DIRECT 판정의 근거 유형이 observed/derived가 아님"
+    if assessment.decision == "ASSUMPTION_ELIGIBLE":
+        if assessment.evidence_basis != "BOUNDED_ASSUMPTION":
+            return False, "가정 기반 판정의 근거 유형이 bounded assumption이 아님"
+        if is_v4 and variation_mode == "strict":
+            return False, "strict mode에서는 bounded assumption을 허용하지 않음"
+        if is_v4 and variation_mode == "balanced" and assessment.confidence == "low":
+            return False, "balanced mode에서는 low-confidence assumption을 허용하지 않음"
+    return True, None
+
+
+def _conditional_candidate_context(candidate: Mapping[str, Any]) -> str:
+    return " ".join(
+        str(candidate.get(field) or "").strip()
+        for field in (
+            "source_dimension_label",
+            "source_dimension_value_label",
+            "value_description",
+            "derivation_rationale",
+            "lever_description",
+            "level",
+            "scope",
+            "time_window",
+        )
+        if str(candidate.get(field) or "").strip()
+    )
+
+
+def _policy_backed_routing_assessment(
+    candidate: dict[str, Any],
+    *,
+    variation_mode: VariationMode,
+) -> CandidateRoutingAssessment | None:
+    if variation_mode == "strict":
+        return None
+    if str(candidate.get("mapping_strategy") or "").lower() != "v4":
+        return None
+    if str(candidate.get("binding_selection_mode") or "").lower() != "conditional":
+        return None
+
+    candidate_parameter_name = str(
+        candidate.get("canonical_parameter_name") or candidate.get("parameter_name") or "",
+    )
+    policy = get_conditional_routing_policy(
+        lever_code=candidate.get("lever_code"),
+        parameter_name=candidate_parameter_name,
+    )
+    if policy is None or not policy.allow_policy_recovery:
+        return None
+
+    direction = policy.direction_for(candidate.get("direction"))
+    scope = " ".join(str(candidate.get("scope") or "").split())
+    time_scope = " ".join(str(candidate.get("time_window") or "").split())
+    level = " ".join(str(candidate.get("level") or "").split())
+    context = _conditional_candidate_context(candidate)
+    if direction is None or not scope or not time_scope or not policy.has_required_context(context):
+        return None
+
+    if direction == "increase":
+        mechanism = policy.increase_mechanism_ko
+        direction_ko = "상승"
+    else:
+        mechanism = policy.decrease_mechanism_ko
+        direction_ko = "하락"
+    level_text = level or str(candidate.get("source_dimension_value_label") or "선택 상태")
+    return CandidateRoutingAssessment(
+        candidate_key=str(candidate.get("candidate_key") or ""),
+        decision="ASSUMPTION_ELIGIBLE",
+        evidence_basis="BOUNDED_ASSUMPTION",
+        causal_path_ko=(f"{scope}의 {level_text} → {mechanism} → {policy.target_scope_ko} {direction_ko}"),
+        target_scope_ko=(f"{policy.target_scope_ko}; {scope}의 영향을 정책 범위로 제한 반영"),
+        direction=direction,
+        time_scope_ko=time_scope,
+        confidence="medium",
+        rationale_ko=(
+            f"{VARIATION_POLICY_RELEASE} conditional routing 정책에 따라 관측 parameter 값을 주장하지 않고 "
+            f"{policy.eligibility_note_ko} 경로를 bounded assumption으로 투영했습니다. "
+            f"제외 경계: {policy.exclusion_note_ko}."
+        ),
+    )
+
+
+def _decision_is_complete_not_applicable(
+    decision: RoutingDecision,
+    *,
+    allowed_keys: set[str],
+) -> bool:
+    assessments = {
+        assessment.candidate_key: assessment
+        for assessment in decision.candidate_assessments
+        if assessment.candidate_key in allowed_keys
+    }
+    return (
+        bool(allowed_keys)
+        and set(assessments) == allowed_keys
+        and all(assessment.decision == "NOT_APPLICABLE" for assessment in assessments.values())
+    )
+
+
+def _recover_all_not_applicable_v4_conditional_candidates(
+    decisions: list[RoutingDecision],
+    routing_tasks: list[dict[str, Any]],
+    selected_candidates: list[dict[str, Any]],
+    *,
+    variation_mode: VariationMode,
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """Recover only policy-approved candidates after a complete all-N/A verdict."""
+
+    if variation_mode == "strict":
+        return [], []
+    decision_by_dimension: dict[str, RoutingDecision] = {}
+    for decision in decisions:
+        decision_by_dimension.setdefault(str(decision.dimension_key or ""), decision)
+    already_selected = {str(candidate.get("candidate_key") or "") for candidate in selected_candidates}
+    recovered: list[dict[str, Any]] = []
+    warnings: list[str] = []
+    for task in routing_tasks:
+        if not task.get("is_v4") or str(task.get("selection_mode") or "") != "conditional":
+            continue
+        dimension_key = str(task.get("dimension_key") or "")
+        candidates = [candidate for candidate in task.get("candidates") or [] if isinstance(candidate, dict)]
+        allowed_keys = {
+            str(candidate.get("candidate_key") or "")
+            for candidate in candidates
+            if str(candidate.get("candidate_key") or "")
+        }
+        if allowed_keys & already_selected:
+            continue
+        decision = decision_by_dimension.get(dimension_key)
+        if decision is None or not _decision_is_complete_not_applicable(
+            decision,
+            allowed_keys=allowed_keys,
+        ):
+            continue
+        for candidate in candidates:
+            assessment = _policy_backed_routing_assessment(
+                candidate,
+                variation_mode=variation_mode,
+            )
+            if assessment is None:
+                continue
+            recovered_candidate = _candidate_with_routing_assessment(
+                candidate,
+                assessment,
+            )
+            recovered_candidate["_routing_selection_method"] = "POLICY_BACKED_ALL_NOT_APPLICABLE_RECOVERY"
+            recovered_candidate["_routing_policy_release"] = VARIATION_POLICY_RELEASE
+            recovered.append(recovered_candidate)
+            already_selected.add(assessment.candidate_key)
+            warnings.append(
+                "Step1.5 all-N/A 응답에서 parameter별 bounded routing 정책으로 후보를 제한 복구했습니다: "
+                f"dimension={dimension_key}, candidate={assessment.candidate_key}, "
+                f"policy={VARIATION_POLICY_RELEASE}",
+            )
+    return recovered, warnings
+
+
+def _candidate_with_routing_assessment(
+    candidate: dict[str, Any],
+    assessment: CandidateRoutingAssessment,
+) -> dict[str, Any]:
+    selected = dict(candidate)
+    selected["routing_evidence"] = [
+        {
+            "candidate_key": assessment.candidate_key,
+            "decision": assessment.decision,
+            "evidence_basis": assessment.evidence_basis,
+            "causal_path_ko": assessment.causal_path_ko,
+            "target_scope_ko": assessment.target_scope_ko,
+            "direction": assessment.direction,
+            "direction_semantics": "parameter",
+            "lever_code": candidate.get("lever_code"),
+            "time_scope_ko": assessment.time_scope_ko,
+            "confidence": assessment.confidence,
+            "rationale_ko": assessment.rationale_ko,
+        },
+    ]
+    selected["_routing_priority"] = _routing_assessment_priority(assessment)
+    return selected
+
+
+def _decorate_v4_deterministic_candidate(
+    candidate: dict[str, Any],
+) -> dict[str, Any]:
+    if str(candidate.get("mapping_strategy") or "").lower() != "v4":
+        return candidate
+    selected = dict(candidate)
+    selected["routing_evidence"] = [
+        {
+            "candidate_key": candidate.get("candidate_key"),
+            "decision": "DIRECT",
+            "evidence_basis": "DERIVED",
+            "causal_path_ko": ("선택한 시나리오 조건이 이 모델 입력값에 직접 영향을 줍니다"),
+            "target_scope_ko": candidate.get("scope") or "선택한 시나리오의 적용 대상",
+            "direction": candidate.get("direction") or "unchanged",
+            "direction_semantics": "lever",
+            "lever_code": candidate.get("lever_code"),
+            "time_scope_ko": candidate.get("time_window") or "선택한 시나리오의 적용 기간",
+            "confidence": "high",
+            "rationale_ko": "선택한 시나리오 조건과 이 모델 입력값의 직접적인 연관성을 확인했습니다.",
+        },
+    ]
+    selected["_routing_priority"] = 0
+    return selected
+
+
+def _limit_v4_conditional_parameters(
+    candidates: list[dict[str, Any]],
+    *,
+    limit: int,
+) -> tuple[list[dict[str, Any]], list[str]]:
+    conditional = [
+        candidate
+        for candidate in candidates
+        if str(candidate.get("mapping_strategy") or "").lower() == "v4"
+        and str(candidate.get("binding_selection_mode") or "").lower() == "conditional"
+    ]
+    parameter_names = {
+        str(
+            candidate.get("canonical_parameter_name") or candidate.get("parameter_name") or "",
+        )
+        for candidate in conditional
+    }
+    if len(parameter_names) <= limit:
+        return candidates, []
+
+    def priority(candidate: Mapping[str, Any]) -> int:
+        raw = candidate.get("_routing_priority")
+        return int(raw) if isinstance(raw, int) and not isinstance(raw, bool) else 50
+
+    ranked = sorted(
+        enumerate(conditional),
+        key=lambda item: (priority(item[1]), item[0]),
+    )
+    kept_parameters: set[str] = set()
+    for _, candidate in ranked:
+        name = str(
+            candidate.get("canonical_parameter_name") or candidate.get("parameter_name") or "",
+        )
+        if name in kept_parameters:
+            continue
+        if len(kept_parameters) >= limit:
+            break
+        kept_parameters.add(name)
+    kept = [
+        candidate
+        for candidate in candidates
+        if candidate not in conditional
+        or str(
+            candidate.get("canonical_parameter_name") or candidate.get("parameter_name") or "",
+        )
+        in kept_parameters
+    ]
+    excluded = sorted(parameter_names - kept_parameters)
+    return kept, [
+        (
+            "v4 conditional parameter 시나리오 상한을 적용해 후순위 후보를 제외했습니다: "
+            f"limit={limit}, excluded={excluded}"
+        ),
+    ]
+
+
 def _sanitize_routing_decisions(  # noqa: C901
     decisions: list[RoutingDecision],
     routing_tasks: list[dict[str, Any]],
     *,
     max_candidates_per_dimension: int,
+    variation_mode: VariationMode = DEFAULT_VARIATION_MODE,
 ) -> tuple[list[dict[str, Any]], list[str]]:
     task_by_dimension = {str(task.get("dimension_key") or ""): task for task in routing_tasks}
     selected_keys: set[str] = set()
+    decorated_candidates_by_key: dict[str, dict[str, Any]] = {}
     returned_dimensions: set[str] = set()
     warnings: list[str] = []
 
@@ -3138,8 +4916,62 @@ def _sanitize_routing_decisions(  # noqa: C901
         returned_dimensions.add(dimension_key)
         allowed_keys = {str(candidate.get("candidate_key") or "") for candidate in task.get("candidates") or []}
         selected_dimension_keys: set[str] = set()
-        for raw_candidate_key in decision.selected_candidate_keys:
-            candidate_key = str(raw_candidate_key or "")
+        candidate_by_key = {
+            str(candidate.get("candidate_key") or ""): candidate for candidate in task.get("candidates") or []
+        }
+        selected_candidate_by_key: dict[str, dict[str, Any]] = {}
+        requested_keys = [str(item or "") for item in decision.selected_candidate_keys]
+        if decision.candidate_assessments:
+            assessments_by_key: dict[str, CandidateRoutingAssessment] = {}
+            for assessment in decision.candidate_assessments:
+                if assessment.candidate_key in assessments_by_key:
+                    warnings.append(
+                        "LLM candidate_assessments에 중복 candidate가 있어 후속 판정을 제외했습니다: "
+                        f"dimension={dimension_key}, candidate={assessment.candidate_key}",
+                    )
+                    continue
+                assessments_by_key[assessment.candidate_key] = assessment
+            missing_assessments = sorted(allowed_keys - set(assessments_by_key))
+            if missing_assessments:
+                warnings.append(
+                    "LLM candidate_assessments에서 후보 판정이 누락되었습니다: "
+                    f"dimension={dimension_key}, candidates={missing_assessments}",
+                )
+            requested_keys = []
+            for assessment in sorted(
+                assessments_by_key.values(),
+                key=_routing_assessment_priority,
+            ):
+                if assessment.candidate_key not in allowed_keys:
+                    warnings.append(
+                        "LLM이 해당 routing task에 없는 candidate assessment를 반환해 제외했습니다: "
+                        f"dimension={dimension_key}, candidate={assessment.candidate_key}",
+                    )
+                    continue
+                selectable, reason = _routing_assessment_is_selectable(
+                    assessment,
+                    variation_mode=variation_mode,
+                    is_v4=bool(task.get("is_v4")),
+                )
+                if not selectable:
+                    if reason:
+                        warnings.append(
+                            "LLM routing assessment가 정책 gate를 통과하지 못했습니다: "
+                            f"dimension={dimension_key}, candidate={assessment.candidate_key}, reason={reason}",
+                        )
+                    continue
+                requested_keys.append(assessment.candidate_key)
+                selected_candidate_by_key[assessment.candidate_key] = _candidate_with_routing_assessment(
+                    candidate_by_key[assessment.candidate_key],
+                    assessment,
+                )
+            if set(decision.selected_candidate_keys) != set(requested_keys):
+                warnings.append(
+                    "selected_candidate_keys와 candidate_assessments 판정이 달라 assessment를 기준으로 정규화했습니다: "
+                    f"dimension={dimension_key}",
+                )
+        selection_limit = max_candidates_per_dimension
+        for candidate_key in requested_keys:
             if candidate_key not in allowed_keys:
                 warning = (
                     "LLM이 해당 routing task에 없는 candidate_key를 반환해 제외했습니다: "
@@ -3150,10 +4982,10 @@ def _sanitize_routing_decisions(  # noqa: C901
                 continue
             if candidate_key in selected_dimension_keys:
                 continue
-            if len(selected_dimension_keys) >= max_candidates_per_dimension:
+            if len(selected_dimension_keys) >= selection_limit:
                 warning = (
                     "LLM routing_decisions가 dimension별 선택 상한을 초과해 후속 후보를 제외했습니다: "
-                    f"dimension={dimension_key}, limit={max_candidates_per_dimension}, "
+                    f"dimension={dimension_key}, limit={selection_limit}, "
                     f"candidate={candidate_key}"
                 )
                 logger.warning("[model-parameter] {}", warning)
@@ -3161,10 +4993,18 @@ def _sanitize_routing_decisions(  # noqa: C901
                 continue
             selected_dimension_keys.add(candidate_key)
             selected_keys.add(candidate_key)
+            if candidate_key in selected_candidate_by_key:
+                decorated_candidates_by_key[candidate_key] = selected_candidate_by_key[candidate_key]
+        if task.get("is_v4") and len(selected_dimension_keys) > 1:
+            warnings.append(
+                "v4 동일 Lever state의 복수 binding을 독립 applicability 근거 선택으로 유지했습니다: "
+                f"task={dimension_key}, selected={sorted(selected_dimension_keys)}, "
+                f"limit={selection_limit}",
+            )
         if not selected_dimension_keys:
             default_keys = _v4_default_primary_candidate_keys(
                 task,
-                limit=max_candidates_per_dimension,
+                limit=selection_limit,
             )
             if default_keys:
                 selected_keys.update(default_keys)
@@ -3199,7 +5039,10 @@ def _sanitize_routing_decisions(  # noqa: C901
         warnings.append(warning)
 
     selected_candidates = [
-        candidate
+        decorated_candidates_by_key.get(
+            str(candidate.get("candidate_key") or ""),
+            candidate,
+        )
         for task in routing_tasks
         for candidate in task.get("candidates") or []
         if str(candidate.get("candidate_key") or "") in selected_keys
@@ -3233,8 +5076,532 @@ def _sanitize_llm_slots(
     return sanitized, warnings
 
 
+def _expanded_periods(
+    available_periods: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    expanded: list[dict[str, Any]] = []
+    for period in available_periods:
+        if "Year" in period and isinstance(period.get("Months"), list):
+            expanded.extend(
+                {
+                    "Year": _slot_axis_value("Year", period["Year"]),
+                    "Month": _slot_axis_value("Month", month),
+                }
+                for month in period["Months"]
+            )
+            continue
+        expanded.append(
+            {str(axis_name): _slot_axis_value(str(axis_name), axis_value) for axis_name, axis_value in period.items()},
+        )
+    return expanded
+
+
+def _expanded_catalog_coordinates(
+    candidate_catalog: dict[str, Any],
+) -> list[dict[str, Any]]:
+    fixed_axis_names = [str(axis_name) for axis_name in candidate_catalog.get("fixed_axis_names") or []]
+    periods_by_group = {
+        str(group.get("period_group_id") or ""): _expanded_periods(
+            list(group.get("available_periods") or []),
+        )
+        for group in candidate_catalog.get("period_groups") or []
+        if isinstance(group, dict)
+    }
+    coordinates: list[dict[str, Any]] = []
+
+    def visit(
+        nodes: list[dict[str, Any]],
+        level: int,
+        fixed_coordinates: dict[str, Any],
+    ) -> None:
+        for node in nodes:
+            if not isinstance(node, dict):
+                continue
+            next_coordinates = dict(fixed_coordinates)
+            if level < len(fixed_axis_names) and "axis_value" in node:
+                next_coordinates[fixed_axis_names[level]] = node["axis_value"]
+            children = node.get("children")
+            if isinstance(children, list) and children:
+                visit(children, level + 1, next_coordinates)
+                continue
+            group_id = str(node.get("period_group_id") or "")
+            periods = periods_by_group.get(group_id) or [{}]
+            coordinates.extend({**next_coordinates, **period} for period in periods)
+
+    hierarchy = candidate_catalog.get("fixed_axis_hierarchy") or []
+    if isinstance(hierarchy, list):
+        visit(hierarchy, 0, {})
+    deduplicated: dict[str, dict[str, Any]] = {}
+    for coordinate in coordinates:
+        deduplicated.setdefault(_canonical_coordinate_key(coordinate), coordinate)
+    return list(deduplicated.values())
+
+
+_GROUNDED_ENTITY_AXIS_MARKERS = (
+    "plant",
+    "train",
+    "pipeline",
+    "terminal",
+    "canal",
+    "project",
+    "facility",
+)
+_GROUNDED_ALIAS_REMOVABLE_TOKENS = frozenset(
+    {
+        "lng",
+        "plant",
+        "terminal",
+        "export",
+        "import",
+        "pipeline",
+        "project",
+        "facility",
+    },
+)
+
+
+def _grounded_text(value: object) -> str:
+    normalized = unicodedata.normalize("NFKC", str(value or "")).casefold()
+    normalized = re.sub(r"(?:train|트레인)\s*0*(\d+)", r" t\1 ", normalized)
+    normalized = re.sub(r"(?<!\d)0*(\d+)\s*호기", r" t\1 ", normalized)
+    normalized = re.sub(r"(?<!\d)0*(\d+)\s*단계", r" stage \1 ", normalized)
+    return " ".join(re.sub(r"[^0-9a-z가-힣]+", " ", normalized).split())
+
+
+def _grounded_contains(text: str, phrase: str) -> bool:
+    normalized_phrase = _grounded_text(phrase)
+    return bool(normalized_phrase) and f" {normalized_phrase} " in f" {_grounded_text(text)} "
+
+
+def _grounded_axis_aliases(axis_name: str, value: object) -> set[str]:
+    exact = _grounded_text(value)
+    if not exact:
+        return set()
+    aliases = {exact}
+    lowered_axis = axis_name.casefold()
+    if any(marker in lowered_axis for marker in _GROUNDED_ENTITY_AXIS_MARKERS):
+        generic_free = " ".join(token for token in exact.split() if token not in _GROUNDED_ALIAS_REMOVABLE_TOKENS)
+        if len(generic_free) >= 4:
+            aliases.add(generic_free)
+        acronym = "".join(
+            token[0]
+            for token in exact.split()
+            if token not in _GROUNDED_ALIAS_REMOVABLE_TOKENS and token not in {"stage", "phase"} and not token.isdigit()
+        )
+        if len(acronym) >= 3:
+            aliases.add(acronym)
+    return aliases
+
+
+def _grounded_evidence_text(  # noqa: C901
+    candidate: Mapping[str, Any],
+    scenario_context: Mapping[str, Any],
+) -> str:
+    source_event_ids: set[int] = set()
+    for raw_event_id in candidate.get("source_event_ids") or []:
+        try:
+            source_event_ids.add(int(raw_event_id))
+        except (TypeError, ValueError):
+            continue
+    for provenance in candidate.get("lever_provenance") or []:
+        if not isinstance(provenance, Mapping):
+            continue
+        for raw_event_id in provenance.get("source_event_ids") or []:
+            try:
+                source_event_ids.add(int(raw_event_id))
+            except (TypeError, ValueError):
+                continue
+
+    events: list[Mapping[str, Any]] = []
+    for event in scenario_context.get("events") or []:
+        if not isinstance(event, Mapping):
+            continue
+        raw_event_id = event.get("mi_event_id") or event.get("event_id")
+        try:
+            event_id = int(raw_event_id)
+        except (TypeError, ValueError):
+            event_id = None
+        if not source_event_ids or event_id in source_event_ids:
+            events.append(event)
+
+    evidence_payload = {
+        "scenario": scenario_context.get("scenario"),
+        "events": events,
+        "source_dimensions": candidate.get("source_dimensions"),
+        "lever_provenance": candidate.get("lever_provenance"),
+        "scope": candidate.get("scope"),
+        "time_window": candidate.get("time_window"),
+        "direction": candidate.get("direction"),
+    }
+    parts: list[str] = []
+
+    def visit(item: object) -> None:
+        if isinstance(item, Mapping):
+            for nested in item.values():
+                visit(nested)
+            return
+        if isinstance(item, list | tuple):
+            for nested in item:
+                visit(nested)
+            return
+        if item is not None:
+            text = str(item).strip()
+            if text:
+                parts.append(text)
+
+    visit(evidence_payload)
+    return " ".join(parts)
+
+
+def _unique_grounded_aliases_by_axis(
+    coordinates: list[dict[str, Any]],
+    fixed_axis_names: list[str],
+) -> dict[str, dict[str, tuple[str, ...]]]:
+    result: dict[str, dict[str, tuple[str, ...]]] = {}
+    for axis_name in fixed_axis_names:
+        values = {
+            str(coordinate.get(axis_name) or "").strip()
+            for coordinate in coordinates
+            if str(coordinate.get(axis_name) or "").strip()
+        }
+        targets_by_alias: dict[str, set[str]] = {}
+        aliases_by_value: dict[str, set[str]] = {}
+        for value in values:
+            aliases = _grounded_axis_aliases(axis_name, value)
+            aliases_by_value[value] = aliases
+            for alias in aliases:
+                targets_by_alias.setdefault(alias, set()).add(value)
+        result[axis_name] = {
+            value: tuple(
+                sorted(alias for alias in aliases if len(targets_by_alias.get(alias, ())) == 1),
+            )
+            for value, aliases in aliases_by_value.items()
+        }
+    return result
+
+
+def _year_only_evidence_matches(
+    evidence_text: str,
+    year: object,
+    *,
+    anchor_year: int,
+) -> bool:
+    try:
+        slot_year = int(year)
+    except (TypeError, ValueError):
+        return False
+    normalized = unicodedata.normalize("NFKC", evidence_text).casefold()
+    explicit_years = {int(item) for item in re.findall(r"(?<!\d)(20\d{2})(?!\d)", normalized)}
+    for raw_start, raw_end in re.findall(
+        r"(?<!\d)(20\d{2})\s*[-~\u2013\u2014]\s*(20\d{2})(?!\d)",
+        normalized,
+    ):
+        start, end = int(raw_start), int(raw_end)
+        if start <= end:
+            explicit_years.update(range(start, end + 1))
+    if explicit_years:
+        return slot_year in explicit_years
+    if "내년" in normalized:
+        return slot_year == anchor_year + 1
+    if "올해" in normalized or "단기" in normalized or "short term" in normalized:
+        return slot_year == anchor_year
+    return False
+
+
+def _grounded_identity_matches(
+    parameter: str,
+    fixed_axis_names: list[str],
+    matched_axes: set[str],
+) -> bool:
+    if parameter in {LIQ_UTIL_PARAMETER, "LiqProdAdjustment"}:
+        plant_axes = {axis for axis in fixed_axis_names if "plant" in axis.casefold()}
+        train_axes = {axis for axis in fixed_axis_names if "train" in axis.casefold()}
+        return bool(plant_axes) and bool(train_axes) and plant_axes <= matched_axes and train_axes <= matched_axes
+    if parameter == "PipelineAdjustment":
+        pipeline_axes = {axis for axis in fixed_axis_names if "pipeline" in axis.casefold()}
+        from_axes = {axis for axis in fixed_axis_names if axis.casefold().startswith("from")}
+        to_axes = {axis for axis in fixed_axis_names if axis.casefold().startswith("to")}
+        return bool(pipeline_axes & matched_axes) or (
+            bool(from_axes) and bool(to_axes) and from_axes <= matched_axes and to_axes <= matched_axes
+        )
+    entity_axes = {
+        axis for axis in fixed_axis_names if any(marker in axis.casefold() for marker in _GROUNDED_ENTITY_AXIS_MARKERS)
+    }
+    if entity_axes:
+        return bool(entity_axes & matched_axes)
+    location_axes = {
+        axis
+        for axis in fixed_axis_names
+        if any(marker in axis.casefold() for marker in ("country", "region", "province"))
+    }
+    return bool(location_axes & matched_axes)
+
+
+def _grounded_v4_slot_candidates(  # noqa: C901
+    candidate: Mapping[str, Any],
+    candidate_catalog: dict[str, Any],
+    scenario_context: Mapping[str, Any],
+) -> list[dict[str, Any]]:
+    name = parameter_name(candidate)
+    if name == POWER_MIX_PARAMETER:
+        return []
+    coordinates = _expanded_catalog_coordinates(candidate_catalog)
+    fixed_axis_names = [str(axis_name) for axis_name in candidate_catalog.get("fixed_axis_names") or []]
+    time_axis_names = [str(axis_name) for axis_name in candidate_catalog.get("time_axis_names") or []]
+    if not coordinates:
+        return []
+    evidence_text = _grounded_evidence_text(candidate, scenario_context)
+    if fixed_axis_names:
+        aliases_by_axis = _unique_grounded_aliases_by_axis(
+            coordinates,
+            fixed_axis_names,
+        )
+        fixed_coordinates_by_key: dict[str, dict[str, Any]] = {}
+        for coordinate in coordinates:
+            fixed_coordinate = {axis_name: coordinate.get(axis_name) for axis_name in fixed_axis_names}
+            fixed_coordinates_by_key.setdefault(
+                _canonical_coordinate_key(fixed_coordinate),
+                fixed_coordinate,
+            )
+        matching_fixed_keys: set[str] = set()
+        for fixed_key, coordinate in fixed_coordinates_by_key.items():
+            matched_axes = {
+                axis_name
+                for axis_name in fixed_axis_names
+                if any(
+                    _grounded_contains(evidence_text, alias)
+                    for alias in aliases_by_axis.get(axis_name, {}).get(
+                        str(coordinate.get(axis_name) or "").strip(),
+                        (),
+                    )
+                )
+            }
+            if _grounded_identity_matches(
+                name,
+                fixed_axis_names,
+                matched_axes,
+            ):
+                matching_fixed_keys.add(fixed_key)
+        if len(matching_fixed_keys) != 1:
+            return []
+        selected_fixed_key = next(iter(matching_fixed_keys))
+        matching = [
+            coordinate
+            for coordinate in coordinates
+            if _canonical_coordinate_key(
+                {axis_name: coordinate.get(axis_name) for axis_name in fixed_axis_names},
+            )
+            == selected_fixed_key
+        ]
+    else:
+        # Global inputs such as ShippingCost have only a time axis.  Their
+        # identity is already unambiguous; period evidence remains mandatory.
+        matching = coordinates
+
+    anchor_year, anchor_month = _current_year_month()
+    period_matching: list[dict[str, Any]] = []
+    for coordinate in matching:
+        try:
+            year = int(coordinate.get("Year")) if "Year" in time_axis_names else None
+            month = int(coordinate.get("Month")) if "Month" in time_axis_names else None
+        except (TypeError, ValueError):
+            continue
+        if year is not None and (
+            year < anchor_year or (year == anchor_year and month is not None and month < anchor_month)
+        ):
+            continue
+        if "Year" in time_axis_names and "Month" in time_axis_names:
+            if time_evidence_matches_slot(
+                evidence_text,
+                year=year,
+                month=month,
+                anchor_year=anchor_year,
+                anchor_month=anchor_month,
+            ):
+                period_matching.append(coordinate)
+        elif "Year" in time_axis_names:
+            if _year_only_evidence_matches(
+                evidence_text,
+                year,
+                anchor_year=anchor_year,
+            ):
+                period_matching.append(coordinate)
+        else:
+            period_matching.append(coordinate)
+    if not period_matching:
+        return []
+    unique_periods = {_canonical_coordinate_key(coordinate): coordinate for coordinate in period_matching}
+    return sorted(
+        unique_periods.values(),
+        key=lambda item: (
+            int(item.get("Year") or 0),
+            int(item.get("Month") or 0),
+            int(item.get("Period") or 0),
+            _canonical_coordinate_key(item),
+        ),
+    )
+
+
+def _grounded_v4_slot_recovery(
+    slots: list[dict[str, Any]],
+    candidates: list[dict[str, Any]],
+    slot_catalog: list[dict[str, Any]],
+    *,
+    scenario_context: Mapping[str, Any] | None,
+) -> tuple[list[dict[str, Any]], list[str]]:
+    if not is_v4_contract_context(scenario_context):
+        return slots, []
+    existing_coordinates: dict[str, set[str]] = {}
+    for slot in slots:
+        candidate_key = str(slot.get("candidate_key") or "")
+        if not candidate_key:
+            continue
+        existing_coordinates.setdefault(candidate_key, set()).add(
+            _canonical_coordinate_key(_coordinates_for_selected_slot(slot)),
+        )
+    catalog_by_key = {str(item.get("candidate_key") or ""): item for item in slot_catalog if isinstance(item, dict)}
+    recovered = list(slots)
+    warnings: list[str] = []
+    for candidate in candidates:
+        candidate_key = str(candidate.get("candidate_key") or "")
+        if not candidate_key:
+            continue
+        catalog = catalog_by_key.get(candidate_key)
+        if catalog is None:
+            continue
+        grounded = _grounded_v4_slot_candidates(
+            candidate,
+            catalog,
+            scenario_context or {},
+        )
+        for coordinate in grounded:
+            coordinate_key = _canonical_coordinate_key(coordinate)
+            if coordinate_key in existing_coordinates.get(candidate_key, set()):
+                continue
+            recovered.append(
+                _slot_from_coordinates(
+                    candidate_key,
+                    coordinate,
+                    note=("시나리오에 명시된 대상과 기간이 모델의 적용 위치와 일치해 함께 반영했습니다."),
+                ),
+            )
+            recovered[-1]["_selection_method"] = "V4_GROUNDED_CATALOG_EXPANSION"
+            existing_coordinates.setdefault(candidate_key, set()).add(
+                coordinate_key,
+            )
+            warnings.append(
+                "Step2 exact slot을 evidence-grounded unique-target/all-explicit-period 규칙으로 "
+                "복구·확장했습니다: "
+                f"candidate={candidate_key}, coordinates={to_compact_json(coordinate)}",
+            )
+    return recovered, warnings
+
+
+def _slot_from_coordinates(
+    candidate_key: str,
+    coordinates: Mapping[str, Any],
+    *,
+    note: str,
+) -> dict[str, Any]:
+    payload = ParameterSlotProposal(
+        candidate_key=candidate_key,
+        slot_axes=[
+            ParameterSlotAxis(axis_name=axis_name, axis_value=axis_value)
+            for axis_name, axis_value in coordinates.items()
+        ],
+    ).model_dump()
+    payload["_user_notes"] = [note]
+    payload["_selection_method"] = "V4_CONSERVATIVE_UNIQUE_INFERENCE"
+    return payload
+
+
+def _conservative_v4_slot_recovery(
+    slots: list[dict[str, Any]],
+    candidates: list[dict[str, Any]],
+    slot_catalog: list[dict[str, Any]],
+    *,
+    scenario_context: Mapping[str, Any] | None,
+) -> tuple[list[dict[str, Any]], list[str]]:
+    if not is_v4_contract_context(scenario_context):
+        return slots, []
+    existing_keys = {str(slot.get("candidate_key") or "") for slot in slots if str(slot.get("candidate_key") or "")}
+    catalog_by_key = {str(item.get("candidate_key") or ""): item for item in slot_catalog if isinstance(item, dict)}
+    recovered = list(slots)
+    warnings: list[str] = []
+    for candidate in candidates:
+        candidate_key = str(candidate.get("candidate_key") or "")
+        name = parameter_name(candidate)
+        if not candidate_key or candidate_key in existing_keys:
+            continue
+        if name == POWER_MIX_PARAMETER or name in {
+            LIQ_UTIL_PARAMETER,
+            "LiqProdAdjustment",
+        }:
+            continue
+        catalog = catalog_by_key.get(candidate_key)
+        if catalog is None:
+            continue
+        fixed_axis_names = [str(axis_name) for axis_name in catalog.get("fixed_axis_names") or []]
+        if {"LNG Plant", "LNG Plant Train"} & set(fixed_axis_names):
+            continue
+        coordinates = _expanded_catalog_coordinates(catalog)
+        if not coordinates:
+            continue
+        current_year, current_month = _current_year_month()
+        current_or_future_coordinates: list[dict[str, Any]] = []
+        for coordinate in coordinates:
+            raw_year = coordinate.get("Year")
+            raw_month = coordinate.get("Month")
+            if raw_year is None:
+                current_or_future_coordinates.append(coordinate)
+                continue
+            try:
+                year = int(raw_year)
+                month = int(raw_month) if raw_month is not None else None
+            except (TypeError, ValueError):
+                continue
+            if year > current_year or (year == current_year and (month is None or month >= current_month)):
+                current_or_future_coordinates.append(coordinate)
+        coordinates = current_or_future_coordinates
+        if not coordinates:
+            continue
+        fixed_targets = {
+            _canonical_coordinate_key(
+                {axis_name: coordinate.get(axis_name) for axis_name in fixed_axis_names},
+            )
+            for coordinate in coordinates
+        }
+        if len(fixed_targets) != 1:
+            continue
+        selected_coordinate = min(
+            coordinates,
+            key=lambda item: (
+                int(item.get("Year") or 0),
+                int(item.get("Month") or 0),
+                int(item.get("Period") or 0),
+                _canonical_coordinate_key(item),
+            ),
+        )
+        note = (
+            "적용 대상은 하나로 확인됐지만 기간이 명확하지 않아, 사용 가능한 기간 중 가장 이른 값을 "
+            "초기 제안으로 선택했습니다."
+        )
+        recovered.append(
+            _slot_from_coordinates(
+                candidate_key,
+                selected_coordinate,
+                note=note,
+            ),
+        )
+        warnings.append(
+            "Step2 응답 누락을 unique-target conservative-period 규칙으로 복구했습니다: "
+            f"candidate={candidate_key}, coordinates={to_compact_json(selected_coordinate)}",
+        )
+    return recovered, warnings
+
+
 def _parameter_slot_from_llm(slot: LLMSlotProposal) -> dict[str, Any]:
-    return ParameterSlotProposal(
+    payload = ParameterSlotProposal(
         candidate_key=slot.candidate_key,
         slot_axes=[
             ParameterSlotAxis(
@@ -3244,6 +5611,9 @@ def _parameter_slot_from_llm(slot: LLMSlotProposal) -> dict[str, Any]:
             for axis in slot.slot_axes
         ],
     ).model_dump()
+    if slot.entity_coordinate_resolution is not None:
+        payload["_llm_entity_coordinate_resolution"] = slot.entity_coordinate_resolution.model_dump(exclude_none=True)
+    return payload
 
 
 def _group_selected_slots_by_candidate(
@@ -3256,6 +5626,16 @@ def _group_selected_slots_by_candidate(
             continue
         grouped.setdefault(candidate_key, []).append(slot)
     return grouped
+
+
+def _slot_user_notes(slots: list[dict[str, Any]]) -> list[str]:
+    notes: list[str] = []
+    for slot in slots:
+        for note in slot.get("_user_notes") or []:
+            normalized = " ".join(str(note or "").split())
+            if normalized and normalized not in notes:
+                notes.append(normalized)
+    return notes
 
 
 def _assign_slot_keys(slots: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -3335,6 +5715,7 @@ def _parameter_value_cell_from_slot_value(
     reference: dict[str, Any],
     *,
     proposed_value: int | float,
+    rationale_ko: str | None = None,
 ) -> ParameterValueCell:
     coordinates = {
         **(reference.get("axes") or {}),
@@ -3353,18 +5734,501 @@ def _parameter_value_cell_from_slot_value(
         basecase_value=basecase_value,
         lut_value=lut_value,
         proposed_value=proposed_value,
-        rationale_ko=slot_value.rationale_ko,
+        rationale_ko=rationale_ko or slot_value.rationale_ko,
         basecase_reference_ids=([str(basecase_reference_id)] if basecase_reference_id is not None else []),
     )
 
 
-def _sanitize_llm_adjustments(
+def _numeric_reference_value(reference: Mapping[str, Any]) -> float:
+    raw_value = reference.get("llm_reference_value") if "llm_reference_value" in reference else reference.get("value")
+    return strict_float(raw_value, label="Step3 policy reference_value")
+
+
+def _routing_evidence_summary(candidate: Mapping[str, Any]) -> dict[str, str]:
+    evidence_items = [item for item in candidate.get("routing_evidence") or [] if isinstance(item, Mapping)]
+
+    def joined(field: str, fallback: str, *, separator: str = " / ") -> str:
+        values: list[str] = []
+        for item in evidence_items:
+            value = " ".join(str(item.get(field) or "").split())
+            if value and value not in values:
+                values.append(value)
+        return separator.join(values) or fallback
+
+    return {
+        "causal_path": joined(
+            "causal_path_ko",
+            "선택한 시나리오 조건이 이 모델 입력값에 직접 영향을 줍니다",
+            separator=" 또한 ",
+        ),
+        "target_scope": joined("target_scope_ko", "현재 제안 대상", separator="; "),
+        "time_scope": joined("time_scope_ko", "현재 제안 기간", separator="; "),
+        "routing_basis": joined("evidence_basis", "DERIVED"),
+        "routing_rationale": joined(
+            "rationale_ko",
+            "선택된 Scenario Lever와 catalog binding을 기준으로 parameter를 선정",
+        ),
+    }
+
+
+def _user_facing_text(value: object, *, fallback: str = "") -> str:
+    text = " ".join(str(value or "").split())
+    for pattern, replacement in _INTERNAL_RATIONALE_REPLACEMENTS:
+        text = re.sub(pattern, replacement, text, flags=re.IGNORECASE)
+    for token, replacement in _INTERNAL_RATIONALE_ASCII_TOKEN_REPLACEMENTS:
+        text = re.sub(
+            rf"(?<![A-Za-z0-9_]){re.escape(token)}(?![A-Za-z0-9_])",
+            replacement,
+            text,
+            flags=re.IGNORECASE,
+        )
+    text = re.sub(
+        r"(?<![A-Za-z0-9_])d\d+_v\d+(?![A-Za-z0-9_])",
+        "선택한 시나리오 조건",
+        text,
+        flags=re.IGNORECASE,
+    )
+    text = re.sub(
+        r"(?<![A-Za-z0-9_])bounded-expert-v\d+(?![A-Za-z0-9_])",
+        "보수적 산정 기준",
+        text,
+        flags=re.IGNORECASE,
+    )
+    text = re.sub(
+        r"(?<![A-Za-z0-9_])Step\s*(?:1\.5|2|3)(?![A-Za-z0-9_])",
+        "내부 판단 과정",
+        text,
+        flags=re.IGNORECASE,
+    )
+    text = text.replace("슬롯", "적용 위치")
+    text = text.replace("정확한 적용 연도 적용 위치", "정확한 적용 연도")
+    text = text.replace("적용 연도 좌표", "적용 연도")
+    text = text.replace("연도 좌표", "연도 위치")
+    text = text.replace("정확한 적용 연도은", "정확한 적용 연도는")
+    text = text.replace("적용 위치은", "적용 위치는")
+    text = text.replace("후보 정책이 허용하는 범위 내의", "모델 입력 범위의")
+    text = text.replace("후보 정책 범위 내에서", "모델 입력 범위에")
+    text = text.replace("이 단계에서 확정하지 않는다", "세부 값 산정 시 확정한다")
+    text = re.sub(
+        r"(정확한 )?적용 연도(?: 위치)?는 (?:후속|이후) 단계에서 [^.;]+(?:합니다|됩니다|한다|된다)",
+        r"\1적용 연도는 세부 값 산정 시 확정합니다",
+        text,
+    )
+    text = text.replace("후속 단계", "세부 값 산정 과정")
+    text = text.replace("이후 단계", "세부 값 산정 과정")
+    for plain_ending, polite_ending in _USER_POLITE_ENDING_REPLACEMENTS:
+        text = re.sub(
+            rf"{re.escape(plain_ending)}(?=\s*(?:[.!?,;]|/|$))",
+            polite_ending,
+            text,
+        )
+    text = re.sub(r"\.(?=\s*;)", "", text)
+    text = re.sub(r"\.{2,}", ".", text)
+    text = re.sub(r"\s+([,.;:])", r"\1", text)
+    text = re.sub(r"\s{2,}", " ", text).strip(" ;")
+    return text or fallback
+
+
+def _user_clause(value: object, *, fallback: str = "") -> str:
+    return _user_facing_text(value, fallback=fallback).rstrip(" .;:")
+
+
+def _user_excerpt(
+    value: object,
+    *,
+    fallback: str = "",
+    max_chars: int,
+) -> str:
+    text = _user_clause(value, fallback=fallback)
+    if len(text) <= max_chars:
+        return text
+    prefix = text[: max_chars - 1]
+    cut_at = max(prefix.rfind(". "), prefix.rfind(", "), prefix.rfind("; "), prefix.rfind(" "))
+    if cut_at >= max_chars // 2:
+        prefix = prefix[:cut_at]
+    return f"{prefix.rstrip(' ,.;:')}…"
+
+
+def _complete_user_statement(text: str) -> str:
+    for action_noun in ("한정", "반영", "유지", "적용", "확인", "제시", "가정", "산정"):
+        if text.endswith(action_noun):
+            return f"{text}했습니다"
+    return text
+
+
+def _compact_user_notes(user_notes: list[str]) -> str:
+    if not user_notes:
+        return ""
+    normalized: list[str] = []
+    for note in user_notes:
+        normalized_note = _user_clause(note)
+        if normalized_note:
+            normalized.append(normalized_note)
+    parts: list[str] = []
+    if any("명칭으로 통일" in note for note in normalized):
+        parts.append("설비·호기 표기는 모델에 등록된 명칭으로 통일했습니다")
+    if any("같은 대상으로 확인" in note for note in normalized):
+        parts.append("근거의 설비·호기 표기가 모델의 등록 대상과 일치함을 확인했습니다")
+    if any("분석 기준일이 포함된 한 달" in note for note in normalized):
+        parts.append("'단기'는 분석 기준일이 포함된 한 달로 해석했습니다")
+    covered_fragments = ("명칭으로 통일", "같은 대상으로 확인", "분석 기준일이 포함된 한 달")
+    remaining = [note for note in normalized if not any(fragment in note for fragment in covered_fragments)]
+    parts.extend(_user_excerpt(note, max_chars=140) for note in remaining[:2])
+    if len(remaining) > 2:
+        parts.append(f"그 밖의 적용 확인 {len(remaining) - 2}건은 같은 기준으로 처리했습니다")
+    return ". ".join(parts)
+
+
+def _user_number(value: float) -> str:
+    if math.isclose(value, 0.0, rel_tol=0.0, abs_tol=1e-12):
+        return "0"
+    return f"{value:,.10g}"
+
+
+def _user_value(value: float, unit: str) -> str:
+    number = _user_number(value)
+    if unit in {"fractional_yoy_growth", "fraction", "utilization_fraction"}:
+        return f"{number} ({_user_number(value * 100)}%)"
+    unit_label = _USER_UNIT_LABELS.get(unit, unit)
+    return f"{number} {unit_label}".strip()
+
+
+def _user_coordinates(coordinates: Mapping[str, Any]) -> str:
+    parts = [
+        f"{_USER_AXIS_LABELS.get(str(axis_name), str(axis_name))} {axis_value}"
+        for axis_name, axis_value in coordinates.items()
+    ]
+    return ", ".join(parts) or "현재 제안 위치"
+
+
+def _user_variation_factor_summary(variation_factors: Mapping[str, Any] | None) -> str:
+    if not variation_factors:
+        return ""
+    duration = _USER_DURATION_LABELS.get(str(variation_factors.get("duration") or ""), "판단하지 않음")
+    scope = _USER_SCOPE_LABELS.get(str(variation_factors.get("scope") or ""), "판단하지 않음")
+    offset = _USER_OFFSET_LABELS.get(str(variation_factors.get("offset") or ""), "판단하지 않음")
+    confidence = _USER_CONFIDENCE_LABELS.get(str(variation_factors.get("confidence") or ""), "판단하지 않음")
+    summary = f"조정폭은 {duration} 영향·{scope} 범위·{offset}·{confidence} 근거를 반영했습니다."
+    sibling_position = _USER_SIBLING_POSITION_LABELS.get(
+        str(variation_factors.get("sibling_position") or ""),
+    )
+    if sibling_position:
+        summary = f"{summary} 비교 가능한 시나리오 안에서는 {sibling_position}으로 판단했습니다."
+    return summary
+
+
+def _user_calculation(
+    *,
+    policy: ParameterVariationPolicy,
+    reference_value: float,
+    proposed_value: float,
+    direction: str,
+    evidence_basis: str,
+    calculation_ko: str,
+    variation_factors: Mapping[str, Any] | None,
+    clipped: bool,
+) -> str:
+    if direction == "unchanged" or math.isclose(
+        reference_value,
+        proposed_value,
+        rel_tol=0.0,
+        abs_tol=1e-12,
+    ):
+        calculation = "시나리오 영향이 서로 상쇄되거나 변화 방향을 확정하기 어려워 현재 모델값을 유지했습니다."
+    else:
+        delta = proposed_value - reference_value
+        movement = "높였습니다" if delta > 0 else "낮췄습니다"
+        if policy.method == "relative" and not math.isclose(reference_value, 0.0, rel_tol=0.0, abs_tol=1e-12):
+            percent = abs(delta / reference_value) * 100
+            calculation = f"현재 모델값에서 {_user_number(percent)}% {movement}."
+        elif policy.method == "integer_step":
+            calculation = f"현재 모델값에서 {_user_number(abs(delta))}단계 {movement}."
+        elif policy.unit in {"fractional_yoy_growth", "fraction", "utilization_fraction"}:
+            calculation = f"현재 모델값에서 {_user_number(abs(delta) * 100)}%p {movement}."
+        else:
+            unit_label = _USER_UNIT_LABELS.get(policy.unit, policy.unit)
+            calculation = f"현재 모델값에서 {_user_number(abs(delta))} {unit_label} {movement}."
+
+    if evidence_basis == "BOUNDED_ASSUMPTION":
+        factor_summary = _user_variation_factor_summary(variation_factors)
+        calculation = (
+            f"{calculation} {factor_summary}"
+            if factor_summary
+            else f"{calculation} 직접 전망치가 없어 보수적인 조정폭을 적용했습니다."
+        )
+    else:
+        detail = _user_clause(calculation_ko)
+        if detail and detail not in calculation:
+            calculation = f"{calculation} 세부 산정: {detail}."
+    if clipped:
+        calculation = f"{calculation} 모델 입력값의 허용 범위를 벗어나지 않도록 상한·하한 안에서 조정했습니다."
+    return calculation
+
+
+def _user_parameter_rationale(
+    *,
+    candidate: Mapping[str, Any],
+    policy_trace: list[dict[str, Any]],
+) -> str:
+    routing = _routing_evidence_summary(candidate)
+    causal_path = _user_excerpt(
+        routing["causal_path"],
+        fallback="선택한 시나리오의 변화가 이 모델 입력값에 영향을 주는 것으로 판단했습니다.",
+        max_chars=220,
+    )
+    target_scope = _user_excerpt(routing["target_scope"], fallback="현재 제안 대상", max_chars=130)
+    time_scope = _user_excerpt(routing["time_scope"], fallback="현재 제안 기간", max_chars=130)
+    basis_note = ""
+    evidence_bases = {str(trace.get("evidence_basis") or "") for trace in policy_trace}
+    if "BOUNDED_ASSUMPTION" in evidence_bases:
+        basis_note = " 직접 전망치가 없는 값은 현재 모델값을 기준으로 보수적으로 제안했습니다."
+    elif evidence_bases == {"NEUTRAL"}:
+        basis_note = " 변화 방향이 불분명한 값은 현재 모델값을 유지했습니다."
+    return (
+        f"제안 이유: {causal_path}. 적용 범위·기간: {target_scope}; {time_scope}.{basis_note} "
+        "세부 산정 근거와 가정은 각 적용 위치에서 확인해 주세요."
+    )
+
+
+def _fixed_slot_rationale(
+    *,
+    candidate: Mapping[str, Any],
+    coordinates: Mapping[str, Any],
+    reference_value: float,
+    proposed_value: float,
+    evidence_basis: str,
+    direction: str,
+    calculation_ko: str,
+    evidence_ko: str | None,
+    assumption_ko: str | None,
+    original_rationale_ko: str,
+    variation_factors: Mapping[str, Any] | None,
+    clipped: bool,
+    original_value_was_recomputed: bool,
+) -> str:
+    routing = _routing_evidence_summary(candidate)
+    policy = get_parameter_variation_policy(parameter_name(candidate))
+    basis_label = _USER_EVIDENCE_LABELS.get(evidence_basis, "시나리오 근거를 바탕으로 산정했습니다")
+    original_explanation = _user_excerpt(
+        original_rationale_ko,
+        fallback="시나리오의 영향 방향과 적용 범위를 반영했습니다",
+        max_chars=180,
+    )
+    evidence_text = _complete_user_statement(_user_excerpt(evidence_ko, max_chars=180))
+    if original_value_was_recomputed:
+        original_explanation = evidence_text or "시나리오의 영향 방향과 적용 범위를 반영했습니다"
+    if evidence_text and evidence_text not in original_explanation:
+        original_explanation = f"{original_explanation}. {evidence_text}"
+    assumption_text = _complete_user_statement(_user_excerpt(assumption_ko, max_chars=170))
+    if not assumption_text:
+        assumption_text = {
+            "OBSERVED": "제시된 수치의 대상·단위·기간이 이 모델 입력값과 일치한다고 보았습니다.",
+            "DERIVED": "제시된 증감 정보와 계산 관계가 이 모델 입력값에 직접 적용된다고 보았습니다.",
+            "BOUNDED_ASSUMPTION": "직접 전망치가 없어 시나리오의 방향과 영향 범위를 초기값으로 환산했습니다.",
+            "NEUTRAL": "상반된 영향이 서로 상쇄되거나 변화 방향을 확정하기 어렵다고 보았습니다.",
+        }.get(evidence_basis, "시나리오의 대상·단위·기간이 이 모델 입력값과 일치한다고 보았습니다.")
+    assumption_text = assumption_text.rstrip(" .;:")
+    uncertainty = (
+        "직접 관측값이 아닌 초기 제안이므로 실제 전망과 함께 검토해 주세요."
+        if evidence_basis == "BOUNDED_ASSUMPTION"
+        else "근거의 대상·단위·기간이 실제 적용 조건과 일치하는지 검토해 주세요."
+    )
+    calculation = _user_calculation(
+        policy=policy,
+        reference_value=reference_value,
+        proposed_value=proposed_value,
+        direction=direction,
+        evidence_basis=evidence_basis,
+        calculation_ko=calculation_ko,
+        variation_factors=variation_factors,
+        clipped=clipped,
+    )
+    return (
+        f"적용 대상: {_user_coordinates(coordinates)}. "
+        f"시나리오 영향: {_user_excerpt(routing['causal_path'], max_chars=180)}. "
+        f"조정 내용: 현재 모델값 {_user_value(reference_value, policy.unit)}에서 "
+        f"제안값 {_user_value(proposed_value, policy.unit)}로 조정했습니다. "
+        f"산정 근거: {basis_label}. {original_explanation}. "
+        f"계산 방법: {calculation} "
+        f"주요 가정: {assumption_text}. "
+        f"확인 필요: {uncertainty}"
+    )
+
+
+def _v4_policy_value(  # noqa: C901
+    *,
+    slot_value: LLMValueCell,
+    candidate: Mapping[str, Any],
+    reference: Mapping[str, Any],
+    variation_mode: VariationMode,
+    require_structured_evidence: bool = False,
+    variation_profile_enabled: bool = True,
+) -> tuple[float, dict[str, Any]]:
+    name = parameter_name(candidate)
+    policy = get_parameter_variation_policy(name)
+    reference_value = _numeric_reference_value(reference)
+    if require_structured_evidence and not _has_complete_v4_value_evidence(
+        slot_value,
+        candidate,
+        require_variation_factors=variation_profile_enabled,
+    ):
+        raise MIBaseError(
+            ErrorCode.INVALID_REQUEST,
+            detail=("v4.1.7 value requires an evidence-specific direction and observed/derived/assumption explanation"),
+        )
+    raw_basis = slot_value.evidence_basis
+    evidence_basis = raw_basis or "DERIVED"
+    direction: VariationDirection = slot_value.direction or (
+        "unchanged"
+        if slot_value.proposed_value is not None
+        and math.isclose(
+            strict_float(slot_value.proposed_value, label="legacy proposed_value"),
+            reference_value,
+            rel_tol=0.0,
+            abs_tol=1e-12,
+        )
+        else "increase"
+    )
+    severity: VariationSeverity | None = slot_value.severity
+    calculation_ko = " ".join(str(slot_value.calculation_ko or "").split())
+    clipped = False
+    llm_factors = slot_value.variation_factors
+    variation_factors = (
+        VariationFactors(
+            duration=llm_factors.duration,
+            scope=llm_factors.scope,
+            offset=llm_factors.offset,
+            confidence=llm_factors.confidence,
+            sibling_position=llm_factors.sibling_position,
+            rationale_ko=" ".join(llm_factors.rationale_ko.split()),
+        )
+        if llm_factors is not None
+        else None
+    )
+    profile_position: float | None = None
+    applied_magnitude: float | None = None
+
+    if evidence_basis == "NEUTRAL":
+        proposed_value = reference_value
+        direction = "unchanged"
+        calculation_ko = calculation_ko or "상충 또는 unchanged 근거에 따라 기준값 유지"
+    elif evidence_basis == "BOUNDED_ASSUMPTION":
+        if direction not in {"increase", "decrease", "unchanged"} or severity is None:
+            raise MIBaseError(
+                ErrorCode.INVALID_REQUEST,
+                detail="bounded assumption requires direction and severity",
+            )
+        if policy.method == "atomic_share":
+            if slot_value.proposed_value is None:
+                raise MIBaseError(
+                    ErrorCode.INVALID_REQUEST,
+                    detail="PowerMix bounded assumption requires an atomic vector value",
+                )
+            proposed_value = strict_float(
+                slot_value.proposed_value,
+                label="PowerMix bounded proposed_value",
+            )
+            applied_severity, clipped = validate_atomic_share_assumption(
+                reference_value=reference_value,
+                proposed_value=proposed_value,
+                severity=severity,
+                mode=variation_mode,
+            )
+            severity = applied_severity
+            calculation_ko = (
+                f"기준 share {reference_value:g}에서 {proposed_value:g}로 이동; "
+                "동일 국가·연도 atomic vector 합계 1 제약은 서버에서 별도 검증"
+            )
+        else:
+            calculation = calculate_bounded_assumption(
+                parameter_name=name,
+                reference_value=reference_value,
+                direction=direction,
+                severity=severity,
+                mode=variation_mode,
+                variation_factors=variation_factors,
+                profile_enabled=variation_profile_enabled,
+            )
+            proposed_value = calculation.proposed_value
+            severity = calculation.applied_severity
+            clipped = calculation.clipped
+            calculation_ko = calculation.calculation_ko
+            profile_position = calculation.profile_position
+            applied_magnitude = calculation.applied_magnitude
+    else:
+        if slot_value.proposed_value is None:
+            raise MIBaseError(
+                ErrorCode.INVALID_REQUEST,
+                detail=f"{evidence_basis} value requires proposed_value",
+            )
+        proposed_value = strict_float(
+            slot_value.proposed_value,
+            label=f"{evidence_basis} proposed_value",
+        )
+        calculation_ko = calculation_ko or ("입력에 명시된 값 또는 입력 근거에서 산출한 값을 parameter 단위로 적용")
+
+    inferred_direction: VariationDirection
+    if math.isclose(
+        proposed_value,
+        reference_value,
+        rel_tol=0.0,
+        abs_tol=1e-12,
+    ):
+        inferred_direction = "unchanged"
+    elif proposed_value > reference_value:
+        inferred_direction = "increase"
+    else:
+        inferred_direction = "decrease"
+    if evidence_basis in {"OBSERVED", "DERIVED", "NEUTRAL"}:
+        if require_structured_evidence and direction != inferred_direction:
+            raise MIBaseError(
+                ErrorCode.INVALID_REQUEST,
+                detail=(
+                    "structured direction does not match the proposed/reference values: "
+                    f"declared={direction}, inferred={inferred_direction}"
+                ),
+            )
+        direction = inferred_direction
+
+    return proposed_value, {
+        "policy_release": VARIATION_POLICY_RELEASE,
+        "parameter_name": name,
+        "evidence_basis": evidence_basis,
+        "direction": direction,
+        "requested_severity": slot_value.severity,
+        "applied_severity": severity,
+        "calculation_ko": calculation_ko,
+        "mode": variation_mode,
+        "clipped": clipped,
+        "structured_fields_supplied": raw_basis is not None,
+        "variation_profile_enabled": variation_profile_enabled,
+        "variation_factors": (
+            {
+                "duration": variation_factors.duration,
+                "scope": variation_factors.scope,
+                "offset": variation_factors.offset,
+                "confidence": variation_factors.confidence,
+                "sibling_position": variation_factors.sibling_position,
+                "rationale_ko": variation_factors.rationale_ko,
+            }
+            if variation_factors is not None
+            else None
+        ),
+        "variation_profile_position": profile_position,
+        "applied_magnitude": applied_magnitude,
+    }
+
+
+def _sanitize_llm_adjustments(  # noqa: C901
     adjustments: list[LLMValueAdjustment],
     candidates: list[dict[str, Any]],
     slots: list[dict[str, Any]],
     reference_records: list[dict[str, Any]],
     *,
     scenario_context: Mapping[str, Any] | None = None,
+    variation_mode: VariationMode = DEFAULT_VARIATION_MODE,
+    require_structured_evidence: bool = False,
+    variation_profile_enabled: bool = True,
 ) -> tuple[list[dict[str, Any]], list[str]]:
     v4_contract_context = is_v4_contract_context(scenario_context)
     candidate_by_key = {str(candidate["candidate_key"]): candidate for candidate in candidates}
@@ -3421,6 +6285,7 @@ def _sanitize_llm_adjustments(
         proposed_values_by_slot_key: dict[str, float] = {}
         value_cells_by_slot_key: dict[str, ParameterValueCell] = {}
         value_grid: list[ParameterValueCell] = []
+        policy_trace: list[dict[str, Any]] = []
         for slot_value in adjustment.slot_values:
             slot_key = str(slot_value.slot_key or "").strip()
             context = expected_contexts.get(slot_key)
@@ -3441,64 +6306,173 @@ def _sanitize_llm_adjustments(
                 logger.warning("[model-parameter] {}", warning)
                 warnings.append(warning)
                 continue
-            if slot_value.proposed_value is None:
-                invalid_slot_keys.add(slot_key)
-                warning = (
-                    "Step3 응답의 proposedValue가 null이라 제외했습니다: "
-                    f"candidate={adjustment.candidate_key}, slotKey={slot_key}"
-                )
-                logger.warning("[model-parameter] {}", warning)
-                warnings.append(warning)
-                continue
             try:
-                validated_proposed_value = strict_float(
-                    slot_value.proposed_value,
-                    label=(f"Step3 proposedValue (candidate={adjustment.candidate_key}, slotKey={slot_key})"),
-                )
-            except MIBaseError:
+                if v4_contract_context:
+                    validated_proposed_value, slot_policy_trace = _v4_policy_value(
+                        slot_value=slot_value,
+                        candidate=candidate,
+                        reference=context["reference"],
+                        variation_mode=variation_mode,
+                        require_structured_evidence=require_structured_evidence,
+                        variation_profile_enabled=variation_profile_enabled,
+                    )
+                else:
+                    if slot_value.proposed_value is None:
+                        raise MIBaseError(
+                            ErrorCode.INVALID_REQUEST,
+                            detail="proposedValue is null",
+                        )
+                    validated_proposed_value = strict_float(
+                        slot_value.proposed_value,
+                        label=(f"Step3 proposedValue (candidate={adjustment.candidate_key}, slotKey={slot_key})"),
+                    )
+                    slot_policy_trace = {}
+            except MIBaseError as exc:
                 invalid_slot_keys.add(slot_key)
-                warning = (
-                    "Step3 응답의 proposedValue가 유한한 숫자가 아니라 제외했습니다: "
-                    f"candidate={adjustment.candidate_key}, slotKey={slot_key}, "
-                    f"value={slot_value.proposed_value!r}"
-                )
+                if v4_contract_context and require_structured_evidence:
+                    failure_kind = (
+                        "proposedValue가 null이고 구조화 근거가"
+                        if slot_value.proposed_value is None
+                        else "slot 값·구조화 근거가"
+                    )
+                    warning = (
+                        f"Step3 응답의 {failure_kind} 누락되거나 서로 모순되어 제외했습니다: "
+                        f"candidate={adjustment.candidate_key}, slotKey={slot_key}, detail={exc}"
+                    )
+                elif slot_value.proposed_value is None:
+                    warning = (
+                        "Step3 응답의 proposedValue가 null이라 제외했습니다: "
+                        f"candidate={adjustment.candidate_key}, slotKey={slot_key}, detail={exc}"
+                    )
+                elif slot_value.evidence_basis in {None, "OBSERVED", "DERIVED"}:
+                    warning = (
+                        "Step3 응답의 proposedValue가 유한한 숫자가 아니라 제외했습니다: "
+                        f"candidate={adjustment.candidate_key}, slotKey={slot_key}, "
+                        f"value={slot_value.proposed_value!r}, detail={exc}"
+                    )
+                else:
+                    warning = (
+                        "Step3 응답이 value/variation policy를 통과하지 못해 제외했습니다: "
+                        f"candidate={adjustment.candidate_key}, slotKey={slot_key}, "
+                        f"value={slot_value.proposed_value!r}, detail={exc}"
+                    )
                 logger.warning("[model-parameter] {}", warning)
                 warnings.append(warning)
                 continue
             if v4_contract_context and parameter_name(candidate) == LIQ_UTIL_PARAMETER and validated_proposed_value < 0:
+                if slot_policy_trace.get("evidence_basis") == "BOUNDED_ASSUMPTION":
+                    validated_proposed_value = 0.0
+                    slot_policy_trace["clipped"] = True
+                    slot_policy_trace["calculation_ko"] = (
+                        f"{slot_policy_trace.get('calculation_ko')}; 이용률 하한 0으로 제한"
+                    )
+                else:
+                    invalid_slot_keys.add(slot_key)
+                    warning = (
+                        "Step3 LiqUtilAdjustment proposedValue가 음수라 제외했습니다: "
+                        f"candidate={adjustment.candidate_key}, slotKey={slot_key}, "
+                        f"value={slot_value.proposed_value!r}"
+                    )
+                    logger.warning("[model-parameter] {}", warning)
+                    warnings.append(warning)
+                    continue
+            capability_constraints = candidate.get("proposal_constraints") or {}
+            minimum = capability_constraints.get("minimum") if v4_contract_context else None
+            if isinstance(minimum, (int, float)) and validated_proposed_value < float(minimum):
+                if slot_policy_trace.get("evidence_basis") == "BOUNDED_ASSUMPTION":
+                    validated_proposed_value = float(minimum)
+                    slot_policy_trace["clipped"] = True
+                    slot_policy_trace["calculation_ko"] = (
+                        f"{slot_policy_trace.get('calculation_ko')}; capability 최소값 {minimum:g}로 제한"
+                    )
+                else:
+                    invalid_slot_keys.add(slot_key)
+                    warning = (
+                        "Step3 proposedValue가 capability 최소값보다 작아 제외했습니다: "
+                        f"candidate={adjustment.candidate_key}, slotKey={slot_key}, "
+                        f"minimum={minimum}, value={slot_value.proposed_value!r}"
+                    )
+                    logger.warning("[model-parameter] {}", warning)
+                    warnings.append(warning)
+                    continue
+            maximum = capability_constraints.get("maximum") if v4_contract_context else None
+            if isinstance(maximum, (int, float)) and validated_proposed_value > float(maximum):
+                if slot_policy_trace.get("evidence_basis") == "BOUNDED_ASSUMPTION":
+                    validated_proposed_value = float(maximum)
+                    slot_policy_trace["clipped"] = True
+                    slot_policy_trace["calculation_ko"] = (
+                        f"{slot_policy_trace.get('calculation_ko')}; capability 최대값 {maximum:g}로 제한"
+                    )
+                else:
+                    invalid_slot_keys.add(slot_key)
+                    warning = (
+                        "Step3 proposedValue가 capability 최대값보다 커 제외했습니다: "
+                        f"candidate={adjustment.candidate_key}, slotKey={slot_key}, "
+                        f"maximum={maximum}, value={slot_value.proposed_value!r}"
+                    )
+                    logger.warning("[model-parameter] {}", warning)
+                    warnings.append(warning)
+                    continue
+            if (
+                v4_contract_context
+                and capability_constraints.get("integer_only") is True
+                and not validated_proposed_value.is_integer()
+            ):
                 invalid_slot_keys.add(slot_key)
                 warning = (
-                    "Step3 LiqUtilAdjustment proposedValue가 음수라 제외했습니다: "
+                    "Step3 proposedValue가 capability 정수 제약을 위반해 제외했습니다: "
                     f"candidate={adjustment.candidate_key}, slotKey={slot_key}, "
                     f"value={slot_value.proposed_value!r}"
                 )
                 logger.warning("[model-parameter] {}", warning)
                 warnings.append(warning)
                 continue
-            capability_constraints = candidate.get("proposal_constraints") or {}
-            minimum = capability_constraints.get("minimum") if v4_contract_context else None
-            if isinstance(minimum, (int, float)) and validated_proposed_value < float(minimum):
-                invalid_slot_keys.add(slot_key)
-                warning = (
-                    "Step3 proposedValue가 extend7 capability 최소값보다 작아 제외했습니다: "
-                    f"candidate={adjustment.candidate_key}, slotKey={slot_key}, "
-                    f"minimum={minimum}, value={slot_value.proposed_value!r}"
-                )
-                logger.warning("[model-parameter] {}", warning)
-                warnings.append(warning)
-                continue
-            proposed_value = (
-                slot_value.proposed_value
-                if isinstance(slot_value.proposed_value, (int, float))
-                and not isinstance(slot_value.proposed_value, bool)
-                else validated_proposed_value
-            )
+            proposed_value: int | float = validated_proposed_value
+            if capability_constraints.get("integer_only") is True:
+                proposed_value = int(validated_proposed_value)
             returned_slot_keys.add(slot_key)
+            reference_value = _numeric_reference_value(context["reference"])
+            rationale_ko = slot_value.rationale_ko
+            if v4_contract_context:
+                rationale_ko = _fixed_slot_rationale(
+                    candidate=candidate,
+                    coordinates=(context["reference"].get("axes") or _coordinates_for_selected_slot(context["slot"])),
+                    reference_value=reference_value,
+                    proposed_value=validated_proposed_value,
+                    evidence_basis=str(slot_policy_trace.get("evidence_basis") or "DERIVED"),
+                    direction=str(slot_policy_trace.get("direction") or "unchanged"),
+                    calculation_ko=str(slot_policy_trace.get("calculation_ko") or ""),
+                    evidence_ko=slot_value.evidence_ko,
+                    assumption_ko=slot_value.assumption_ko,
+                    original_rationale_ko=slot_value.rationale_ko,
+                    variation_factors=(
+                        slot_policy_trace.get("variation_factors")
+                        if isinstance(slot_policy_trace.get("variation_factors"), dict)
+                        else None
+                    ),
+                    clipped=bool(slot_policy_trace.get("clipped")),
+                    original_value_was_recomputed=(
+                        str(slot_policy_trace.get("evidence_basis") or "") == "BOUNDED_ASSUMPTION"
+                        and get_parameter_variation_policy(parameter_name(candidate)).method != "atomic_share"
+                        and slot_value.proposed_value is not None
+                    ),
+                )
             value_cell = _parameter_value_cell_from_slot_value(
                 slot_value,
                 context["reference"],
                 proposed_value=proposed_value,
+                rationale_ko=rationale_ko,
             )
+            if slot_policy_trace:
+                policy_trace.append(
+                    {
+                        "slot_key": slot_key,
+                        "coordinates": (
+                            context["reference"].get("axes") or _coordinates_for_selected_slot(context["slot"])
+                        ),
+                        **slot_policy_trace,
+                    },
+                )
             proposed_values_by_slot_key[slot_key] = validated_proposed_value
             value_cells_by_slot_key[slot_key] = value_cell
             value_grid.append(value_cell)
@@ -3506,7 +6480,7 @@ def _sanitize_llm_adjustments(
         missing_slot_keys = sorted(set(expected_contexts) - returned_slot_keys)
         if missing_slot_keys:
             warning = (
-                "Step3 응답에 요청한 slotKey가 누락되었습니다. 재호출 없이 누락 값을 "
+                "Step3 응답에 요청한 slotKey가 누락되었습니다. bounded repair 후에도 누락 값을 "
                 f"제외하고 진행합니다: candidate={adjustment.candidate_key}, "
                 f"slotKeys={missing_slot_keys}"
             )
@@ -3532,27 +6506,39 @@ def _sanitize_llm_adjustments(
             warnings.append(warning)
             continue
 
-        sanitized.append(
-            ParameterAdjustment(
-                candidate_key=adjustment.candidate_key,
-                model_file=str(candidate.get("model_file") or ""),
-                model_sheet=str(candidate.get("model_sheet") or ""),
-                parameter_name=str(
-                    candidate.get("canonical_parameter_name") or candidate.get("parameter_name") or "",
-                ),
-                selected=True,
-                slot_axes=slot_axes,
-                value_grid=value_grid,
-                parameter_selection_rationale_ko=adjustment.rationale_ko,
-            ).model_dump()
-        )
+        parameter_rationale = adjustment.rationale_ko
+        if v4_contract_context:
+            parameter_rationale = _user_parameter_rationale(
+                candidate=candidate,
+                policy_trace=policy_trace,
+            )
+        user_notes = _slot_user_notes(selected_slots)
+        if user_notes:
+            note_summary = _compact_user_notes(user_notes)
+            if note_summary:
+                parameter_rationale = f"{parameter_rationale}\n\n참고: {note_summary}."
+        adjustment_payload = ParameterAdjustment(
+            candidate_key=adjustment.candidate_key,
+            model_file=str(candidate.get("model_file") or ""),
+            model_sheet=str(candidate.get("model_sheet") or ""),
+            parameter_name=str(
+                candidate.get("canonical_parameter_name") or candidate.get("parameter_name") or "",
+            ),
+            selected=True,
+            slot_axes=slot_axes,
+            value_grid=value_grid,
+            parameter_selection_rationale_ko=parameter_rationale,
+        ).model_dump()
+        if policy_trace:
+            adjustment_payload["_variation_policy_trace"] = policy_trace
+        sanitized.append(adjustment_payload)
 
     missing_candidate_keys = sorted(
         set(candidate_by_key) - processed_candidate_keys - duplicate_candidate_keys,
     )
     for candidate_key in missing_candidate_keys:
         warning = (
-            "LLM Step3 응답에 candidate_key가 누락되었습니다. 재호출이나 보강 없이 "
+            "LLM Step3 응답에 candidate_key가 누락되었습니다. bounded repair 후에도 "
             f"해당 parameter를 제외합니다: {candidate_key}"
         )
         logger.warning("[model-parameter] {}", warning)

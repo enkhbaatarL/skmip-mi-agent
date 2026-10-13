@@ -49,6 +49,12 @@ Agent는 이 뉴스를 그대로 요약하는 데서 끝나지 않는다. 앞으
 Scenario 분석의 출발점이 되는 뉴스나 시장 사건이다. 생산시설 중단, 제재, 수요 전망 변경, 이상기후 등이
 예가 될 수 있다. 한 번에 Event 1~5개를 함께 분석할 수 있다.
 
+Event는 항상 하나의 일관된 사실 문장이 아니다. LNG 뉴스·리포트 하나에도 확정된 과거 사실, 현재 관측,
+운영사의 미래 예상, 기관별 전망이 함께 들어갈 수 있고, 같은 대상·기간에 대한 미래 견해가 서로 충돌할 수도
+있다. Agent는 이를 하나의 결론으로 평균하거나 덮어쓰지 않고, 출처와 기준시점을 가진 별도 주장으로 구분한다.
+확정·관측 사실은 현재 상태의 기준점으로, 미래 예상과 기관 View의 차이는 Scenario를 나누는 불확실성으로
+사용한다.
+
 ### Dimension
 
 미래를 나누는 핵심 질문 또는 판단 기준이다. 위 예시의 `생산시설 복구 시점`, `대체 공급 가능성`이
@@ -76,6 +82,9 @@ Dimension: 생산시설 복구 시점
 
 여러 Scenario 중 현재 정보로 보았을 때 가장 가능성이 높다고 판단한 대표 Scenario다. 한 Group에는 정확히
 하나만 둔다.
+
+Baseline은 확정된 미래나 기관 전망의 합의값을 뜻하지 않는다. 생성 기준시점의 증적을 바탕으로 선택한 대표
+작업 가정이며, 상충하는 전망은 다른 Scenario 또는 명시적인 미반영 불확실성으로 계속 추적한다.
 
 ### JKM 가격 압력
 
@@ -222,6 +231,7 @@ Validation을 통과하면 Agent가 각 Scenario의 Signpost를 만든다. 사�
 | Agent가 내부적으로 어떤 순서로 생각하고 저장하는지 | [v4 Flow](03_SCENARIO_GROUP_AGENT_FLOW.md) |
 | 어떤 DB table에 무엇이 저장되는지 | [DB Spec](04_SCENARIO_GROUP_AGENT_DB_SPEC.md) |
 | 자연어로 테스트를 요청하고 결과를 읽는 방법 | [테스트와 품질 평가](05_SCENARIO_GROUP_AGENT_TEST_AND_QUALITY.md) |
+| Scenario 이전 Event의 사실·미래 예상·기관 View·상충 전망을 어떻게 나누고 어떤 대상·기간·수치 근거를 보존할지 | [Event 구조화 → Model Parameter 증적 가이드](06_EVENT_STRUCTURING_FOR_MODEL_PARAMETER.md) |
 | 공통 프로젝트 폴더와 코드 배치 원칙 | [Project Directory Structure](../../architectures/project_directory_structure.md) |
 
 ## 코드를 맡은 사람이 처음 볼 위치

@@ -8,18 +8,21 @@
 
 | 목적 | 사용할 API |
 |---|---|
+| 파일→파라미터→정식 테이블명 조회 | `GET /model-parameters/logical-table-catalog` |
 | 결과를 바로 확인 | `POST /model-parameters/scenarios/{scenario_id}/proposals/sync` |
 | 운영에서 제안 작업 접수 | `POST /model-parameters/scenarios/{scenario_id}/proposals` |
 | 사용자가 검토한 값 확정 | `POST /model-parameters/proposals/{modelParamProposalId}/confirmation` |
-| 현재 성공 HTTP 상태 | 세 API 모두 `200` |
+| 현재 성공 HTTP 상태 | 네 API 모두 `200` |
 
 경로의 두 ID는 실제 숫자로 바꾼다. 배포 환경에 따라 경로 앞에 별도 공통 prefix가 붙을 수 있다. `userId`는 선택 항목이며, 제안 API는 body 자체를 생략해도 된다.
 
-0032 canonical runtime fixture 기준선은 master 21행·활성 14개, LUT-backed 활성 10개·Basecase-only 활성 4개,
-v1/v3 raw mapping-reachable 전역 합집합 10개와 v4 effective executable-binding 전역 합집합 14개다.
-v4 active Lever는 18개이고 raw binding occurrence는 16개다. 이 수치는 live DB 조회 결과나 요청 하나의
-후보 수가 아니다. v1/v3는 기존 5종 이름 allow-list를 유지하고, v4 extend7은 DB ID/name/target과
-`model-parameter-proposal-capabilities-v3`가 일치하는 ID `{4, 6, 7, 8, 14, 15, 17}`을 허용한다. 실제 응답의 `proposalParameters`에는 요청별 raw matching, version별 capability gate,
+외부개발 DB v4.1 기준선은 master 24행·활성 16개, Agent proposal capability 16개
+(LUT-backed 10개 + Basecase-only 6개),
+v1/v3 raw mapping-reachable 전역 합집합 10개와 v4 effective executable-binding 전역 합집합 16개다.
+v4.1 active Lever는 21개이고 binding occurrence는 56개(conditional 37개)다. 이 수치는 요청 하나의
+후보 수가 아니다. v1/v3는 기존 5종 이름 allow-list를 유지하고, v4 extend16은 DB ID/name/target과
+`model-parameter-proposal-capabilities-v4`가 일치하는 ID
+`{4, 6, 7, 8, 11, 12, 13, 14, 15, 16, 17, 18, 20, 22, 23, 24}`을 허용한다. 실제 응답의 `proposalParameters`에는 요청별 raw matching, version별 capability gate,
 exact Basecase/LUT slot을 모두 통과한 하위 집합만 나타난다. endpoint, request body와
 proposal/confirmation의 파라미터 JSON shape는 유지한다. proposal 결과에는 처리 결과를 명확히 구분하기 위한
 `status`, `resultCode`, `resultMessage`, `resultStage`가 추가된다.
@@ -33,6 +36,56 @@ proposal/confirmation의 파라미터 JSON shape는 유지한다. proposal 결�
 | v4 Lever-native 멀티 이벤트 | 여러 event를 묶는 authoritative 그룹 ID | `null` |
 
 v3/v4에서도 endpoint와 기존 optional `eventId` 필드는 유지된다. 개별 source event와 v4 Lever provenance·미지원 진단은 public proposal 응답에 필드를 추가해 노출하지 않고 내부 state, trace, validation warning과 prompt grounding에만 사용한다.
+
+## 0. 정식 논리 테이블 카탈로그 API
+
+```http
+GET /model-parameters/logical-table-catalog
+```
+
+검토 완료된 `20261010-v3-final` 카탈로그를 화면용
+`modelFile → parameterName → tables[].displayName` 구조로 반환한다. 전체 정본은 정식 논리 테이블
+199행(고유 193개)이며, 그중 `modelParamId`로 master에 연결된 22개 파라미터·54개 관계를 이 계층에 담는다.
+연결되지 않은 정식 테이블 145행도 체크인 canonical에는 보존하지만 파라미터 계층에는 임의 배치하지 않는다.
+
+```json
+{
+  "status": "success",
+  "message": "model parameter logical table catalog retrieved",
+  "data": {
+    "catalogVersion": "20261010-v3-final",
+    "hierarchy": ["modelFile", "parameterName", "tables.displayName"],
+    "entryCount": 199,
+    "logicalTableCount": 193,
+    "mappedEntryCount": 54,
+    "parameterCount": 22,
+    "files": [{
+      "modelFile": "Demand",
+      "parameters": [{
+        "modelParamId": 7,
+        "parameterCode": "PowerMix",
+        "parameterName": "PowerMix",
+        "useYn": "Y",
+        "tables": [{
+          "logicalTableCode": "annual_power_mix_adjustment",
+          "displayName": "Annual Power Mix Adjustment",
+          "modelSheet": "PowerMixAdjustment",
+          "modelTableKey": "table1",
+          "tableRole": "WRITE_TARGET",
+          "displayOrder": 1,
+          "uiVisible": true
+        }]
+      }]
+    }]
+  }
+}
+```
+
+화면 라벨은 반드시 `displayName`을 사용한다. `modelTableKey`의 `table1`, `table2` 등은 기존
+proposal/confirmation 저장·검증용 machine key이며, 화면에 표시할 정식 명칭이 아니다. 하나의 machine key가
+여러 정식 논리 테이블을 가리킬 수 있다. 예를 들어 `CanalToll`의 Suez/Panama 두 표는 모두 `table4`를
+사용한다. 기본 화면은 `useYn=Y`인 파라미터와 `uiVisible=true`인 표를 사용하고, 비활성·숨김 관계는 관리·검증
+용도로만 유지한다. `modelParamId`가 유일한 master join key이며 `parameterCode` 문자열로 join하지 않는다.
 
 ## 1. 동기 제안 API
 
@@ -66,12 +119,12 @@ POST /model-parameters/scenarios/100/proposals/sync
         "tableName": "table1", "valueFieldNames": ["% change (+/-)"],
         "slotAxesFieldNames": ["Country", "Year"]
       },
-      "rationale": "GDP 입력값 제안입니다.",
+      "rationale": "제안 이유: 경기 둔화 시나리오를 연간 GDP 성장률에 반영하기 위한 제안입니다. 적용 범위는 미국이며, 적용 기간은 2026년입니다.",
       "values": [{
         "Country": "United States", "Year": 2026,
         "basecaseValue": 0.019, "lutValue": 0.02063,
         "proposedValue": 0.0185,
-        "rationale": "경기 둔화 영향을 반영한 샘플입니다."
+        "rationale": "적용 대상: 국가 United States, 연도 2026. 시나리오 영향: 경기 둔화가 연간 GDP 성장률을 낮추는 방향으로 작용합니다. 조정 내용: 현재 모델값 0.019 (1.9%)에서 제안값 0.0185 (1.85%)로 조정했습니다. 산정 근거: 시나리오 근거로 계산했습니다. 계산 방법: 현재 모델값에서 0.05%p 낮췄습니다. 주요 가정: 둔화 영향이 2026년 연간 성장률에 반영된다고 보았습니다. 확인 필요: 적용 기간과 둔화 폭이 실제 전망과 일치하는지 검토해 주세요."
       }]
     }]
   }
@@ -79,6 +132,11 @@ POST /model-parameters/scenarios/100/proposals/sync
 ```
 
 `proposalParameters`가 사용자가 검토할 제안 목록이다. `basecaseValue`는 현재 모델 값, `lutValue`는 참고값, `proposedValue`는 AI 제안값이다. GDP는 비율 단위이므로 이 샘플의 `0.019`는 `1.9%`, `0.0185`는 `1.85%`를 뜻한다.
+
+Proposal Flow v4.1.7부터 공개 rationale은 간결한 존댓말의 업무 설명만 담는다. 내부 진단에 필요한 evidence enum,
+variation policy release/mode, fallback 여부와 candidate/slot 식별자는 trace에 유지하되 이 문자열에는 노출하지 않는다.
+slot rationale은 적용 대상, 시나리오 영향, 현재값→제안값, 산정 근거와 계산, 주요 가정, 사용자 확인사항을
+명시한다. API field와 DB JSON shape는 이전 release와 같다.
 
 위 식별자는 v1 예시다. 같은 응답이 v3 또는 v4 scenario를 대상으로 하면 `scenarioGroupId`는 그대로 채워지고 `eventId`는 다음처럼 명시적으로 `null`이다.
 
@@ -112,6 +170,14 @@ POST /model-parameters/scenarios/100/proposals
 작업을 등록한다. 제안 범위 밖, 근거 부족, 입력 위치 미확정처럼 정상적으로 “제안하지 않음”을 판단해야 하는
 경우도 이 작업 이력에서 `ABSTAINED`로 종결한다. catalog checksum/ID 불일치나 필수 정의 누락처럼 실행 계약이
 깨진 경우는 `FAILED`다.
+
+접수 시 `tmd_mdl_scnrcasem.actv_base_yn='Y'` 행을 최대 1건으로 확정해 proposal의
+`mi_base_case_id`에 저장한다. background 작업은 그 저장값을 다시 읽으므로 처리 중 활성 Base가
+바뀌어도 요청의 기준은 바뀌지 않는다. 활성 Base가 없으면 `NULL`을 저장한다. 기본 정책에서는
+background 작업을 실패시키며, `model_parameter_mi_base_fallback.no_active_case_mode`를
+`configured_fallback`으로 명시한 환경만 기존 설정 Basecase를 사용한다. 선택한 Base의 Object Storage를
+확인할 수 없을 때는 동일 case/run/file identity와 workbook hash/contract를 검증한 cache만 허용한다.
+이 식별자와 fallback 정책은 내부 추적용이며 기존 요청·응답·callback JSON은 변경하지 않는다.
 
 이 preflight는 resource runtime 등록 여부까지 보장하지 않는다. 허용 후보가 있어 HTTP `200`과 `PROCESSING`을
 받은 뒤 background graph에서 Basecase/LUT runtime 미등록을 발견하면 proposal row는 `FAILED`가 되고 실패
@@ -199,15 +265,28 @@ HTTP/1.1 404 Not Found
 }
 ```
 
-Model Parameter Agent 처리에서 주로 확인하게 되는 코드는 다음과 같다.
+아래 표는 현재 Model Parameter proposal·confirmation 경로가 직접 발생시키거나 background 실패
+매핑에서 명시적으로 처리하는 `ErrorCode` 전체다.
 
 | HTTP | `data.error_code` | `data.error_name` | 기본 의미 |
 |---:|---:|---|---|
 | `503` | `-100` | `RUNTIME_REGISTRY_NOT_READY` | 동기 graph 실행에서 Basecase/LUT 또는 공통 runtime이 준비되지 않음 |
+| `500` | `-101` | `SEMAPHORE_MANAGEMENT_ERROR` | 공통 실행 semaphore가 준비되지 않았거나 관리할 수 없음 |
 | `404` | `-201` | `ENTITY_NOT_FOUND` | scenario, scenario group 또는 proposal을 찾지 못함 |
 | `400` | `-202` | `INVALID_REQUEST` | 요청 또는 처리할 데이터가 유효하지 않음 |
-| `500` | `-5002` | `LLM_INVOCATION_ERROR` | LLM 호출 또는 structured output 처리 실패 |
+| `500` | `-4000` | `DATA_RETRIEVAL_FAILED` | 활성 MI Base 또는 Object Storage 등 필요한 데이터 조회 실패 |
+| `504` | `-5000` | `LLM_RESPONSE_TIMEOUT` | LLM 응답 시간 초과 |
+| `500` | `-5001` | `LLM_RESPONSE_ERROR` | 기존 호환용 LLM 응답 오류 |
+| `500` | `-5001` | `LLM_INVALID_RESPONSE_ERROR` | LLM 응답 형식 또는 structured output 검증 오류 |
+| `500` | `-5002` | `LLM_INVOCATION_ERROR` | LLM 호출 처리 오류 |
+| `500` | `-6000` | `RDB_DATA_FETCH_FAILED` | DB 조회 실패 |
+| `403` | `-6001` | `RDB_ACCESS_DENIED` | DB 접근 권한 오류 |
+| `502` | `-7000` | `HTTP_CONNECTION_ERROR` | 외부 HTTP 연결 실패 |
 | `500` | `-9999` | `UNKNOWN_ERROR` | 별도로 분류되지 않은 내부 오류 |
+
+`LLM_RESPONSE_ERROR`와 `LLM_INVALID_RESPONSE_ERROR`는 숫자값 `-5001`을 공유하지만 background DB와
+callback에는 서로 다른 이름 문자열로 기록될 수 있다. 즉시 오류는 이 표의 HTTP·숫자·이름을 사용하고,
+background 실패는 HTTP를 새로 반환하지 않고 이름을 DB `error_code`와 callback `resultCode`에 저장한다.
 
 HTTP `422`는 path/body 타입 오류나 잘못된 JSON처럼 FastAPI 요청 검증에서 실패한 경우다. 이 경우에는 공통 오류 body가 아니라 `{"detail": [...]}` 형식이 반환되므로 `data.error_code`, `data.error_name`, `message`가 없다.
 
@@ -272,17 +351,28 @@ catalog checksum·Lever ID 불일치, 필수 parameter target 누락, 잘못된 
 제안값이 0개인 정상 판단에만 사용한다. Step2/Step3 LLM이 응답을 반환했지만 선택 위치나 값이 모두 형식
 검증에서 탈락한 경우는 정상 미제안이 아니라 `LLM_INVALID_RESPONSE_ERROR`로 실패 처리한다.
 
-실패의 공통 숫자 코드는 기존 즉시 오류 응답 계약을 유지한다.
+실패의 이름·숫자·HTTP 전체 목록은 [4.1 표](#41-http-상태와-agent-오류-코드의-차이)를 사용한다.
+background callback의 `resultCode`와 DB `error_code`에는 이름 문자열만 저장하며 숫자값은 직렬화하지 않는다.
 
-| `resultCode` / DB `error_code` | 숫자 코드 | 의미 |
-|---|---:|---|
-| `LLM_RESPONSE_TIMEOUT` | `-5000` | LLM 응답 시간 초과 |
-| `LLM_INVALID_RESPONSE_ERROR` | `-5001` | LLM 응답 형식 또는 검증 오류 |
-| `LLM_INVOCATION_ERROR` | `-5002` | LLM 호출 처리 오류 |
-| `INVALID_REQUEST` | `-202` | 요청·도메인 계약 오류 |
-| `RDB_DATA_FETCH_FAILED` / `RDB_ACCESS_DENIED` | `-6000` / `-6001` | DB 조회 또는 권한 오류 |
-| `HTTP_CONNECTION_ERROR` | `-7000` | 외부 HTTP 연결 오류 |
-| `UNKNOWN_ERROR` | `-9999` | 분류되지 않은 내부 오류 |
+#### 내부 진단·retry 분류 코드는 공개 결과 코드가 아님
+
+다음 코드는 candidate 제외 원인이나 품질 trace를 위한 내부 진단값이다. proposal/confirmation의 공개 JSON에
+새 필드로 넣지 않으며, 최종 결과는 남은 유효 후보에 따라 `PROPOSED`, 위 `ABSTAINED_*`, 또는 `FAILED`로 정한다.
+
+| 내부 코드 | 의미 | 최종 결과와의 관계 |
+|---|---|---|
+| `UNCHANGED_LEVER_STATE` | Lever 방향이 `unchanged`라 변화 후보가 아님 | 이것만 남으면 `ABSTAINED_NO_CHANGE` |
+| `PRICE_ONLY` | 조건부 parameter binding이 없는 `price_only` Lever | 모든 후보가 제외되면 `ABSTAINED_OUT_OF_PROPOSAL_SCOPE` |
+| `NO_PARAMETER_BINDING` | 활성 Lever에 parameter binding이 없음 | 모든 후보가 제외되면 `ABSTAINED_OUT_OF_PROPOSAL_SCOPE` |
+| `INACTIVE_MODEL_PARAMETER` | binding 대상 parameter가 비활성 | 모든 후보가 제외되면 `ABSTAINED_OUT_OF_PROPOSAL_SCOPE` |
+| `CATALOG_MARKED_UNSUPPORTED` | catalog가 binding을 미지원으로 선언 | 모든 후보가 제외되면 `ABSTAINED_OUT_OF_PROPOSAL_SCOPE` |
+| `PROPOSAL_SCOPE_EXCLUDED` | active/executable 후보지만 현재 runtime capability 밖 | 모든 후보가 제외되면 `ABSTAINED_OUT_OF_PROPOSAL_SCOPE` |
+| `ACTIVE_PARAMETER_DEFINITION_MISSING` | executable binding의 active model target 정의가 없음 | 정상 보류로 낮추지 않으며 유효 후보가 없으면 `INVALID_REQUEST` 실패 |
+
+`LLM_INCOMPLETE_JSON`은 JSON parser가 `EOF while parsing`으로 확인한 불완전 응답의 **내부 retry 분류값**이다.
+공개 `resultCode`가 아니며, 제한된 재시도 후에도 복구되지 않으면 최종 실패는
+`LLM_INVALID_RESPONSE_ERROR`로 기록한다. HTTP 408/425/429/5xx는 trace에서 `HTTP_<status>`로,
+그 밖의 transport 오류는 provider 예외 class 이름으로 기록될 수 있으며 이 값들도 공개 API 계약은 아니다.
 
 화면에 전달하는 실패 문구는 코드와 분리해 다음 사용자 표현을 사용한다.
 

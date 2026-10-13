@@ -29,14 +29,17 @@ Interpret 관점의 조회 정본이다.
 erDiagram
     SCENARIO_GROUP ||--o{ MODEL_PARAM_PROPOSAL : has
     SCENARIO ||--o{ MODEL_PARAM_PROPOSAL : owns
+    MODEL_PARAM_PROPOSAL }o--|| MODEL_SCENARIO_CASE : pins_mi_base_case
     SCENARIO_GROUP ||--o{ SCENARIO : contains
     SCENARIO ||--o{ MODEL_SCENARIO_CASE : runs_as
     MODEL_SCENARIO_CASE }o--|| MODEL_RUN_HISTORY : latest_run
     MODEL_RUN_HISTORY ||--o{ MODEL_PRICE_LINE : contains
 
     MODEL_PARAM_PROPOSAL {
+        int model_param_proposal_id
         int scenario_group_id
         int scenario_id
+        int mi_base_case_id
         string status
         json proposal_parameters
         json confirmation_parameters
@@ -84,6 +87,7 @@ Interpret Agent가 Feature 입력을 읽는 table이다.
 | `scenario_id` | 해석 대상 Scenario 식별자 |
 | `scenario_group_id` | API path의 Group filter |
 | `mi_event_id` | 조회 결과에는 포함되지만 Interpret 정규화에는 사용하지 않음 |
+| `mi_base_case_id` | Model Parameter가 제안 시점에 고정한 MI Base 가격 case |
 | `status` | `PROPOSED`, `CONFIRMED`만 읽음 |
 | `proposal_parameters` | 기본 Feature 입력 JSON |
 | `confirmation_parameters` | 확정 후 사용자가 정한 최종 Feature 입력 JSON |
@@ -143,6 +147,10 @@ proposal_parameters
 proposal의 `mi_event_id`는 nullable이며 Interpret loader는 이 값이 없어도 정상 처리한다. 다중 Event
 Scenario Group의 대표 Event ID가 null인 경우를 지원한다.
 
+반면 `model_param_proposal_id`와 `mi_base_case_id`는 Interpret `v4.1.7` 입력 snapshot의 필수 증적이다.
+두 값은 양수여야 하고, 한 요청에서 선택된 모든 proposal의 `mi_base_case_id`가 같아야 한다. 이 조건을 만족하지
+않으면 전역 최신 MI Base로 fallback하지 않고 `DATA_RETRIEVAL_FAILED`로 중단한다.
+
 ## 2. proposal JSON 정규화
 
 ### 사용 필드
@@ -198,8 +206,8 @@ Scenario / Temperature / Country=South Korea → 1.0
 parameterName + granularity + sorted(groupKeys)
 ```
 
-같은 key와 기간이 여러 proposal에 반복되면 마지막 assignment가 앞 값을 덮어쓴다. 현재 read flow에는
-Scenario별 basecase 값이 같은지 검증하거나 충돌을 보고하는 기능이 없다.
+같은 key와 기간이 여러 proposal에 반복될 때 값이 같으면 병합한다. 값이 하나라도 다르면 proposal snapshot의
+MI Base 입력이 모순되므로 `DATA_RETRIEVAL_FAILED`로 중단한다.
 
 ## 3. 모델 가격 결과
 
@@ -232,7 +240,8 @@ ORDER BY period
 
 ### MI Base 가격
 
-MI Base query는 다음 조건을 만족하는 가장 큰 `case_id`를 고른다.
+MI Base query는 proposal snapshot의 정확한 `:mi_base_case_id`를 사용한다. `MAX(case_id)`로 전역 최신 Base를
+다시 선택하지 않는다. 대상 case는 다음 조건을 모두 만족해야 한다.
 
 - `exec_type_cd='MI_BASE'`
 - case `del_yn='N'`
@@ -240,7 +249,8 @@ MI Base query는 다음 조건을 만족하는 가장 큰 `case_id`를 고른다
 - 연결된 history `exec_stat_cd='COMPLETED'`
 - history `del_yn='N'`
 
-선택한 case의 `last_run_id`와 history의 `run_id`를 연결하고 price line의 `base_case_prc`를 읽는다.
+선택한 case의 `last_run_id`와 history의 `run_id`를 연결하고 price line의 `base_case_prc`, `case_id`, `run_id`,
+`run_seq`를 읽는다.
 
 ### Scenario 가격
 
@@ -251,8 +261,13 @@ scenario_group_id = :scenario_group_id
 del_yn = 'N'
 ```
 
-각 Scenario에 대해 완료 상태인 case·history 중 가장 큰 `run_seq`를 선택하고 `user_adj_prc`를 읽는다. 반환
-row는 Scenario ID와 기간 순으로 정렬한 뒤 Scenario별 dictionary로 묶는다.
+각 Scenario에 대해 완료 상태인 case·history 중 가장 큰 `run_seq`를 선택하고 `base_case_prc`와
+`user_adj_prc`, `case_id`, `run_id`, `run_seq`를 읽는다. 반환 row는 Scenario ID와 기간 순으로 정렬한 뒤
+Scenario별 dictionary로 묶는다.
+
+모델 결과 table에는 `model_param_proposal_id`와 Scenario run을 직접 잇는 FK가 없다. Interpret는 선택한
+Scenario run의 각 `base_case_prc`가 proposal에 pinned된 MI Base의 같은 월·지수 가격과 일치하는지 검증해
+서로 다른 Base snapshot의 혼합을 차단하고, 실제 사용한 Scenario `run_seq`를 메모리 입력과 로그에 남긴다.
 
 proposal에서 선택된 target Scenario가 Group의 active Scenario가 아니거나 완료 가격 run이 없으면 그 ID의
 가격 collection은 비게 된다.
@@ -260,7 +275,9 @@ proposal에서 선택된 target Scenario가 Group의 active Scenario가 아니�
 ### 기간과 값 변환
 
 `perd_key`의 앞 여섯 자리가 숫자면 `YYYY-MM`으로 바꾼다. null·빈 기간과 null 가격은 반환 series에서
-제외한다. `Decimal` 가격은 float로 변환한다.
+제외하고 `Decimal` 가격은 float로 변환한다. 서비스는 변환된 축이 유효한 월, 오름차순, 중복 없음,
+월 단위 연속이라는 조건을 추가로 검증한다. MI Base 지수끼리, 그리고 각 Scenario와 MI Base의 축은 시작·종료·
+월 개수까지 완전히 같아야 한다. 실제 모델 축이 `2026-04`~`2030-12`이면 57개월을 그대로 보존한다.
 
 ## 4. 입력 완전성 판정
 
@@ -269,11 +286,15 @@ proposal에서 선택된 target Scenario가 Group의 active Scenario가 아니�
 | 조건 | 결과 |
 | --- | --- |
 | proposal 조회 0건 | `DATA_RETRIEVAL_FAILED` |
+| proposal ID·pinned MI Base ID 누락/invalid 또는 mixed Base | `DATA_RETRIEVAL_FAILED` |
 | JKM·TTF·HH MI Base series가 모두 없음 | `DATA_RETRIEVAL_FAILED` |
 | target Scenario 하나라도 JKM·TTF·HH series가 모두 없음 | `DATA_RETRIEVAL_FAILED` |
+| 가격 월 축 중복·누락·역순·불일치 | `DATA_RETRIEVAL_FAILED` |
+| Scenario `base_case_prc`와 pinned MI Base 값 불일치 | `DATA_RETRIEVAL_FAILED` |
+| Base 또는 Scenario에 여러 `run_seq` 혼합 | `DATA_RETRIEVAL_FAILED` |
 | 특정 지수만 없음 | 남은 지수로 계속 실행 |
 | Feature가 비어 있음 | 가격이 있으면 계속 실행 가능 |
-| MI Base와 공통 기간이 없음 | `공통 구간 없음` metric, 계속 실행 |
+| Feature가 MI Base와 공통 기간이 없음 | `공통 구간 없음` metric, 계속 실행 |
 
 모든 지수·모든 Feature·모든 요청 Scenario가 완전해야 한다는 strict 계약은 아니다. API consumer와 품질 검사는
 실제 반환 Scenario ID와 해석 근거 범위를 확인해야 한다.
@@ -310,8 +331,9 @@ session을 닫는다.
 - 긴 LLM 호출 전에 session close
 - interpretation 실행 중 DB transaction 유지 없음
 
-따라서 Interpret Agent는 source data를 변경하지 않는다. 반면 proposal 조회와 가격 조회 사이에 다른 서비스가
-source row를 바꾸면 두 조회가 업무 snapshot 하나로 고정된다는 별도 보장은 없다.
+따라서 Interpret Agent는 source data를 변경하지 않는다. proposal이 pin한 MI Base case와 가격 기준값 검증은
+snapshot 혼합을 막지만, proposal과 Scenario run 사이의 직접 FK나 명시적 row lock은 없다. proposal 조회와
+가격 조회 사이에 최신 Scenario run이 바뀌는 경쟁 조건까지 DB transaction으로 고정하는 계약은 아니다.
 
 ## 7. Startup schema validation 경계
 
@@ -343,6 +365,7 @@ Interpret Agent 자체 DB 상태 전이는 없다.
 ## DB 변경 체크리스트
 
 - proposal status나 JSON shape 변경 시 latest row·CONFIRMED 우선 규칙을 함께 검토한다.
+- proposal의 `mi_base_case_id` pin과 Scenario run의 `base_case_prc` 정합성 guard를 유지한다.
 - `slotAxesFieldNames` 변경 시 monthly/annual 기간과 grouping key 정규화를 검토한다.
 - 새 가격 지수를 추가하면 `INDEX_ORDER`, `INDEX_PRICE_REGION`, SQL query, meta, prompt, smoke test를 함께 맞춘다.
 - 모델 결과 table 구조는 외부 관리 대상이므로 raw SQL과 실제 schema를 별도로 검증한다.

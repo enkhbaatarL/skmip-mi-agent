@@ -88,7 +88,7 @@ def _definition(
     model_file: str,
     model_sheet: str,
 ) -> dict[str, Any]:
-    model_param_ids = {"GDP": 4, "PMI": 6, "ShippingCost": 20}
+    model_param_ids = {"GDP": 4, "PMI": 6, "RemainingUnrestrictedAmount": 19}
     return {
         "model_param_id": model_param_ids[parameter_name],
         "canonical_parameter_name": parameter_name,
@@ -103,7 +103,12 @@ def _definition(
 
 def _context(*, event_count: int = 2) -> dict[str, Any]:
     gdp_lever = _lever(101, "economic_activity", "GDP", domain="demand")
-    shipping_lever = _lever(102, "shipping_cost", "ShippingCost", domain="trade")
+    blocked_trade_lever = _lever(
+        102,
+        "trade_restriction",
+        "RemainingUnrestrictedAmount",
+        domain="trade",
+    )
     events = [
         {
             "mi_event_id": 100 + index,
@@ -144,11 +149,11 @@ def _context(*, event_count: int = 2) -> dict[str, Any]:
                 "primary_impact_lever_id": gdp_lever["impact_lever_id"],
                 "lever_states": [
                     _lever_state(gdp_lever, is_primary=True),
-                    _lever_state(shipping_lever),
+                    _lever_state(blocked_trade_lever),
                 ],
             },
         ],
-        "impact_levers": [gdp_lever, shipping_lever],
+        "impact_levers": [gdp_lever, blocked_trade_lever],
         "impact_catalog_version": CATALOG_VERSION,
         "impact_catalog_checksum": CATALOG_CHECKSUM,
         "model_support_issues": [],
@@ -160,9 +165,9 @@ def _context(*, event_count: int = 2) -> dict[str, Any]:
             "parameter_definitions": [
                 _definition("GDP", model_file="Demand", model_sheet="GDPPopulationAdjustment"),
                 _definition(
-                    "ShippingCost",
+                    "RemainingUnrestrictedAmount",
                     model_file="Trade",
-                    model_sheet="ShippingCostInput",
+                    model_sheet="TradeRestrictionInput",
                 ),
             ],
         },
@@ -180,7 +185,7 @@ def _proposal_parameter(parameter_name: str = "GDP") -> dict[str, Any]:
         "parameterName": parameter_name,
         "modelTarget": {
             "modelFile": "Demand" if parameter_name == "GDP" else "Trade",
-            "modelSheet": "GDPPopulationAdjustment" if parameter_name == "GDP" else "ShippingCostInput",
+            "modelSheet": "GDPPopulationAdjustment" if parameter_name == "GDP" else "TradeRestrictionInput",
             "tableName": "table1",
             "valueFieldNames": [parameter_name],
             "slotAxesFieldNames": ["Country", "Year"],
@@ -479,14 +484,14 @@ def test_production_allowlist_partitions_active_but_blocked_parameter() -> None:
         "GDP",
     }
     assert {_parameter["parameter_name"] for _parameter in evidence.blocked_candidates} == {
-        "ShippingCost",
+        "RemainingUnrestrictedAmount",
     }
     assert all(
         item["reason_code"] == PROPOSAL_SCOPE_EXCLUDED_REASON_CODE
         for item in evidence.blocked_candidates
     )
     assert "GDP" in MODEL_PARAMETER_PROPOSAL_ALLOWLIST
-    assert "ShippingCost" not in MODEL_PARAMETER_PROPOSAL_ALLOWLIST
+    assert "RemainingUnrestrictedAmount" not in MODEL_PARAMETER_PROPOSAL_ALLOWLIST
 
 
 def test_read_only_coverage_exposes_runtime_partition_before_selection() -> None:
@@ -501,9 +506,9 @@ def test_read_only_coverage_exposes_runtime_partition_before_selection() -> None
     assert rows["GDP"].runtime == 1
     assert rows["GDP"].selected is None
     assert rows["GDP"].verdict == "COVERAGE LIMIT"
-    assert rows["ShippingCost"].raw == 1
-    assert rows["ShippingCost"].runtime == 0
-    assert rows["ShippingCost"].verdict == "PASS"
+    assert rows["RemainingUnrestrictedAmount"].raw == 1
+    assert rows["RemainingUnrestrictedAmount"].runtime == 0
+    assert rows["RemainingUnrestrictedAmount"].verdict == "PASS"
 
 
 def test_clean_execution_uses_merged_lineage_and_passes() -> None:
@@ -715,20 +720,20 @@ def test_blocked_parameter_leakage_is_mandatory_fail(layer: str) -> None:
     elif layer == "selected":
         record["result"]["parameter_adjustments"].append(
             {
-                "candidate_key": "parameter|v4|trade|shippinginput|shippingcost",
+                "candidate_key": "parameter|v4|trade|traderestrictioninput|remainingunrestrictedamount",
                 "model_file": "Trade",
-                "model_sheet": "ShippingInput",
-                "parameter_name": "ShippingCost",
+                "model_sheet": "TradeRestrictionInput",
+                "parameter_name": "RemainingUnrestrictedAmount",
                 "selected": True,
             },
         )
     elif layer == "proposed":
         record["final_response"]["data"]["proposalParameters"].append(
-            _proposal_parameter("ShippingCost"),
+            _proposal_parameter("RemainingUnrestrictedAmount"),
         )
     else:
         record["proposal_db_row"]["confirmation_parameters"].append(
-            _proposal_parameter("ShippingCost"),
+            _proposal_parameter("RemainingUnrestrictedAmount"),
         )
 
     assessment = runner.assess_execution(evidence, record)
@@ -763,7 +768,7 @@ def test_blocked_parameter_leakage_in_step2_or_step3_is_fail(layer: str) -> None
             {
                 "candidate_key": blocked["candidate_key"],
                 "slot_key": "slot-blocked",
-                "parameter_name": "ShippingCost",
+                "parameter_name": "RemainingUnrestrictedAmount",
                 "llm_reference_value": 1.0,
                 "effective_source": "basecase",
                 "actual_basecase_value": 1.0,

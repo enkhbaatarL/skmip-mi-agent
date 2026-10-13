@@ -131,8 +131,9 @@ operation을 생성한다. Event row 잠금은 접수 transaction 동안만 유�
 
 ### v4 graph
 
-graph 준비 단계는 0030 versioned table에서 `catalog_version='v4'`인 active Lever만 조회한다. version을 생략해
-`v0` 역사 row와 섞지 않으며, hydrated checksum을 Scenario Group의 `impact_catalog_version/checksum`에 저장한다.
+graph 준비 단계는 설정의 `scenario_group_v4_impact_catalog_version`과 일치하는 active Lever만 조회한다.
+현재 신규 Group 값은 `v4.1`이다. version을 생략해 역사 row와 섞지 않으며, hydrated checksum을 Scenario
+Group의 `impact_catalog_version/checksum`에 저장한다.
 후속 Additional Dimension task도 claim 시 같은 version/checksum pin을 함께 가져와 현재 hydrated catalog와
 둘 다 일치할 때만 LLM을 호출한다. pin 누락·불일치는 `IMPACT_CATALOG_PIN_STALE`로 fail-close한다.
 
@@ -158,6 +159,14 @@ flowchart TD
 결과는 현재 사실, Demand·Supply·Trade·price-only 전달 경로, 아직 열린 질문을 구분한다. LLM이 반환한
 사실 문장은 서버가 입력 후보와 대조하고 `factId`, `eventId`, Path ID, Lever ID를 부여한다. 한 Event의
 재시도는 성공한 다른 Event 결과를 다시 만들지 않는다.
+
+여기서 Event는 하나의 일관된 사실 묶음으로 가정하지 않는다. LNG 뉴스·리포트에는 확정 과거, 현재 관측,
+운영사 예상, 기관별 미래 View가 섞일 수 있고 같은 대상·기간의 전망도 서로 충돌할 수 있다. `eventFacts`에는
+확정·관측된 기준점만 넣고 미래 예상·기관 View를 현재 사실로 승격하지 않는다. 미래 주장은 출처·발표시점·
+적용기간을 유지한 채 `pathUncertainties` 또는 `interactionUncertainties`의 근거로 전달하며, 상충 전망은
+평균·최신값 덮어쓰기 없이 서로 다른 Dimension value 후보로 표현한다. 상세 출력 필드와 전환 규칙은
+[Event 구조화 → Model Parameter 증적 가이드](06_EVENT_STRUCTURING_FOR_MODEL_PARAMETER.md)의
+`Scenario Group Agent Output 설계 가이드`를 따른다.
 
 Event open question은 요청 Event 순서대로 다음 목표·상한을 적용한다. Interaction open question은
 Interaction별 최대 1개, 전체 최대 2개이며, Event와 Interaction open question을 합친 최종 상한은 10개다.
@@ -198,6 +207,10 @@ Interaction이나 질문이 없으면 실제 생성 수는 표의 최대치보�
 - `primaryLeverCode`, `primaryImpactLeverId`, `modelSupportStatus`
 - 2~4개 value와 `leverStates`, `pressureContribution`, `assumptionRationale`
 
+기관 이름 자체를 Dimension value로 기계적으로 만들지 않는다. 같은 미래 상태를 가리키는 View는 하나의
+의미 상태로 묶고, 복구 시점·가동 수준·물량처럼 시장 영향을 실제로 갈라놓는 가정으로 value를 설계한다.
+각 `assumptionRationale`에는 관측 기준점과 채택한 미래 주장, 출처, 적용기간을 구분해 설명한다.
+
 `pressureContribution`은 모든 Dimension에 동일하게 `bearish=-1`, `balanced=0`, `bullish=+1`로 계산하는
 ordinal 지표이며 Dimension별 별도 weight를 두지 않는다.
 
@@ -218,6 +231,9 @@ Dimension value 조합, JKM `pressureBand`, 근거, role, 상대 확률 가중�
 - contribution과 pressure band 순서 정합성
 - `probabilityScore` 정수 합계 100
 - 최고 확률 Scenario 하나의 `baselineYn=Y`
+
+`baselineYn=Y`는 미래 사실 확정이나 기관 합의를 의미하지 않는다. 생성 기준시점에서 가장 지지되는 작업
+가정이며, 대안 View의 lineage를 제거하는 해소 판정으로 사용하지 않는다.
 
 생성 후보의 확률을 합계 100인 정수 점수로 정규화한 뒤, 5 미만인 후보는
 `LOW_PROBABILITY` 사유와 함께 제외 목록으로 이동한다. 정확히 5인 후보는 유지한다.

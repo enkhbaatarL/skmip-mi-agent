@@ -39,11 +39,19 @@ from apps.agents.model_parameter_agent.flows.propose_parameters.nodes import (
     _build_basecase_slot_options,
     _coordinate_issues,
 )
+from apps.agents.model_parameter_agent.flows.propose_parameters.validation import (
+    ModelParameterSemanticEmptyError,
+)
 from apps.agents.model_parameter_agent.persistence.model_parameter_service import (
     ModelParameterService,
 )
 from apps.agents.model_parameter_agent.utils.basecase import build_basecase_records
 from apps.agents.model_parameter_agent.utils.lut import ReferenceLoadPolicy
+from apps.agents.model_parameter_agent.utils.mi_base_resources import (
+    MiBaseResourceSelection,
+    mi_base_resource_identity,
+    resolve_mi_base_resources,
+)
 from apps.agents.model_parameter_agent.utils.parameter_mapping import (
     get_parameter_knowledge_base_from_resources,
     match_parameter_candidates,
@@ -296,6 +304,66 @@ def _normalize(value: Any) -> Any:
     if isinstance(value, list):
         return [_normalize(item) for item in value]
     return value
+
+
+def _matches_frozen_graph_context(
+    actual_context: Mapping[str, Any],
+    expected_context: Mapping[str, Any],
+) -> bool:
+    """Compare persisted Scenario context while ignoring request-local pins.
+
+    Proposal Flow v4.1.7 adds the selected MI Base case to graph state after
+    loading the persisted Scenario context.  That request-local field is not a
+    Scenario mutation and must not trip the pre-persistence drift guard.
+    """
+
+    actual = _normalize(actual_context)
+    expected = _normalize(expected_context)
+    if not isinstance(actual, dict) or not isinstance(expected, dict):
+        return actual == expected
+    actual_without_request_pins = dict(actual)
+    expected_without_request_pins = dict(expected)
+    actual_without_request_pins.pop("mi_base_case_id", None)
+    expected_without_request_pins.pop("mi_base_case_id", None)
+    return actual_without_request_pins == expected_without_request_pins
+
+
+def _same_mi_base_content_identity(
+    graph_identity: Mapping[str, Any],
+    trace_identity: Mapping[str, Any],
+) -> bool:
+    """Allow source transport changes only when the selected workbook identity is exact."""
+    fields = ("case_id", "run_seq", "workbook_sha256")
+    return all(_normalize(graph_identity.get(field)) == _normalize(trace_identity.get(field)) for field in fields)
+
+
+async def _resolve_trace_mi_base_resources(
+    raw_state: Mapping[str, Any],
+) -> MiBaseResourceSelection:
+    graph_context = raw_state.get("scenario_context") or {}
+    raw_case_id = graph_context.get("mi_base_case_id")
+    case_id = int(raw_case_id) if raw_case_id is not None else None
+    snapshot = (
+        await asyncio.to_thread(
+            ModelParameterService().load_mi_base_snapshot,
+            case_id,
+        )
+        if case_id is not None
+        else None
+    )
+    selection = await resolve_mi_base_resources(snapshot)
+    graph_identity = (raw_state.get("resolved_config") or {}).get("mi_base_resource") or {}
+    trace_identity = mi_base_resource_identity(selection)
+    if not graph_identity or not _same_mi_base_content_identity(
+        graph_identity,
+        trace_identity,
+    ):
+        message = (
+            "MI Base resource identity changed before post-graph trace enrichment: "
+            f"graph={graph_identity}, trace={trace_identity}"
+        )
+        raise RuntimeError(message)
+    return selection
 
 
 def _candidate_signature(candidate: dict[str, Any]) -> tuple[str, str, str]:
@@ -755,6 +823,21 @@ def _compare_candidate_coverage(
     return not messages, messages
 
 
+def _persistence_quality_candidates(
+    *,
+    generation_strategy: str,
+    validated_candidates: list[dict[str, Any]],
+    slot_candidate_mappings: list[dict[str, Any]],
+    slot_candidate_mappings_captured: bool,
+) -> list[dict[str, Any]]:
+    if generation_strategy == "multi_event_model_lever_dimensions" and slot_candidate_mappings_captured:
+        # v4 deliberately drops conditional candidates that cannot establish an exact slot.
+        # The persistence gate must validate the post-Step2 candidate set, otherwise one
+        # safely abstained conditional binding rejects another independently grounded result.
+        return slot_candidate_mappings
+    return validated_candidates
+
+
 def _review_selected_parameters(
     candidates: list[dict[str, Any]],
     result: dict[str, Any],
@@ -773,6 +856,34 @@ def _review_selected_parameters(
     if unknown_selected:
         messages.append(f"unknown_selected_candidate_keys={unknown_selected}")
     return not unknown_selected, messages
+
+
+def _has_grounded_v4_routing_evidence(candidate: dict[str, Any]) -> bool:
+    candidate_keys = {
+        str(candidate_key)
+        for candidate_key in candidate.get("merged_candidate_keys") or [candidate.get("candidate_key")]
+        if str(candidate_key or "")
+    }
+    for evidence in candidate.get("routing_evidence") or []:
+        if not isinstance(evidence, dict):
+            continue
+        if str(evidence.get("candidate_key") or "") not in candidate_keys:
+            continue
+        decision = str(evidence.get("decision") or "")
+        evidence_basis = str(evidence.get("evidence_basis") or "")
+        valid_basis = (
+            decision == "DIRECT" and evidence_basis in {"OBSERVED", "DERIVED"}
+        ) or (
+            decision == "ASSUMPTION_ELIGIBLE" and evidence_basis == "BOUNDED_ASSUMPTION"
+        )
+        if not valid_basis or str(evidence.get("direction") or "") == "unknown":
+            continue
+        if all(
+            str(evidence.get(field) or "").strip()
+            for field in ("causal_path_ko", "target_scope_ko", "time_scope_ko", "rationale_ko")
+        ):
+            return True
+    return False
 
 
 def _review_routing_selection(
@@ -796,9 +907,22 @@ def _review_routing_selection(
     if not selected_routing_keys:
         messages.append("routing 후보 중 selected parameter가 없습니다.")
     if len(routing_candidates) > 1 and len(selected_routing_keys) == len(routing_candidates):
-        messages.append(
-            "routing 후보가 모두 selected입니다. DB scenario dimension에 따른 선택/제외 사유 검토가 필요합니다.",
-        )
+        all_v4 = all(str(candidate.get("mapping_strategy") or "").lower() == "v4" for candidate in routing_candidates)
+        if all_v4:
+            missing_evidence = sorted(
+                str(candidate.get("candidate_key") or "")
+                for candidate in routing_candidates
+                if not _has_grounded_v4_routing_evidence(candidate)
+            )
+            if missing_evidence:
+                messages.append(
+                    "v4 routing 후보가 모두 selected이지만 독립 applicability 근거가 누락되었습니다: "
+                    f"candidate_keys={missing_evidence}",
+                )
+        else:
+            messages.append(
+                "routing 후보가 모두 selected입니다. DB scenario dimension에 따른 선택/제외 사유 검토가 필요합니다.",
+            )
     return ("PASS" if not messages else "REVIEW"), messages
 
 
@@ -885,6 +1009,54 @@ def _attach_failure_trace(exc: BaseException, trace: dict[str, Any]) -> None:
         return
 
 
+def _merge_semantic_failure_trace(
+    failure_trace: dict[str, Any],
+    exc: ModelParameterSemanticEmptyError,
+) -> None:
+    """Merge request-local semantic evidence without exposing prompts/context."""
+    evidence = exc.trace_evidence if isinstance(exc.trace_evidence, dict) else {}
+    for key in (
+        "llm_calls",
+        "step_summary",
+        "trace_mi_base_resource",
+        "semantic_stage_evidence",
+        "observability_complete",
+        "partial_state_captured",
+    ):
+        if key in evidence:
+            failure_trace[key] = evidence[key]
+    failure_trace["semantic_empty"] = {
+        "reason_code": exc.reason_code,
+        "stage": exc.stage,
+        "message": exc.error_message,
+    }
+    failure_trace["observability_complete"] = bool(
+        evidence.get("observability_complete"),
+    )
+    failure_trace["partial_state_captured"] = bool(
+        evidence.get("partial_state_captured"),
+    )
+
+
+def _merge_node_failure_trace(
+    failure_trace: dict[str, Any],
+    exc: BaseException,
+) -> None:
+    evidence = getattr(exc, "_model_parameter_node_trace", None)
+    if not isinstance(evidence, dict):
+        return
+    for key in (
+        "llm_calls",
+        "trace_mi_base_resource",
+        "node_failure_stage",
+        "node_stage_evidence",
+        "observability_complete",
+        "partial_state_captured",
+    ):
+        if key in evidence:
+            failure_trace[key] = evidence[key]
+
+
 def _serialize_output_with_persistence_trace(
     raw_state: dict[str, Any],
     failure_trace: dict[str, Any],
@@ -959,7 +1131,8 @@ async def _evaluate_scenario(
         payload: dict[str, Any] = {"scenario_id": scenario_id}
         raw_output = await RAW_GRAPH.ainvoke(to_state(payload))
         raw_state = _normalize(raw_output)
-        if expected_scenario_context is not None and _normalize(raw_state.get("scenario_context") or {}) != _normalize(
+        if expected_scenario_context is not None and not _matches_frozen_graph_context(
+            raw_state.get("scenario_context") or {},
             expected_scenario_context,
         ):
             message = "Scenario context changed during proposal graph execution"
@@ -969,6 +1142,12 @@ async def _evaluate_scenario(
         slot_catalog = raw_state.get("slot_catalog") or []
         effective_references = raw_state.get("effective_references") or []
         slot_candidate_mappings = raw_state.get("slot_candidate_mappings") or []
+        persistence_candidates = _persistence_quality_candidates(
+            generation_strategy=generation_strategy,
+            validated_candidates=validated_candidates,
+            slot_candidate_mappings=slot_candidate_mappings,
+            slot_candidate_mappings_captured="slot_candidate_mappings" in raw_state,
+        )
         llm_calls = raw_state.get("llm_calls") or []
         result = {
             "parameter_adjustments": raw_state.get("parameter_adjustments") or [],
@@ -977,7 +1156,7 @@ async def _evaluate_scenario(
         }
         failure_trace.update(
             {
-                "expected_candidates": validated_candidates,
+                "expected_candidates": persistence_candidates,
                 "parameter_slots": parameter_slots,
                 "slot_catalog": slot_catalog,
                 "effective_references": effective_references,
@@ -989,26 +1168,31 @@ async def _evaluate_scenario(
         )
 
         failed_stage = "post-graph trace enrichment"
+        graph_context = raw_state.get("scenario_context") or context
+        selected_resources = await _resolve_trace_mi_base_resources(raw_state)
         slot_basecase_records, basecase_warnings = build_basecase_records(
             kb,
-            validated_candidates,
-            context,
+            persistence_candidates,
+            graph_context,
+            registry=resource_paths.lut_registry,
+            workbook_contract=selected_resources.workbook_contract,
+            workbook_resource_root=selected_resources.workbook_resource_root,
         )
         slot_options = _build_basecase_slot_options(slot_basecase_records)
         value_reference_records = _value_reference_records(raw_state)
         candidate_coverage_ok, candidate_coverage_messages = _compare_candidate_coverage(
-            validated_candidates,
+            persistence_candidates,
             result,
         )
-        selected_ok, selected_messages = _review_selected_parameters(validated_candidates, result)
+        selected_ok, selected_messages = _review_selected_parameters(persistence_candidates, result)
         routing_status, routing_messages = _review_routing_selection(
             scenario_id,
-            validated_candidates,
+            persistence_candidates,
             result,
         )
         step_summary = _build_step_summary(
             rule_candidates=candidates,
-            validated_candidates=validated_candidates,
+            validated_candidates=persistence_candidates,
             parameter_slots=parameter_slots,
             slot_basecase_records=slot_basecase_records,
             slot_options=slot_options,
@@ -1020,9 +1204,9 @@ async def _evaluate_scenario(
         )
         record = {
             "scenario_id": scenario_id,
-            "context": context,
+            "context": graph_context,
             "rule_candidates": candidates,
-            "expected_candidates": validated_candidates,
+            "expected_candidates": persistence_candidates,
             "non_input_items": non_inputs,
             "mapping_warnings": mapping_warnings,
             "basecase_warnings": basecase_warnings,
@@ -1035,6 +1219,9 @@ async def _evaluate_scenario(
             "final_response": {},
             "llm_calls": llm_calls,
             "resolved_config": raw_state.get("resolved_config") or {},
+            "trace_mi_base_resource": mi_base_resource_identity(
+                selected_resources,
+            ),
             "lut_version": raw_state.get("lut_version"),
             "mapping_ok": candidate_coverage_ok,
             "mapping_messages": candidate_coverage_messages,
@@ -1089,7 +1276,7 @@ async def _evaluate_scenario(
         record["final_response"] = final_response
         record["step_summary"] = _build_step_summary(
             rule_candidates=candidates,
-            validated_candidates=validated_candidates,
+            validated_candidates=persistence_candidates,
             parameter_slots=parameter_slots,
             slot_basecase_records=slot_basecase_records,
             slot_options=slot_options,
@@ -1101,6 +1288,11 @@ async def _evaluate_scenario(
         )
         return record
     except Exception as exc:
+        if isinstance(exc, ModelParameterSemanticEmptyError):
+            _merge_semantic_failure_trace(failure_trace, exc)
+            failed_stage = f"semantic abstention: {exc.stage}"
+        else:
+            _merge_node_failure_trace(failure_trace, exc)
         failure_trace["failed_stage"] = failed_stage
         failure_trace["error"] = repr(exc)
         _attach_failure_trace(exc, failure_trace)

@@ -19,10 +19,34 @@ from apps.common.values.error_codes import ErrorCode
 
 PACKAGE_DIR = Path(__file__).resolve().parents[1]
 PACKAGE_RESOURCE_DIR = PACKAGE_DIR / "resources"
-DEFAULT_WORKBOOK_CONTRACT_PATH = PACKAGE_RESOURCE_DIR / "contracts" / "model-parameter-workbook-contract-v4.json"
+DEFAULT_WORKBOOK_CONTRACT_PATH = PACKAGE_RESOURCE_DIR / "contracts" / "model-parameter-workbook-contract-v8.json"
 V1_PARAMETER_NAMES = frozenset({"GDP", "PMI", "PowerMix", "Temperature", "LiqUtilAdjustment"})
+EXTEND10_PARAMETER_NAMES = frozenset(
+    {
+        *V1_PARAMETER_NAMES,
+        "Population",
+        "HurricaneIntensity",
+        "LiqProdAdjustment",
+        "PipelineAdjustment",
+        "SupplyDisruption",
+    },
+)
+EXTEND14_PARAMETER_NAMES = frozenset(
+    {
+        *EXTEND10_PARAMETER_NAMES,
+        "User-Adjusted Gas Demand",
+        "RegasAdjustment",
+        "PNG Contract Volume",
+        "ShippingCost",
+    },
+)
 EXPECTED_PARAMETER_NAMES = frozenset(
-    {*V1_PARAMETER_NAMES, "PipelineAdjustment", "SupplyDisruption"},
+    {
+        *EXTEND14_PARAMETER_NAMES,
+        "RegionalProductionAdjustment",
+        "ShippingFuelCost",
+        "CanalToll",
+    },
 )
 EXPECTED_WORKBOOK_ROLES = frozenset({"demand", "supply", "trade"})
 APPROVED_POWER_MIX_VECTOR_MEMBERS = (
@@ -46,8 +70,14 @@ ReferenceParser = Literal[
     "annual_rows_to_months",
     "fixed_rows",
     "gdp_growth_from_levels",
+    "hurricane_no_event_baseline",
+    "liquefaction_production_rows",
+    "annual_value_rows",
     "production_seasonality_monthly",
     "year_columns",
+    "exact_rows",
+    "matrix_time_columns",
+    "regional_production_annual",
 ]
 ProposalMode = Literal["auto", "conditional"]
 TargetLayout = Literal["fixed_columns", "matrix_time_columns"]
@@ -142,6 +172,24 @@ class ReferenceTransform(_FrozenModel):
         return self
 
 
+class AxisTransform(_FrozenModel):
+    source_field: str
+    operation: Literal["strip_leading_year"]
+    allowed_values: tuple[str, ...]
+
+    @model_validator(mode="after")
+    def validate_transform(self) -> AxisTransform:
+        if not self.source_field.strip():
+            raise ValueError("axis transform source_field must be non-empty")
+        if (
+            not self.allowed_values
+            or any(not value.strip() for value in self.allowed_values)
+            or len(self.allowed_values) != len(set(self.allowed_values))
+        ):
+            raise ValueError("axis transform allowed_values must contain unique non-empty values")
+        return self
+
+
 class ReferenceAuxiliarySource(_FrozenModel):
     path: str
     sha256: str
@@ -174,8 +222,17 @@ class ReferenceSource(_FrozenModel):
     parser: ReferenceParser
     header_row: int = Field(ge=1)
     data_start_row: int = Field(ge=1)
+    data_end_row: int | None = Field(default=None, ge=1)
     columns: dict[str, str]
+    value_start: str | None = None
+    value_end: str | None = None
+    year_row: int | None = Field(default=None, ge=1)
+    month_row: int | None = Field(default=None, ge=1)
+    period_row: int | None = Field(default=None, ge=1)
     column_headers: dict[str, str] = Field(default_factory=dict)
+    required_cells: dict[str, str] = Field(default_factory=dict)
+    included_rows: tuple[int, ...] = ()
+    axis_transforms: dict[str, AxisTransform] = Field(default_factory=dict)
     transforms: dict[str, ReferenceTransform] = Field(default_factory=dict)
     auxiliary_sources: dict[str, ReferenceAuxiliarySource] = Field(default_factory=dict)
     key_axes: tuple[str, ...]
@@ -186,15 +243,35 @@ class ReferenceSource(_FrozenModel):
     expected_record_count: int = Field(gt=0)
 
     @model_validator(mode="after")
-    def validate_source_shape(self) -> ReferenceSource:
+    def validate_source_shape(self) -> ReferenceSource:  # noqa: C901
         if self.data_start_row <= self.header_row:
             raise ValueError("reference data_start_row must follow header_row")
+        if self.data_end_row is not None and self.data_end_row < self.data_start_row:
+            raise ValueError("reference data_end_row must not precede data_start_row")
         _validate_named_axes(self.key_axes, self.metadata_axes)
         if any(_EXCEL_COLUMN_PATTERN.fullmatch(column) is None for column in self.columns.values()):
             raise ValueError("reference source columns must be Excel column labels")
         unknown_header_fields = set(self.column_headers) - set(self.columns)
         if unknown_header_fields:
             raise ValueError(f"column_headers contains unknown source fields: {sorted(unknown_header_fields)}")
+        _validate_required_cells(self.required_cells)
+        _validate_included_rows(
+            self.included_rows,
+            data_start_row=self.data_start_row,
+            data_end_row=self.data_end_row,
+        )
+        unknown_axis_transforms = set(self.axis_transforms) - set(self.key_axes)
+        if unknown_axis_transforms:
+            raise ValueError(f"axis_transforms contains unknown key axes: {sorted(unknown_axis_transforms)}")
+        missing_axis_transform_fields = {
+            transform.source_field
+            for transform in self.axis_transforms.values()
+            if transform.source_field not in self.columns
+        }
+        if missing_axis_transform_fields:
+            raise ValueError(
+                f"axis_transforms contain unknown source fields: {sorted(missing_axis_transform_fields)}",
+            )
         unknown_transform_fields = {
             transform.source_field
             for transform in self.transforms.values()
@@ -206,6 +283,16 @@ class ReferenceSource(_FrozenModel):
             raise ValueError("reference source text fields must be non-empty")
         if any(not name.strip() for name in self.auxiliary_sources):
             raise ValueError("reference auxiliary source names must be non-empty")
+        if self.parser == "matrix_time_columns":
+            if self.value_start is None or self.value_end is None or self.year_row is None or self.month_row is None:
+                raise ValueError(
+                    "matrix_time_columns requires value_start, value_end, year_row, and month_row",
+                )
+            if (
+                _EXCEL_COLUMN_PATTERN.fullmatch(self.value_start) is None
+                or _EXCEL_COLUMN_PATTERN.fullmatch(self.value_end) is None
+            ):
+                raise ValueError("matrix_time_columns value bounds must be Excel column labels")
         return self
 
 
@@ -216,7 +303,12 @@ class WriteTarget(_FrozenModel):
     layout: TargetLayout
     header_row: int = Field(ge=1)
     data_start_row: int = Field(ge=1)
+    data_end_row: int | None = Field(default=None, ge=1)
     columns: dict[str, str]
+    column_headers: dict[str, str] = Field(default_factory=dict)
+    required_cells: dict[str, str] = Field(default_factory=dict)
+    included_rows: tuple[int, ...] = ()
+    axis_transforms: dict[str, AxisTransform] = Field(default_factory=dict)
     key_axes: tuple[str, ...]
     metadata_axes: tuple[str, ...]
     value_field: str
@@ -230,7 +322,37 @@ class WriteTarget(_FrozenModel):
     def validate_target_shape(self) -> WriteTarget:
         if self.data_start_row <= self.header_row:
             raise ValueError("write target data_start_row must follow header_row")
+        if self.data_end_row is not None and self.data_end_row < self.data_start_row:
+            raise ValueError("write target data_end_row must not precede data_start_row")
         _validate_named_axes(self.key_axes, self.metadata_axes)
+        control_fields = {"value_start", "value_end", "year_row", "month_row", "period_row"}
+        if any(
+            _EXCEL_COLUMN_PATTERN.fullmatch(column) is None
+            for field, column in self.columns.items()
+            if field not in control_fields
+        ):
+            raise ValueError("write target columns must be Excel column labels")
+        unknown_header_fields = set(self.column_headers) - set(self.columns)
+        if unknown_header_fields:
+            raise ValueError(f"column_headers contains unknown target fields: {sorted(unknown_header_fields)}")
+        _validate_required_cells(self.required_cells)
+        _validate_included_rows(
+            self.included_rows,
+            data_start_row=self.data_start_row,
+            data_end_row=self.data_end_row,
+        )
+        unknown_axis_transforms = set(self.axis_transforms) - set(self.key_axes)
+        if unknown_axis_transforms:
+            raise ValueError(f"axis_transforms contains unknown key axes: {sorted(unknown_axis_transforms)}")
+        missing_axis_transform_fields = {
+            transform.source_field
+            for transform in self.axis_transforms.values()
+            if transform.source_field not in self.columns
+        }
+        if missing_axis_transform_fields:
+            raise ValueError(
+                f"axis_transforms contain unknown target fields: {sorted(missing_axis_transform_fields)}",
+            )
         if any(not value.strip() for value in (self.sheet, self.table, self.value_field, self.write_unit)):
             raise ValueError("write target text fields must be non-empty")
         if self.metadata_authority == "write_target" and self.row_policy != "existing_exact":
@@ -286,8 +408,17 @@ class WorkbookParameterContract(_FrozenModel):
 
 
 class ModelParameterWorkbookContract(_FrozenModel):
-    schema_version: Literal[1, 2, 3, 4]
-    release_id: Literal["new-bc-v1", "new-bc-v2", "new-bc-v3", "new-bc-v4"]
+    schema_version: Literal[1, 2, 3, 4, 5, 6, 7, 8]
+    release_id: Literal[
+        "new-bc-v1",
+        "new-bc-v2",
+        "new-bc-v3",
+        "new-bc-v4",
+        "new-bc-v5",
+        "new-bc-v6",
+        "new-bc-v7",
+        "new-bc-v8",
+    ]
     capability: Literal["read_only_proposal"]
     api_version: Literal["v4"]
     generation_strategy: Literal["multi_event_model_lever_dimensions"]
@@ -308,10 +439,27 @@ class ModelParameterWorkbookContract(_FrozenModel):
             raise ValueError(
                 "workbook roles must be exactly demand, supply, and trade",
             )
-        expected_parameters = V1_PARAMETER_NAMES if self.release_id == "new-bc-v1" else EXPECTED_PARAMETER_NAMES
-        expected_schema_version = {"new-bc-v1": 1, "new-bc-v2": 2, "new-bc-v3": 3, "new-bc-v4": 4}[
-            self.release_id
-        ]
+        expected_parameters = (
+            V1_PARAMETER_NAMES
+            if self.release_id == "new-bc-v1"
+            else frozenset({*V1_PARAMETER_NAMES, "PipelineAdjustment", "SupplyDisruption"})
+            if self.release_id in {"new-bc-v2", "new-bc-v3", "new-bc-v4"}
+            else EXTEND10_PARAMETER_NAMES
+            if self.release_id == "new-bc-v5"
+            else EXTEND14_PARAMETER_NAMES
+            if self.release_id == "new-bc-v6"
+            else EXPECTED_PARAMETER_NAMES
+        )
+        expected_schema_version = {
+            "new-bc-v1": 1,
+            "new-bc-v2": 2,
+            "new-bc-v3": 3,
+            "new-bc-v4": 4,
+            "new-bc-v5": 5,
+            "new-bc-v6": 6,
+            "new-bc-v7": 7,
+            "new-bc-v8": 8,
+        }[self.release_id]
         if self.schema_version != expected_schema_version:
             raise ValueError("workbook contract schema version and release ID disagree")
         if set(self.parameters) != expected_parameters:
@@ -340,7 +488,7 @@ class ModelParameterWorkbookContract(_FrozenModel):
             raise ValueError(
                 "LiqUtilAdjustment must retain its evidence gate, zero minimum, and unbounded maximum",
             )
-        if self.release_id == "new-bc-v4":
+        if self.release_id in {"new-bc-v4", "new-bc-v5", "new-bc-v6", "new-bc-v7", "new-bc-v8"}:
             if (
                 nameplate_transform is not None
                 or liq_util.write_target.row_policy != "existing_exact"
@@ -356,7 +504,15 @@ class ModelParameterWorkbookContract(_FrozenModel):
             or nameplate_transform.factor != 12.0
         ):
             raise ValueError("legacy workbook contracts must retain the MTPM-to-MTPA transform")
-        if self.release_id in {"new-bc-v2", "new-bc-v3", "new-bc-v4"}:
+        if self.release_id in {
+            "new-bc-v2",
+            "new-bc-v3",
+            "new-bc-v4",
+            "new-bc-v5",
+            "new-bc-v6",
+            "new-bc-v7",
+            "new-bc-v8",
+        }:
             pipeline = self.parameters["PipelineAdjustment"]
             supply = self.parameters["SupplyDisruption"]
             if (
@@ -373,7 +529,14 @@ class ModelParameterWorkbookContract(_FrozenModel):
                 or supply.constraints.minimum != 0.0
             ):
                 raise ValueError("SupplyDisruption must retain the approved production-seasonality workbook contract")
-            if self.release_id in {"new-bc-v3", "new-bc-v4"} and (
+            if self.release_id in {
+                "new-bc-v3",
+                "new-bc-v4",
+                "new-bc-v5",
+                "new-bc-v6",
+                "new-bc-v7",
+                "new-bc-v8",
+            } and (
                 pipeline.reference_source.reference_unit != pipeline.write_target.write_unit
                 or supply.reference_source.reference_unit != supply.write_target.write_unit
                 or pipeline.write_target.value_field != "User adjusted capacity (Mt/y)"
@@ -381,6 +544,107 @@ class ModelParameterWorkbookContract(_FrozenModel):
                 or supply.write_target.value_field != "Volumes (Mt)"
             ):
                 raise ValueError("new-bc-v3+ must use the final workbook target sheets and Mt units")
+        if self.release_id in {"new-bc-v5", "new-bc-v6", "new-bc-v7", "new-bc-v8"}:
+            population = self.parameters["Population"]
+            hurricane = self.parameters["HurricaneIntensity"]
+            liq_prod = self.parameters["LiqProdAdjustment"]
+            if (
+                population.reference_source.parser != "annual_value_rows"
+                or population.reference_source.key_axes != ("Country", "Year")
+                or population.constraints.minimum != 0.0
+            ):
+                raise ValueError("Population must use the approved non-negative annual workbook contract")
+            if (
+                hurricane.reference_source.parser != "hurricane_no_event_baseline"
+                or hurricane.reference_source.key_axes != ("Year", "Month")
+                or hurricane.constraints.minimum != 0.0
+                or hurricane.constraints.maximum != 4.0
+                or not hurricane.constraints.direct_evidence_required
+            ):
+                raise ValueError("HurricaneIntensity must retain its GoM evidence gate and integer 0..4 range")
+            if (
+                liq_prod.reference_source.parser != "liquefaction_production_rows"
+                or liq_prod.reference_source.key_axes != ("Country", "LNG Plant", "LNG Plant Train", "Year", "Month")
+                or liq_prod.constraints.minimum != 0.0
+                or not liq_prod.constraints.direct_evidence_required
+                or liq_prod.write_target.row_policy != "existing_exact"
+                or liq_prod.write_target.metadata_authority != "write_target"
+            ):
+                raise ValueError("LiqProdAdjustment must retain its exact-slot production override contract")
+        if self.release_id in {"new-bc-v6", "new-bc-v7", "new-bc-v8"}:
+            basecase_only = {
+                "User-Adjusted Gas Demand": ("exact_rows", ("Country", "Year", "Month", "Demand Sub-Sector")),
+                "RegasAdjustment": (
+                    "matrix_time_columns",
+                    (
+                        "Continent",
+                        "Region",
+                        "Country",
+                        "Regasification plant",
+                        "Life Cycle Category",
+                        "Nameplate capacity (MTPA)",
+                        "Year",
+                        "Month",
+                    ),
+                ),
+                "PNG Contract Volume": ("exact_rows", ("Year", "From Country", "To Country")),
+                "ShippingCost": ("exact_rows", ("Year",)),
+            }
+            for parameter_name, (parser, exact_axes) in basecase_only.items():
+                parameter = self.parameters[parameter_name]
+                if (
+                    parameter.reference_source.parser != parser
+                    or parameter.reference_source.key_axes != exact_axes
+                    or parameter.reference_source.data_end_row is None
+                    or parameter.write_target.key_axes != exact_axes
+                    or parameter.write_target.data_end_row is None
+                    or parameter.write_target.row_policy != "existing_exact"
+                    or parameter.reference_source.reference_unit != parameter.write_target.write_unit
+                    or parameter.constraints.minimum != 0.0
+                    or parameter.constraints.maximum is not None
+                    or not parameter.constraints.direct_evidence_required
+                ):
+                    raise ValueError(
+                        f"{parameter_name} must retain its non-negative existing-exact Basecase-only contract",
+                    )
+        if self.release_id in {"new-bc-v7", "new-bc-v8"}:
+            new_parameters = {
+                "RegionalProductionAdjustment": (
+                    "regional_production_annual",
+                    ("Year", "Province/Country"),
+                    "Bcm",
+                ),
+                "ShippingFuelCost": ("exact_rows", ("Year",), "$/tonne"),
+                "CanalToll": ("exact_rows", ("Canal", "Year"), "$/crossing"),
+            }
+            for parameter_name, (parser, exact_axes, unit) in new_parameters.items():
+                parameter = self.parameters[parameter_name]
+                if (
+                    parameter.reference_source.parser != parser
+                    or parameter.reference_source.key_axes != exact_axes
+                    or parameter.write_target.key_axes != exact_axes
+                    or parameter.reference_source.reference_unit != unit
+                    or parameter.write_target.write_unit != unit
+                    or parameter.constraints.minimum != 0.0
+                    or parameter.constraints.maximum is not None
+                    or not parameter.constraints.direct_evidence_required
+                ):
+                    raise ValueError(
+                        f"{parameter_name} must retain its non-negative direct-evidence v7+ contract",
+                    )
+        if self.release_id == "new-bc-v8":
+            for parameter_name in ("LiqProdAdjustment", "LiqUtilAdjustment"):
+                columns = self.parameters[parameter_name].write_target.columns
+                if (
+                    columns.get("value_start") != "G"
+                    or columns.get("value_end") != "CL"
+                    or columns.get("year_row") != "7"
+                    or columns.get("month_row") != "8"
+                    or columns.get("period_row") != "9"
+                ):
+                    raise ValueError(
+                        f"{parameter_name} must retain the reviewed G:CL 84-month write-target boundary",
+                    )
         return self
 
 
@@ -394,12 +658,33 @@ def _validate_named_axes(key_axes: tuple[str, ...], metadata_axes: tuple[str, ..
         raise ValueError(f"key_axes and metadata_axes overlap: {overlap}")
 
 
+def _validate_required_cells(required_cells: Mapping[str, str]) -> None:
+    if any(re.fullmatch(r"[A-Z]{1,3}[1-9][0-9]*", cell) is None for cell in required_cells):
+        raise ValueError("required_cells keys must be absolute A1-style cell references")
+    if any(not value.strip() for value in required_cells.values()):
+        raise ValueError("required_cells values must be non-empty")
+
+
+def _validate_included_rows(
+    included_rows: tuple[int, ...],
+    *,
+    data_start_row: int,
+    data_end_row: int | None,
+) -> None:
+    if not included_rows:
+        return
+    if len(included_rows) != len(set(included_rows)) or tuple(sorted(included_rows)) != included_rows:
+        raise ValueError("included_rows must contain unique rows in ascending order")
+    if any(row < data_start_row or (data_end_row is not None and row > data_end_row) for row in included_rows):
+        raise ValueError("included_rows must stay inside the declared data row bounds")
+
+
 def load_workbook_contract(
     path: Path = DEFAULT_WORKBOOK_CONTRACT_PATH,
 ) -> ModelParameterWorkbookContract:
     try:
         document = json.loads(path.read_text(encoding="utf-8"))
-        if document.get("schema_version") in {2, 3, 4} and "extends" in document:
+        if document.get("schema_version") in {2, 3, 4, 5, 6, 7, 8} and "extends" in document:
             extends = _extends_basename(document.pop("extends"))
             base_path = path.parent / extends
             base_document = load_workbook_contract(base_path).model_dump(mode="json")
@@ -525,6 +810,7 @@ __all__ = [
     "APPROVED_POWER_MIX_VECTOR_MEMBERS",
     "DEFAULT_WORKBOOK_CONTRACT_PATH",
     "EXPECTED_PARAMETER_NAMES",
+    "AxisTransform",
     "ModelParameterWorkbookContract",
     "ParameterConstraints",
     "ProposalPolicy",

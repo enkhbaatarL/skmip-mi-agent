@@ -1,12 +1,17 @@
 # Copyright (c) 2026 SK Innovation E&S.
 # ruff: noqa: ANN401, C901, E402
 
-"""Discover uncovered v4 scenarios and optionally run proposals once.
+"""Discover eligible v4 scenarios and optionally run proposals once.
 
 The default mode is DB read-only. ``--execute`` is intentionally narrower than
 the API/background workflows: it calls ``_evaluate_scenario`` directly, never
 calls confirmation or callback code, and never retries a write-producing
-attempt. The uncovered-only guard cannot be bypassed.
+attempt. A Scenario-level proposal failure is isolated so later eligible
+Scenarios still receive their one attempt; integrity or scope drift remains a
+campaign-wide hard stop. The default uncovered-only guard cannot be bypassed.
+The explicit ``--replay-covered`` release-evaluation mode remains append-only:
+it permits a new Proposal when only prior ``PROPOSED`` rows exist, while
+``PROCESSING`` and ``CONFIRMED`` rows still block that Scenario.
 """
 
 from __future__ import annotations
@@ -18,12 +23,15 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import re
 import sys
 import time
 from typing import Any
+
+import yaml
 
 
 ROOT_DIR = Path(__file__).resolve().parents[3]
@@ -38,9 +46,13 @@ if DEFAULT_DOTENV.exists():
 if "APP_CONFIG" not in os.environ and DEFAULT_APP_CONFIG.exists():
     os.environ["APP_CONFIG"] = str(DEFAULT_APP_CONFIG)
 
+from apps.agents.model_parameter_agent.flows.propose_parameters.validation import (
+    ModelParameterSemanticEmptyError,
+)
 from apps.agents.model_parameter_agent.persistence.model_parameter_service import (
     ModelParameterService,
 )
+from apps.agents.model_parameter_agent.utils.lut.keys import apply_numeric_precision
 from apps.agents.model_parameter_agent.utils.proposal_capabilities import (
     load_proposal_capability_contract,
 )
@@ -80,13 +92,16 @@ from tests.manual.model_parameter_agent.runner_common import (
 
 V4_API_VERSION = "v4"
 V4_STRATEGY = "multi_event_model_lever_dimensions"
-EVIDENCE_SCHEMA_VERSION = 3
+EVIDENCE_SCHEMA_VERSION = 6
 UNCOVERED_POLICY_VERSION = "uncovered-only-v1"
-BASELINE_CAPABILITY_RELEASE = "extend7-v4"
-EXPECTED_0032_CATALOG_CHECKSUM = "b9d8c051872b39903cc3b4d2f19cd00570156eecd82295f0d2b02fd042c4000b"
-EXPECTED_NEW_BC_V4_CONTRACT_SHA256 = "8f976303c9404b03945dafb9b7b871b6ac6eb6335d5e5b084ad9d7939f842a2d"
-EXPECTED_EXTEND7_V4_CONTRACT_SHA256 = "6eca2fe50b10ed39a801d4071b0ac646c41d554e8d92c3bc932a4ddc8cf5f0a7"
-EXPECTED_RESOURCE_SEMANTIC_SCHEMA_HASH = "cf174dd6e9cae7ee464563d996e503ce1adccad44878fc644b86d19c63f43952"
+RELEASE_REPLAY_POLICY_VERSION = "release-replay-v1"
+BASELINE_CAPABILITY_RELEASE = "extend16-v8"
+PROPOSAL_FLOW_RELEASE = "v4.1.7"
+EXPECTED_V4_0_CATALOG_CHECKSUM = "416017351f2b9539370963a3ca413914876da55a1db3f41e3dacd34bd466c763"
+EXPECTED_V4_1_CATALOG_CHECKSUM = "7f4ef0b7aa60efb550b9175654fd82350f0c293debf880a9180e7e935db54d69"
+EXPECTED_NEW_BC_V8_CONTRACT_SHA256 = "686640c7a47b215112997d7e34483ccdd9c01672be8e13a077e75e0afe0486a7"
+EXPECTED_EXTEND16_V8_CONTRACT_SHA256 = "cfc4971841a290ccf87251630f9f5c2d2a99062464d5b1e16db41ce22317f0eb"
+EXPECTED_RESOURCE_SEMANTIC_SCHEMA_HASH = "a1bbd691bcc1f22d336e83ea5dc0f30f0cc13f7c4cb3b4100bf96292b17ad4a2"
 EXPECTED_PACKAGED_RESOURCE_FINGERPRINT = "b1686b6308e8ba094277417bb79bfd85bfe05bb8013c20ed20545b9b2f9c1a44"
 EXPECTED_WORKBOOK_PARAMETER_NAMES = frozenset(
     {
@@ -94,35 +109,55 @@ EXPECTED_WORKBOOK_PARAMETER_NAMES = frozenset(
         "PMI",
         "PowerMix",
         "Temperature",
+        "Population",
+        "HurricaneIntensity",
+        "LiqProdAdjustment",
         "LiqUtilAdjustment",
         "PipelineAdjustment",
         "SupplyDisruption",
+        "User-Adjusted Gas Demand",
+        "RegasAdjustment",
+        "PNG Contract Volume",
+        "ShippingCost",
+        "RegionalProductionAdjustment",
+        "ShippingFuelCost",
+        "CanalToll",
     },
 )
-EXPECTED_EXTEND7_ALLOWLIST = frozenset(
-    {
-        *EXPECTED_WORKBOOK_PARAMETER_NAMES,
-        "PipelineAdjustment",
-        "SupplyDisruption",
-    },
+EXPECTED_EXTEND16_ALLOWLIST = frozenset(
+    EXPECTED_WORKBOOK_PARAMETER_NAMES - {"User-Adjusted Gas Demand"},
 )
 RUNTIME_PROPOSAL_CAPABILITY_NAMES = frozenset(load_proposal_capability_contract().by_name)
 CAPABILITY_RELEASES: dict[str, dict[str, Any]] = {
     BASELINE_CAPABILITY_RELEASE: {
-        "catalog_version": V4_API_VERSION,
-        "catalog_checksum": EXPECTED_0032_CATALOG_CHECKSUM,
-        "runtime_allowlist": EXPECTED_EXTEND7_ALLOWLIST,
-        "proposal_capability_release_id": "extend7-v4",
-        "proposal_capability_sha256": EXPECTED_EXTEND7_V4_CONTRACT_SHA256,
+        "catalog_version": "v4.1",
+        "catalog_checksum": EXPECTED_V4_1_CATALOG_CHECKSUM,
+        "runtime_allowlist": EXPECTED_EXTEND16_ALLOWLIST,
+        "proposal_capability_release_id": "extend16-v8",
+        "proposal_capability_sha256": EXPECTED_EXTEND16_V8_CONTRACT_SHA256,
         "workbook_parameter_names": EXPECTED_WORKBOOK_PARAMETER_NAMES,
-        "resource_release_id": "new-bc-v4",
-        "workbook_contract_sha256": EXPECTED_NEW_BC_V4_CONTRACT_SHA256,
+        "resource_release_id": "new-bc-v8",
+        "workbook_contract_sha256": EXPECTED_NEW_BC_V8_CONTRACT_SHA256,
+        "resource_semantic_schema_hash": EXPECTED_RESOURCE_SEMANTIC_SCHEMA_HASH,
+        "effective_resource_fingerprint": EXPECTED_PACKAGED_RESOURCE_FINGERPRINT,
+        "uncovered_policy_version": UNCOVERED_POLICY_VERSION,
+    },
+    "extend16-v8-v4.0-compat": {
+        "catalog_version": "v4.0",
+        "catalog_checksum": EXPECTED_V4_0_CATALOG_CHECKSUM,
+        "runtime_allowlist": EXPECTED_EXTEND16_ALLOWLIST,
+        "proposal_capability_release_id": "extend16-v8",
+        "proposal_capability_sha256": EXPECTED_EXTEND16_V8_CONTRACT_SHA256,
+        "workbook_parameter_names": EXPECTED_WORKBOOK_PARAMETER_NAMES,
+        "resource_release_id": "new-bc-v8",
+        "workbook_contract_sha256": EXPECTED_NEW_BC_V8_CONTRACT_SHA256,
         "resource_semantic_schema_hash": EXPECTED_RESOURCE_SEMANTIC_SCHEMA_HASH,
         "effective_resource_fingerprint": EXPECTED_PACKAGED_RESOURCE_FINGERPRINT,
         "uncovered_policy_version": UNCOVERED_POLICY_VERSION,
     },
 }
 DEFAULT_EVIDENCE_DIR = ROOT_DIR / "tests" / "reports" / "model_parameter_agent"
+KUBERNETES_CONFIG_PATH = ROOT_DIR / "devops" / "k8s" / "configmap.yaml"
 ELIGIBLE_SCENARIO_STATUSES = frozenset({"created", "realized"})
 ELIGIBLE_GROUP_STATUSES = frozenset({"created", "realized"})
 ELIGIBLE_GROUP_STAGE = "completed"
@@ -184,6 +219,8 @@ class ProposalOnlyOptions:
     scenario_group_id: int | None
     capability_release: str
     evidence_path: Path
+    required_mi_base_fallback_mode: str | None = None
+    replay_covered: bool = False
 
 
 @dataclass(frozen=True)
@@ -228,10 +265,23 @@ def build_parser() -> argparse.ArgumentParser:
         help="Write one proposal for each eligible uncovered scenario; omitted means read-only discovery.",
     )
     parser.add_argument(
+        "--replay-covered",
+        action="store_true",
+        help=(
+            "Append one new Proposal Flow release result even when a PROPOSED row exists. "
+            "Existing rows are preserved; PROCESSING and CONFIRMED still block execution."
+        ),
+    )
+    parser.add_argument(
         "--capability-release",
         required=True,
         choices=tuple(sorted(CAPABILITY_RELEASES)),
         help="Approved capability release contract; unknown labels are rejected.",
+    )
+    parser.add_argument(
+        "--require-mi-base-fallback-mode",
+        choices=("fail", "verified_cache", "configured_fallback"),
+        help=("Fail before Scenario execution unless the loaded active-case MI Base fallback mode matches this value."),
     )
     parser.add_argument("--evidence-path", type=Path)
     return parser
@@ -250,6 +300,8 @@ def _options_from_args(args: argparse.Namespace, started_at: datetime) -> Propos
         scenario_group_id=args.scenario_group_id,
         capability_release=str(args.capability_release or "").strip(),
         evidence_path=raw_path.expanduser().resolve(),
+        required_mi_base_fallback_mode=args.require_mi_base_fallback_mode,
+        replay_covered=bool(args.replay_covered),
     )
 
 
@@ -262,12 +314,22 @@ def _validate_options(options: ProposalOnlyOptions) -> None:
     if options.capability_release not in CAPABILITY_RELEASES:
         message = f"unsupported --capability-release: {options.capability_release!r}"
         raise ValueError(message)
+    allowed_fallback_modes = {"fail", "verified_cache", "configured_fallback"}
+    if (
+        options.required_mi_base_fallback_mode is not None
+        and options.required_mi_base_fallback_mode not in allowed_fallback_modes
+    ):
+        message = f"unsupported --require-mi-base-fallback-mode: {options.required_mi_base_fallback_mode!r}"
+        raise ValueError(message)
     invalid_ids = [scenario_id for scenario_id in options.scenario_ids if scenario_id <= 0]
     if invalid_ids:
         message = f"--scenario-id must be positive: {invalid_ids}"
         raise ValueError(message)
     if options.scenario_group_id is not None and options.scenario_group_id <= 0:
         message = f"--scenario-group-id must be positive: {options.scenario_group_id}"
+        raise ValueError(message)
+    if options.replay_covered and not options.execute:
+        message = "--replay-covered requires --execute"
         raise ValueError(message)
     duplicate_ids = sorted(
         {scenario_id for scenario_id in options.scenario_ids if options.scenario_ids.count(scenario_id) > 1},
@@ -304,6 +366,98 @@ def _sanitize_json(value: Any) -> Any:
     if isinstance(safe, str):
         return _redact_text(safe)
     return safe
+
+
+def _model_parameter_config_values(payload: Mapping[str, Any]) -> dict[str, Any]:
+    return {str(key): value for key, value in payload.items() if str(key).startswith("model_parameter_")}
+
+
+def _redact_config_values(value: object) -> object:
+    if isinstance(value, Mapping):
+        redacted: dict[str, object] = {}
+        for raw_key, nested in value.items():
+            key = str(raw_key)
+            normalized_key = key.casefold().replace("-", "_")
+            if any(token in normalized_key for token in ("password", "secret", "access_key", "token")):
+                redacted[key] = "<redacted>"
+            else:
+                redacted[key] = _redact_config_values(nested)
+        return redacted
+    if isinstance(value, list | tuple):
+        return [_redact_config_values(item) for item in value]
+    return value
+
+
+def _flatten_config(
+    value: object,
+    *,
+    prefix: str = "",
+) -> dict[str, object]:
+    if isinstance(value, Mapping):
+        flattened: dict[str, object] = {}
+        for key, nested in value.items():
+            path = f"{prefix}.{key}" if prefix else str(key)
+            flattened.update(_flatten_config(nested, prefix=path))
+        return flattened
+    return {prefix: value}
+
+
+def _display_config_path(path: Path) -> str:
+    try:
+        return str(path.relative_to(ROOT_DIR))
+    except ValueError:
+        return str(path)
+
+
+def _model_parameter_config_snapshot() -> dict[str, Any]:
+    local_payload = yaml.safe_load(CONFIG_FILE_PATH.read_text(encoding="utf-8")) or {}
+    kubernetes_document = (
+        yaml.safe_load(
+            KUBERNETES_CONFIG_PATH.read_text(encoding="utf-8"),
+        )
+        or {}
+    )
+    kubernetes_config_text = str(
+        ((kubernetes_document.get("data") or {}).get("config.yaml") or ""),
+    )
+    kubernetes_payload = yaml.safe_load(kubernetes_config_text) or {}
+    runtime_payload = get_settings().model_dump(mode="json")
+    local_values = _redact_config_values(
+        _model_parameter_config_values(local_payload),
+    )
+    kubernetes_values = _redact_config_values(
+        _model_parameter_config_values(kubernetes_payload),
+    )
+    runtime_values = _redact_config_values(
+        _model_parameter_config_values(runtime_payload),
+    )
+    if not all(isinstance(item, dict) for item in (local_values, kubernetes_values, runtime_values)):
+        message = "model parameter config snapshot must be a mapping"
+        raise TypeError(message)
+    local_flat = _flatten_config(local_values)
+    kubernetes_flat = _flatten_config(kubernetes_values)
+    all_paths = sorted(set(local_flat) | set(kubernetes_flat))
+    differences = [
+        {
+            "path": path,
+            "local": local_flat.get(path),
+            "neuro": kubernetes_flat.get(path),
+        }
+        for path in all_paths
+        if local_flat.get(path) != kubernetes_flat.get(path)
+    ]
+    return {
+        "scope": "all model_parameter_* settings; secret-valued fields are omitted from persisted evidence",
+        "local_config_path": _display_config_path(CONFIG_FILE_PATH),
+        "local_config_sha256": hashlib.sha256(CONFIG_FILE_PATH.read_bytes()).hexdigest(),
+        "neuro_config_path": _display_config_path(KUBERNETES_CONFIG_PATH),
+        "neuro_config_sha256": hashlib.sha256(KUBERNETES_CONFIG_PATH.read_bytes()).hexdigest(),
+        "local_declared": local_values,
+        "neuro_declared": kubernetes_values,
+        "runtime_effective": runtime_values,
+        "local_vs_neuro_differences": differences,
+        "top_level_key_parity": sorted(local_values) == sorted(kubernetes_values),
+    }
 
 
 def _reserve_evidence_path(path: Path, initial_evidence: Mapping[str, Any]) -> None:
@@ -440,6 +594,9 @@ def _resource_manifest() -> dict[str, Any]:
         lut_enabled=settings.model_parameter_lut_enabled,
     )
     manifest = {
+        "proposal_flow_release": str(
+            getattr(settings, "model_parameter_proposal_flow_release", ""),
+        ),
         "release_id": contract.release_id,
         "contract_sha256": hashlib.sha256(contract_path.read_bytes()).hexdigest(),
         "contract_parameter_names": sorted(contract.parameters),
@@ -479,6 +636,12 @@ def _release_contract_errors(
     release = _capability_contract(capability_release)
     errors: list[str] = []
     expected_allowlist = frozenset(str(item) for item in release["runtime_allowlist"])
+    if resource_manifest.get("proposal_flow_release") != PROPOSAL_FLOW_RELEASE:
+        errors.append(
+            "proposal flow release does not match this runner: "
+            f"expected={PROPOSAL_FLOW_RELEASE!r}, "
+            f"actual={resource_manifest.get('proposal_flow_release')!r}",
+        )
     if expected_allowlist != RUNTIME_PROPOSAL_CAPABILITY_NAMES:
         errors.append(
             "runtime capability drifted from the approved capability release: "
@@ -559,7 +722,7 @@ async def _evaluate_scenario_with_frozen_context(
         scenario_id,
         expected_scenario_context=scenario_context,
         require_pre_persistence_quality_pass=True,
-        allowed_parameter_names=EXPECTED_EXTEND7_ALLOWLIST,
+        allowed_parameter_names=EXPECTED_EXTEND16_ALLOWLIST,
     )
 
 
@@ -786,6 +949,7 @@ def _classify_uncovered_guard(
     scenario_id: int,
     scenario_group_id: int,
     rows: Sequence[Mapping[str, Any]],
+    replay_covered: bool = False,
 ) -> dict[str, Any]:
     history = [_proposal_row_evidence(row) for row in rows]
     identity_errors = [
@@ -844,9 +1008,14 @@ def _classify_uncovered_guard(
         reason_code = "CONFIRMED_EXISTS"
         eligible = False
     elif "PROPOSED" in statuses:
-        decision = "SKIP"
-        reason_code = "PROPOSED_EXISTS"
-        eligible = False
+        if replay_covered:
+            decision = "ELIGIBLE"
+            reason_code = "PROPOSED_RELEASE_REPLAY"
+            eligible = True
+        else:
+            decision = "SKIP"
+            reason_code = "PROPOSED_EXISTS"
+            eligible = False
     elif statuses and set(statuses) == {"FAILED"}:
         decision = "ELIGIBLE"
         reason_code = "FAILED_ONLY"
@@ -878,6 +1047,8 @@ def _classify_uncovered_guard(
 def _snapshot_campaign_guards(
     preflight: Sequence[Mapping[str, Any]],
     dependencies: RunnerDependencies,
+    *,
+    replay_covered: bool = False,
 ) -> tuple[dict[int, dict[str, Any]], list[str]]:
     errors: list[str] = []
     guards: dict[int, dict[str, Any]] = {}
@@ -922,6 +1093,7 @@ def _snapshot_campaign_guards(
                 scenario_id=scenario_id,
                 scenario_group_id=scenario_group_id,
                 rows=rows_by_scenario[scenario_id],
+                replay_covered=replay_covered,
             )
     return guards, errors
 
@@ -980,6 +1152,8 @@ def _llm_call_evidence(value: Any) -> list[dict[str, Any]]:
                 "prompt_limit_bytes",
                 "parameter_bytes",
                 "retry_count",
+                "retry_reasons",
+                "retry_delays_seconds",
                 "internal_retry_count",
                 "attempt",
                 "attempt_count",
@@ -1015,6 +1189,7 @@ def _record_summary(record: Mapping[str, Any]) -> dict[str, Any]:
         "routing_messages": record.get("routing_messages") or [],
         "step_summary": record.get("step_summary") or {},
         "lut_version": record.get("lut_version"),
+        "trace_mi_base_resource": record.get("trace_mi_base_resource") or {},
         "value_signature": record.get("value_signature"),
         "llm_calls": _llm_call_evidence(record.get("llm_calls")),
         "final_response": _public_final_response(record),
@@ -1032,11 +1207,60 @@ def _failure_summary(trace: Mapping[str, Any]) -> dict[str, Any]:
             "mapping_trace_captured",
             "partial_state_captured",
             "step_summary",
+            "trace_mi_base_resource",
+            "semantic_empty",
+            "semantic_stage_evidence",
+            "observability_complete",
+            "node_failure_stage",
+            "node_stage_evidence",
         )
         if key in trace
     }
     summary["llm_calls"] = _llm_call_evidence(trace.get("llm_calls"))
     return summary
+
+
+def _semantic_empty_evidence(
+    exc: BaseException,
+    trace: Mapping[str, Any],
+) -> dict[str, Any] | None:
+    if isinstance(exc, ModelParameterSemanticEmptyError):
+        return {
+            "reason_code": exc.reason_code,
+            "stage": exc.stage,
+            "message": exc.error_message,
+            "structured": True,
+            "observability_complete": trace.get("observability_complete") is True,
+        }
+    raw = trace.get("semantic_empty")
+    if isinstance(raw, Mapping):
+        return {
+            "reason_code": raw.get("reason_code"),
+            "stage": raw.get("stage"),
+            "message": raw.get("message"),
+            "structured": True,
+            "observability_complete": trace.get("observability_complete") is True,
+        }
+    return None
+
+
+def _llm_retry_evidence_from_exception(exc: BaseException) -> dict[str, Any]:
+    context = getattr(exc, "context", None)
+    raw = context.get("model_parameter_llm_retry") if isinstance(context, Mapping) else None
+    if not isinstance(raw, Mapping):
+        raw = getattr(exc, "_model_parameter_llm_retry", None)
+    if not isinstance(raw, Mapping):
+        return {}
+    return {
+        field: raw.get(field)
+        for field in (
+            "attempt_count",
+            "retry_count",
+            "retry_reasons",
+            "retry_delays_seconds",
+        )
+        if field in raw
+    }
 
 
 def _safe_fetch_proposal(
@@ -1053,11 +1277,22 @@ def _safe_fetch_proposal(
 def _proposal_parameters_for_comparison(value: Any) -> Any:
     safe = json_safe(value)
     if isinstance(safe, Mapping):
-        return {
-            str(key): _proposal_parameters_for_comparison(item)
-            for key, item in safe.items()
-            if str(key) not in {"lutValue", "lut_value"}
-        }
+        normalized: dict[str, Any] = {}
+        for key, item in safe.items():
+            key_text = str(key)
+            if key_text in {"lutValue", "lut_value"}:
+                continue
+            if key_text in {"basecaseValue", "basecase_value"} and item is not None:
+                settings = get_settings()
+                normalized[key_text] = apply_numeric_precision(
+                    item,
+                    label=key_text,
+                    max_decimal_places=settings.model_parameter_basecase_value_max_decimal_places,
+                    mode=settings.model_parameter_basecase_value_precision_mode,
+                )
+            else:
+                normalized[key_text] = _proposal_parameters_for_comparison(item)
+        return normalized
     if isinstance(safe, list | tuple):
         return [_proposal_parameters_for_comparison(item) for item in safe]
     return safe
@@ -1072,6 +1307,20 @@ def _contains_parameter_key(value: Any, forbidden_keys: set[str]) -> bool:
     if isinstance(safe, list | tuple):
         return any(_contains_parameter_key(item, forbidden_keys) for item in safe)
     return False
+
+
+def _proposal_parameters_equal(left: Any, right: Any) -> bool:
+    if isinstance(left, bool) or isinstance(right, bool):
+        return left == right
+    if isinstance(left, int | float) and isinstance(right, int | float):
+        return math.isclose(float(left), float(right), rel_tol=1e-12, abs_tol=1e-12)
+    if isinstance(left, Mapping) and isinstance(right, Mapping):
+        return set(left) == set(right) and all(_proposal_parameters_equal(left[key], right[key]) for key in left)
+    if isinstance(left, list | tuple) and isinstance(right, list | tuple):
+        return len(left) == len(right) and all(
+            _proposal_parameters_equal(left_item, right_item) for left_item, right_item in zip(left, right, strict=True)
+        )
+    return left == right
 
 
 def _proposal_parameter_names(value: Any) -> set[str]:
@@ -1174,8 +1423,9 @@ def _success_integrity_errors(
     unexpected_persisted_names = sorted(persisted_parameter_names - allowed_parameter_names)
     if unexpected_persisted_names:
         errors.append(f"proposal DB payload escaped the preflight runtime candidates: {unexpected_persisted_names}")
-    if _proposal_parameters_for_comparison(persisted_parameters) != _proposal_parameters_for_comparison(
-        response_proposal_parameters,
+    if not _proposal_parameters_equal(
+        _proposal_parameters_for_comparison(persisted_parameters),
+        _proposal_parameters_for_comparison(response_proposal_parameters),
     ):
         errors.append("proposal DB payload does not match the API response after excluding lutValue")
     return errors
@@ -1190,6 +1440,7 @@ async def _execute_once(
     resource_manifest: Mapping[str, Any],
     campaign_preflight: Sequence[Mapping[str, Any]],
     initially_eligible_ids: Sequence[int],
+    replay_covered: bool,
 ) -> dict[str, Any]:
     started_at = datetime.now(UTC)
     started = time.perf_counter()
@@ -1281,6 +1532,7 @@ async def _execute_once(
     campaign_guards, campaign_guard_errors = _snapshot_campaign_guards(
         campaign_preflight,
         dependencies,
+        replay_covered=replay_covered,
     )
     attempt["campaign_guard_before_write"] = {
         str(target_scenario_id): guard for target_scenario_id, guard in sorted(campaign_guards.items())
@@ -1327,6 +1579,7 @@ async def _execute_once(
         scenario_id=scenario_id,
         scenario_group_id=scenario_group_id,
         rows=before_rows,
+        replay_covered=replay_covered,
     )
     attempt["uncovered_guard_before_write"] = guard
     if not guard["eligible"]:
@@ -1369,6 +1622,12 @@ async def _execute_once(
         attempt["failed_stage"] = trace.get("failed_stage") or "proposal evaluation"
         attempt["error"] = _redact_text(repr(evaluation_error))
         attempt["failure_trace"] = _failure_summary(trace)
+        semantic_empty = _semantic_empty_evidence(evaluation_error, trace)
+        if semantic_empty is not None:
+            attempt["semantic_empty"] = semantic_empty
+        retry_evidence = _llm_retry_evidence_from_exception(evaluation_error)
+        if retry_evidence:
+            attempt["llm_retry"] = retry_evidence
         model_param_proposal_id = _int_or_none(trace.get("model_param_proposal_id"))
     attempt["model_param_proposal_id"] = model_param_proposal_id
 
@@ -1431,11 +1690,21 @@ async def _execute_once(
             ),
         )
     else:
-        integrity_errors.append("proposal evaluation raised; automatic retry is forbidden")
+        semantic_empty = attempt.get("semantic_empty")
+        if isinstance(semantic_empty, Mapping):
+            attempt["execution_policy_notes"] = [
+                "semantic abstention is retained as a quality outcome; automatic retry is forbidden",
+            ]
+            if trace.get("proposal_persisted") or model_param_proposal_id is not None or new_ids:
+                integrity_errors.append("semantic abstention must not persist a proposal")
+        else:
+            integrity_errors.append("proposal evaluation raised; automatic retry is forbidden")
     if snapshot_after_error:
         integrity_errors.append(f"proposal ID post-snapshot failed: {snapshot_after_error}")
     if integrity_errors:
         attempt["integrity_errors"] = integrity_errors
+    elif attempt.get("semantic_empty") is not None:
+        attempt["status"] = "ABSTAINED"
     else:
         attempt["status"] = "PASS"
     attempt["proposal_persisted"] = bool(
@@ -1455,6 +1724,7 @@ async def run_campaign(
     dependencies = dependencies or _runtime_dependencies()
     started_at = datetime.now(UTC)
     resource_manifest = _resource_manifest()
+    mi_base_fallback_policy = get_settings().model_parameter_mi_base_fallback.model_dump(mode="json")
     evidence: dict[str, Any] = {
         "schema_version": EVIDENCE_SCHEMA_VERSION,
         "runner": "model_parameter_proposal_only",
@@ -1466,6 +1736,9 @@ async def run_campaign(
             "scenario_ids": list(options.scenario_ids),
         },
         "manifest": {
+            "execution_policy_version": (
+                RELEASE_REPLAY_POLICY_VERSION if options.replay_covered else UNCOVERED_POLICY_VERSION
+            ),
             "capability_release": options.capability_release,
             "capability_contract": {
                 "catalog_version": _capability_contract(options.capability_release)["catalog_version"],
@@ -1490,13 +1763,19 @@ async def run_campaign(
             "runtime_allowlist": sorted(RUNTIME_PROPOSAL_CAPABILITY_NAMES),
             "uncovered_policy_version": UNCOVERED_POLICY_VERSION,
             "resource": resource_manifest,
+            "model_parameter_config": _model_parameter_config_snapshot(),
+            "mi_base_fallback_policy": mi_base_fallback_policy,
+            "required_mi_base_fallback_mode": options.required_mi_base_fallback_mode,
         },
         "safety": {
-            "uncovered_only": True,
+            "uncovered_only": not options.replay_covered,
+            "append_only_release_replay": options.replay_covered,
+            "existing_proposal_rows_preserved": True,
             "sequential": True,
             "single_worker_best_effort": True,
             "max_attempts_per_scenario": 1,
             "automatic_retry": False,
+            "scenario_failure_policy": ("isolate ABSTAINED/FAIL and continue; BLOCKED hard-stops the campaign"),
             "confirmation_invoked": False,
             "callback_invoked": False,
             "required_api_version": V4_API_VERSION,
@@ -1510,7 +1789,16 @@ async def run_campaign(
     _reserve_evidence_path(options.evidence_path, evidence)
 
     resource_errors: list[str] = []
-    if options.execute and dependencies.prepare_resources is not None:
+    actual_fallback_mode = str(mi_base_fallback_policy.get("active_case_unavailable_mode") or "")
+    if (
+        options.required_mi_base_fallback_mode is not None
+        and actual_fallback_mode != options.required_mi_base_fallback_mode
+    ):
+        resource_errors.append(
+            "MI Base fallback mode mismatch: "
+            f"required={options.required_mi_base_fallback_mode!r}, actual={actual_fallback_mode!r}",
+        )
+    if not resource_errors and options.execute and dependencies.prepare_resources is not None:
         try:
             await dependencies.prepare_resources()
         except Exception as exc:
@@ -1539,6 +1827,7 @@ async def run_campaign(
                 "hard_stop": 0,
                 "attempted": 0,
                 "succeeded": 0,
+                "abstained": 0,
                 "failed": 0,
             },
         }
@@ -1590,6 +1879,7 @@ async def run_campaign(
                     "hard_stop": 0,
                     "attempted": 0,
                     "succeeded": 0,
+                    "abstained": 0,
                     "failed": 0,
                 },
             }
@@ -1662,6 +1952,7 @@ async def run_campaign(
                     "hard_stop": 0,
                     "attempted": 0,
                     "succeeded": 0,
+                    "abstained": 0,
                     "failed": 0,
                 },
             },
@@ -1671,7 +1962,11 @@ async def run_campaign(
         return evidence
 
     eligible_preflight = [item for item in preflight if item.get("status") == "PASS"]
-    guards, guard_errors = _snapshot_campaign_guards(preflight, dependencies)
+    guards, guard_errors = _snapshot_campaign_guards(
+        preflight,
+        dependencies,
+        replay_covered=options.replay_covered,
+    )
     for item in preflight:
         scenario_id = int(item["scenario_id"])
         if scenario_id in guards:
@@ -1685,10 +1980,14 @@ async def run_campaign(
     ]
     lifecycle_skipped_ids = [int(item["scenario_id"]) for item in preflight if item.get("status") == "SKIP"]
     covered_ids = sorted(scenario_id for scenario_id, guard in guards.items() if guard["decision"] == "SKIP")
+    preexisting_proposal_ids = sorted(
+        scenario_id for scenario_id, guard in guards.items() if "PROPOSED" in set(guard.get("statuses") or [])
+    )
     evidence["selection"].update(
         {
             "eligible_scenario_ids": eligible_ids,
             "covered_scenario_ids": covered_ids,
+            "preexisting_proposal_scenario_ids": preexisting_proposal_ids,
             "lifecycle_or_capability_skipped_scenario_ids": lifecycle_skipped_ids,
             "hard_stop_scenario_ids": hard_stop_ids,
             "errors": guard_errors,
@@ -1699,11 +1998,14 @@ async def run_campaign(
                 "preflight_fail": 0,
                 "guarded": len(guards),
                 "eligible_uncovered": len(eligible_ids),
+                "eligible_for_execution": len(eligible_ids),
+                "eligible_release_replay": (len(preexisting_proposal_ids) if options.replay_covered else 0),
                 "covered_skip": len(covered_ids),
                 "lifecycle_or_capability_skip": len(lifecycle_skipped_ids),
                 "hard_stop": len(hard_stop_ids),
                 "attempted": 0,
                 "succeeded": 0,
+                "abstained": 0,
                 "failed": 0,
             },
         },
@@ -1732,27 +2034,86 @@ async def run_campaign(
             resource_manifest=resource_manifest,
             campaign_preflight=preflight,
             initially_eligible_ids=eligible_ids[scenario_index:],
+            replay_covered=options.replay_covered,
         )
         evidence["attempts"].append(attempt)
         _write_evidence(options.evidence_path, evidence)
-        if attempt.get("status") != "PASS":
+        if attempt.get("status") == "BLOCKED":
             break
+
+    final_campaign_readback: list[dict[str, Any]] = []
+    campaign_proposal_ids_by_scenario: dict[str, int] = {}
+    campaign_readback_errors: list[str] = []
+    for attempt in evidence["attempts"]:
+        if attempt.get("status") != "PASS":
+            continue
+        scenario_id = int(attempt["scenario_id"])
+        scenario_group_id = _int_or_none(attempt.get("scenario_group_id"))
+        new_ids = [
+            proposal_id
+            for value in attempt.get("new_proposal_ids") or []
+            if (proposal_id := _int_or_none(value)) is not None
+        ]
+        if len(new_ids) != 1:
+            campaign_readback_errors.append(
+                f"scenario_id={scenario_id}: expected one campaign Proposal ID, got {new_ids}",
+            )
+            continue
+        proposal_id_value = new_ids[0]
+        row, readback_error = _safe_fetch_proposal(
+            proposal_id_value,
+            dependencies.fetch_proposal,
+        )
+        if readback_error:
+            campaign_readback_errors.append(
+                f"scenario_id={scenario_id}: final campaign read-back failed: {readback_error}",
+            )
+            continue
+        row_errors: list[str] = []
+        if _int_or_none(row.get("model_param_proposal_id")) != proposal_id_value:
+            row_errors.append("Proposal ID mismatch")
+        if _int_or_none(row.get("scenario_id")) != scenario_id:
+            row_errors.append("Scenario ID mismatch")
+        if _int_or_none(row.get("scenario_group_id")) != scenario_group_id:
+            row_errors.append("Scenario Group ID mismatch")
+        if str(row.get("status") or "").upper() != "PROPOSED":
+            row_errors.append(f"unexpected status={row.get('status')!r}")
+        if not isinstance(row.get("proposal_parameters"), list) or not row.get(
+            "proposal_parameters",
+        ):
+            row_errors.append("proposal_parameters is empty")
+        if row_errors:
+            campaign_readback_errors.append(
+                f"scenario_id={scenario_id}, proposal_id={proposal_id_value}: " + "; ".join(row_errors),
+            )
+            continue
+        campaign_proposal_ids_by_scenario[str(scenario_id)] = proposal_id_value
+        final_campaign_readback.append(row)
+
+    evidence["final_campaign_readback"] = final_campaign_readback
+    evidence["selection"]["campaign_proposal_ids_by_scenario"] = campaign_proposal_ids_by_scenario
+    evidence["campaign_readback_errors"] = campaign_readback_errors
 
     if any(attempt.get("status") == "BLOCKED" for attempt in evidence["attempts"]):
         evidence["status"] = "BLOCKED"
-    elif len(evidence["attempts"]) == len(eligible_ids) and all(
-        attempt.get("status") == "PASS" for attempt in evidence["attempts"]
+    elif (
+        campaign_readback_errors
+        or len(evidence["attempts"]) != len(eligible_ids)
+        or any(attempt.get("status") == "FAIL" for attempt in evidence["attempts"])
     ):
-        evidence["status"] = "PASS"
-    else:
         evidence["status"] = "FAIL"
+    elif any(attempt.get("status") == "ABSTAINED" for attempt in evidence["attempts"]):
+        evidence["status"] = "REVIEW"
+    else:
+        evidence["status"] = "PASS"
     evidence["selection"]["counts"]["attempted"] = len(evidence["attempts"])
     evidence["selection"]["counts"]["succeeded"] = sum(
         attempt.get("status") == "PASS" for attempt in evidence["attempts"]
     )
-    evidence["selection"]["counts"]["failed"] = sum(
-        attempt.get("status") not in {"PASS", "BLOCKED"} for attempt in evidence["attempts"]
+    evidence["selection"]["counts"]["abstained"] = sum(
+        attempt.get("status") == "ABSTAINED" for attempt in evidence["attempts"]
     )
+    evidence["selection"]["counts"]["failed"] = sum(attempt.get("status") == "FAIL" for attempt in evidence["attempts"])
     evidence["finished_at"] = datetime.now(UTC).isoformat()
     _write_evidence(options.evidence_path, evidence)
     return evidence
@@ -1777,7 +2138,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         len(evidence.get("selection", {}).get("discovered_scenario_ids", [])),
         len(evidence["attempts"]),
     )
-    return 0 if evidence["status"] == "PASS" else 1
+    return 0 if evidence["status"] in {"PASS", "REVIEW"} else 1
 
 
 if __name__ == "__main__":

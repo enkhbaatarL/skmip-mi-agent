@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -71,11 +71,7 @@ class ParameterValueCell(ApiModel):
             return value
         value_selection = str(value.get("value_selection_rationale_ko") or "").strip()
         proposed_value = str(value.get("proposed_value_rationale_ko") or "").strip()
-        rationale = " ".join(
-            item
-            for item in (value_selection, proposed_value)
-            if item
-        )
+        rationale = " ".join(item for item in (value_selection, proposed_value) if item)
         return {
             **value,
             "rationale_ko": rationale or "값 선택 및 제안 근거가 제공되지 않았습니다.",
@@ -103,6 +99,15 @@ class ParameterAdjustment(ApiModel):
         return value or []
 
 
+class LLMVariationFactors(ApiModel):
+    duration: Literal["short", "medium", "long"]
+    scope: Literal["narrow", "medium", "broad"]
+    offset: Literal["none", "partial", "strong"]
+    confidence: Literal["low", "medium", "high"]
+    sibling_position: Literal["lower", "middle", "upper", "standalone"]
+    rationale_ko: str = Field(min_length=1, max_length=600)
+
+
 class LLMValueCell(ApiModel):
     # Optional only at the receive boundary so a malformed item can be dropped
     # without retrying the entire LLM call. The prompt still requires every key.
@@ -115,6 +120,21 @@ class LLMValueCell(ApiModel):
     )
     proposed_value: str | int | float | None
     rationale_ko: str
+    evidence_basis: (
+        Literal[
+            "OBSERVED",
+            "DERIVED",
+            "BOUNDED_ASSUMPTION",
+            "NEUTRAL",
+        ]
+        | None
+    ) = None
+    direction: Literal["increase", "decrease", "unchanged"] | None = None
+    severity: Literal["weak", "medium", "strong"] | None = None
+    evidence_ko: str | None = Field(default=None, max_length=600)
+    calculation_ko: str | None = Field(default=None, max_length=600)
+    assumption_ko: str | None = Field(default=None, max_length=600)
+    variation_factors: LLMVariationFactors | None = None
 
 
 class LLMValueAdjustment(ApiModel):
@@ -128,9 +148,18 @@ class LLMValueAdjustment(ApiModel):
         return value or []
 
 
+class LLMEntityCoordinateResolution(ApiModel):
+    plant_evidence_text: str = Field(min_length=1, max_length=240)
+    train_evidence_text: str = Field(min_length=1, max_length=240)
+    coordinate_match_note_ko: str = Field(min_length=1, max_length=400)
+    period_evidence_text: str | None = Field(default=None, min_length=1, max_length=240)
+    period_match_note_ko: str | None = Field(default=None, min_length=1, max_length=400)
+
+
 class LLMSlotProposal(ApiModel):
     candidate_key: str
     slot_axes: list[LLMSlotAxis] = Field(default_factory=list)
+    entity_coordinate_resolution: LLMEntityCoordinateResolution | None = None
 
     @field_validator("slot_axes", mode="before")
     @classmethod
@@ -149,9 +178,29 @@ class ParameterSlotProposal(ApiModel):
         return value or []
 
 
+class CandidateRoutingAssessment(ApiModel):
+    candidate_key: str
+    decision: Literal["DIRECT", "ASSUMPTION_ELIGIBLE", "NOT_APPLICABLE"]
+    evidence_basis: Literal[
+        "OBSERVED",
+        "DERIVED",
+        "BOUNDED_ASSUMPTION",
+        "NOT_APPLICABLE",
+    ]
+    causal_path_ko: str = Field(min_length=1, max_length=600)
+    target_scope_ko: str = Field(min_length=1, max_length=400)
+    direction: Literal["increase", "decrease", "mixed", "unchanged", "unknown"]
+    time_scope_ko: str = Field(min_length=1, max_length=400)
+    confidence: Literal["high", "medium", "low"]
+    rationale_ko: str = Field(min_length=1, max_length=800)
+
+
 class RoutingDecision(ApiModel):
     dimension_key: str
     selected_candidate_keys: list[str] = Field(default_factory=list)
+    candidate_assessments: list[CandidateRoutingAssessment] = Field(
+        default_factory=list,
+    )
 
 
 class NonInputItem(ApiModel):

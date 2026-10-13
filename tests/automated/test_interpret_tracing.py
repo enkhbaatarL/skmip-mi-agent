@@ -16,7 +16,10 @@ import yaml
 
 os.environ.setdefault("METADATA_DB_PORT", "3306")
 
-from apps.agents.interpret_agent.constants import AGENT_NAME  # noqa: E402
+from apps.agents.interpret_agent.constants import (  # noqa: E402
+    AGENT_NAME,
+    INTERPRET_AGENT_VERSION,
+)
 from apps.agents.interpret_agent.flows.interpret_price import flow, nodes  # noqa: E402
 from apps.agents.interpret_agent.flows.interpret_price.api_schema import (  # noqa: E402
     GroupSynthesisOut,
@@ -67,6 +70,13 @@ class InterpretTracingConfigTest(unittest.TestCase):
 
 
 class InterpretEntrypointTracingTest(unittest.IsolatedAsyncioTestCase):
+    def test_openapi_uses_interpret_agent_version(self) -> None:
+        self.assertEqual(interpret_entrypoint.app.version, INTERPRET_AGENT_VERSION)
+        self.assertEqual(
+            interpret_entrypoint.app.openapi()["info"]["version"],
+            "v4.1.7",
+        )
+
     async def test_lifespan_initializes_interpret_agent_mlflow_profile(self) -> None:
         cfg = SimpleNamespace(
             log_level="INFO",
@@ -135,7 +145,12 @@ class InterpretFlowTracingTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(trace_context.transaction_id, "tx-interpret-1")
         self.assertEqual(trace_context.app_identifier, "configured-interpret_agent")
         self.assertEqual(trace_context.agent_name, AGENT_NAME)
+        self.assertEqual(trace_context.api_identifier, "interpret_price")
         self.assertEqual(trace_context.session_id, "52")
+        self.assertEqual(
+            trace_context.tags,
+            {"interpret_agent_version": INTERPRET_AGENT_VERSION},
+        )
         self.assertEqual(graph.ainvoke.await_args.kwargs["config"], build_langgraph_config(trace_context))
         self.assertEqual(entered_contexts, [trace_context])
 
@@ -173,6 +188,8 @@ class InterpretFlowTracingTest(unittest.IsolatedAsyncioTestCase):
         interpret_input = InterpretInput(
             scenario_group_id=52,
             base_scenario_id="MI Base",
+            mi_base_case_id=15,
+            mi_base_price_run_seq=501,
             scenario_ids=list(scenario_ids),
             scenario_features={
                 "MI Base": ScenarioFeatures(scenario_id="MI Base"),

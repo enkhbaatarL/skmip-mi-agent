@@ -24,6 +24,9 @@ If the task touches one of these areas, read the linked document before changing
   `docs/agents/scenario_group_agent/04_SCENARIO_GROUP_AGENT_DB_SPEC.md`
 - Scenario Group Agent manual pipeline or quality evaluation:
   `docs/agents/scenario_group_agent/05_SCENARIO_GROUP_AGENT_TEST_AND_QUALITY.md`
+- Scenario 이전 Event 구조화, 사실·미래 예상·기관 View·상충 전망 분리, canonical 대상·기간·수치 증적,
+  또는 Model Parameter-ready Event 품질:
+  `docs/agents/scenario_group_agent/06_EVENT_STRUCTURING_FOR_MODEL_PARAMETER.md`
 - Python style, settings access, typing, async patterns, Pydantic, or exception handling:
   `.claude/rules/python-conventions.md`
 - Model Parameter canonical DB/LUT/config/Excel/docs implementation:

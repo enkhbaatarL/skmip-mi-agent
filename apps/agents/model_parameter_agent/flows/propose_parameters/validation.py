@@ -110,6 +110,7 @@ class ModelParameterSemanticEmptyError(MIBaseError):
         stage: V4SemanticEmptyStage,
         title: str,
         detail: str,
+        trace_evidence: dict[str, Any] | None = None,
     ) -> None:
         normalized_detail = " ".join(str(detail or "").split())
         if not normalized_detail:
@@ -121,6 +122,10 @@ class ModelParameterSemanticEmptyError(MIBaseError):
         self.reason_code = reason_code
         self.stage = stage
         self.error_message = public_message
+        # Request-local diagnostic evidence only. Public API/DB payloads keep
+        # the existing reason/message contract, while quality runners can
+        # retain the last successful node state without storing full prompts.
+        self.trace_evidence = dict(trace_evidence or {})
         self.args = (public_message,)
 
 
@@ -567,6 +572,7 @@ def _raise_v4_semantic_empty_if_applicable(
     slot_catalog: list[dict[str, Any]] | None = None,
     slot_selection_diagnostics: dict[str, int] | None = None,
     value_selection_diagnostics: dict[str, int] | None = None,
+    trace_evidence: dict[str, Any] | None = None,
 ) -> None:
     if not _is_v4_scenario_context(scenario_context):
         return
@@ -617,6 +623,7 @@ def _raise_v4_semantic_empty_if_applicable(
         stage=stage,
         title=title,
         detail=detail,
+        trace_evidence=trace_evidence,
     )
 
 

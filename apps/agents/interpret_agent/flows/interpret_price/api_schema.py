@@ -67,6 +67,21 @@ class PriceInterpretationMetaOut(ApiModel):
     period_end: str | None = None
     unit: str = "$/MMBtu"
 
+    @field_validator("base_scenario_id", "unit")
+    @classmethod
+    def normalize_plain_text(cls, value: str) -> str:
+        return to_plain_text(value)
+
+    @field_validator("features", "indices")
+    @classmethod
+    def normalize_plain_text_list(cls, values: list[str]) -> list[str]:
+        return [to_plain_text(value) for value in values]
+
+    @field_validator("period_start", "period_end")
+    @classmethod
+    def normalize_optional_plain_text(cls, value: str | None) -> str | None:
+        return to_plain_text(value) if value is not None else None
+
 
 class PriceInterpretationResult(ApiModel):
     """해석 결과 본문."""
@@ -82,6 +97,11 @@ class PriceInterpretationPreviewOut(ApiModel):
     status: str = "success"
     message: str = ""
     data: PriceInterpretationResult | None = None
+
+    @field_validator("message")
+    @classmethod
+    def normalize_plain_text(cls, value: str) -> str:
+        return to_plain_text(value)
 
 
 class PriceInterpretationAcceptedData(ApiModel):
@@ -101,6 +121,11 @@ class PriceInterpretationAcceptedOut(ApiModel):
     status: Literal["success", "error"] = "success"
     message: str = "accepted"
     data: PriceInterpretationAcceptedData
+
+    @field_validator("message")
+    @classmethod
+    def normalize_plain_text(cls, value: str) -> str:
+        return to_plain_text(value)
 
 
 class PriceInterpretationCallbackItem(ApiModel):

@@ -42,7 +42,7 @@ Implement one reproducible v4 release set and propagate it through the parameter
 2. Capture an immutable, versioned pre-apply snapshot before any DML. It must include the affected master and Impact Lever rows plus digests of protected legacy dimension mappings and active v4 Scenario templates. Do not expose credentials or connection details, and never regenerate a pre-apply snapshot from final state.
 3. Treat `model-parameter-canonical-v4.json` and `model-impact-lever-canonical-v4.json` as one release set:
    - the parameter fixture owns every master domain field, activation state, Basecase metadata, audit expectations, source snapshot, and expected counts;
-   - the Impact Lever fixture owns Lever identity and hierarchy, domain, primary/alternative bindings, applicability, support state, catalog version, binding counts, and hydrated catalog checksum.
+   - the Impact Lever fixture owns Lever identity and hierarchy, domain, primary/alternative bindings, deterministic/conditional selection mode, applicability, support state, catalog version, binding counts, and hydrated catalog checksum.
 4. Record every parameter and binding as active, pending, unsupported, or excluded with an evidence-backed reason. Keep raw catalog capability distinct from the runtime proposal allow-list and from exact executable slot coverage.
 5. Resolve conflicts using current DB, workbook, Basecase/LUT, and runtime evidence. Do not inherit an old fixture, archived workbook, historical report, or prose table without verification.
 6. Derive the transactional runner and SQL, workbook, Impact Lever/catalog expectations, LUT classification, configuration markers, documentation tables, and consistency tests from this release set. Avoid independent hand-maintained value copies.
@@ -56,7 +56,12 @@ Implement one reproducible v4 release set and propagate it through the parameter
 3. Validate selected-value completeness; Event membership and order; Lever code/ID/catalog identity; active and non-deleted state; primary Lever presence; duplicate Lever states; direction, domain, role, applicability, and support status; bound parameter identity and activation; and exact Basecase/LUT slot availability.
 4. Build raw candidates only from the selected values' hydrated Lever states and current active catalog bindings. Unselected values must not contribute candidates or prompt payloads.
 5. Never query or mutate legacy dimension mapping to serve v4, and never fall back to representative Event Type mapping, v3 composite `sourceRefs`, historical `lever_mappings`, or another API version when v4 input is incomplete. Fail with the existing domain/API error contract.
-6. Preserve lineage when multiple Events, dimensions, or Lever states converge on one parameter, and keep primary/alternative bindings together as one deterministic routing task.
+6. Preserve lineage when multiple Events, dimensions, or Lever states converge on one parameter. Keep same-Lever
+   primary/alternative bindings together as one routing task; independently grounded bindings may survive together up to
+   the configured limit. Route even a single conditional binding through applicability selection, allow zero, and never
+   fill a missing conditional decision with a primary default.
+7. Do not reject `price_only` by domain alone when it has executable conditional bindings. Keep price direction from being
+   used as a proxy for a supply/demand input; require the actual model target, coordinates, period, and causal path.
 
 ## Implement DB artifacts safely
 
@@ -73,12 +78,20 @@ Implement one reproducible v4 release set and propagate it through the parameter
 2. When files arrive under `new_resources/lut/`, inventory them without moving, renaming, deleting, or overwriting them. Ignore OS/Office artifacts such as `.DS_Store` and `~$*`; normalize names only for collision detection, and record source filename, size, digest, candidate classification, and any collision with `resources/lut/`.
 3. Promote a staged LUT only as an explicit rollout change. Validate it in isolation first, then update the canonical adapter/registry, resource manifest, config/ConfigMap, fixture/workbook/docs, and tests before copying the approved artifact into `resources/lut/`. A staged file is never an active runtime source by presence alone.
 4. Classify every packaged LUT CSV in canonical `resources/lut/` exactly once as active parameter data, pending/disabled data, or an auxiliary reference. Fail consistency checks for unclassified or multiply classified files.
-5. Keep `envs/config.yaml` and `devops/k8s/configmap.yaml` semantically identical for Model Parameter resource releases, object keys, schema versions, and limits. Preserve the established Object Storage prefixes.
+5. Keep `envs/config.yaml` and the externally managed Neuro Model Parameter configuration semantically identical for Model Parameter resource releases, object keys, schema versions, and limits. When a local review copy is supplied at `devops/k8s/model-parameter-configmap.yaml`, treat it as a Git-ignored deployment artifact: validate parity without committing it or making tests depend on its presence. `devops/k8s/configmap.yaml` remains the shared multi-Agent example. Preserve the established Object Storage prefixes.
 6. For active LUTs, validate sync, file digest, headers, numeric and empty values, horizon, exact-key uniqueness, joins, exclusions, precision, adapter interpretation, and slot-catalog creation. Validate pending and auxiliary files without exposing them as active parameter slots.
 7. Implement formulas in deterministic adapters. Cover missing joins, duplicate aggregation, closed facilities, month bounds, non-finite values, sign handling, and source values that must not be renormalized.
 8. Bump adapter, catalog, or resource-manifest schema versions whenever interpretation or serialized shape changes so an incompatible cache cannot be reused.
-9. Keep full reference rows in server-side indexes. Send compact period groups and fixed-axis hierarchies to Step2, and only the validated effective reference for each exact slot to Step3.
-10. Enforce per-parameter slot, request-wide slot, Step2 byte, and Step3 byte limits before invoking the LLM. Include parameter names and observed sizes in errors without leaking reference payloads.
+9. Keep MI Base fallback boundaries explicit. The default selected-active-Base path uses only current remote files or a
+   cache matching the same case/run/linked-file identity and validated workbook hashes. Explicit
+   `active_case_unavailable_mode=configured_fallback` may use registered Basecase data only when the current remote
+   identity was never observed (disabled client/client initialization/metadata availability failure); incomplete linked
+   inputs or download/hash/contract failure after current metadata is observed must still fail closed. Record
+   `source=configured_fallback`, pinned case/run, and packaged workbook hashes. When no active Base exists, configured
+   fallback is likewise allowed only by explicit policy, and v4 contract artifacts resolve from canonical packaged
+   `resources/` rather than a release wrapper that lacks `basecase_v4/`.
+10. Keep full reference rows in server-side indexes. Send compact period groups and fixed-axis hierarchies to Step2, and only the validated effective reference for each exact slot to Step3.
+11. Enforce per-parameter slot, request-wide slot, Step2 byte, and Step3 byte limits before invoking the LLM. Include parameter names and observed sizes in errors without leaking reference payloads.
 
 ## Synchronize workbook and documentation
 

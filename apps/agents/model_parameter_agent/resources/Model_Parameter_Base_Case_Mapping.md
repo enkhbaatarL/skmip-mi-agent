@@ -1,9 +1,7 @@
 # Model Parameter Base Case Mapping
 
-> 현재 문서와 260813 workbook은 0032의 최종 workbook target·unit 정합성을 반영한다.
-> 0032 현재 runtime 계약은 `model-parameter-canonical-v4-0032.json`과
-> `model-impact-lever-canonical-v4-0032.json`(active Lever 18, active/effective Parameter 14,
-> checksum `b9d8c051…000b`)을 따른다. 이 문서의 역사 표를 DB 적용 입력으로 사용하지 않는다.
+> 현재 runtime 계약은 proposal capability `extend16-v8`, workbook contract `new-bc-v8`, 신규 Scenario
+> Group catalog `v4.1`(checksum `7f4ef0b7…4d69`)을 따른다. 이 문서의 역사 표를 DB 적용 입력으로 사용하지 않는다.
 
 ## 기준과 범위
 
@@ -14,24 +12,33 @@
 `scripts/model_parameter/snapshots/external_dev_before_model_parameter_v4_20260813.json`의 128행 mapping은
 2026-08-13 변경 전 증적으로 보존한다.
 
-- master 21행·활성 14개
-- reference capability: LUT-backed 10개, Basecase-only 4개 활성(비활성 metadata 2개 별도 보존)
-- v4 impact Lever: 18개, binding occurrence 16개, effective executable occurrence 14개/고유 활성 parameter 14개
+- 외부개발 DB master 24행·활성 16개
+- Agent proposal capability: LUT-backed 10개 + Basecase-only 6개
+- 신규 그룹 v4.1 impact Lever 21개, binding occurrence 56개(conditional 37개), 고유 활성 parameter 16개
+- 역사 0032 fixture 기준은 master 21행·활성 14개, LUT-backed 10개, Basecase-only 4개 활성,
+  v4 binding occurrence 16개다.
 - v1/v3 shared legacy dimension mapping: 129행 (direct 35, routing 6, indirect 55, na 33), 최대 후보 10개
-- proposal scope: v1/v3는 `GDP`, `PMI`, `PowerMix`, `Temperature`, `LiqUtilAdjustment` 5종; v4 extend7은 이 5종과 `PipelineAdjustment`, `SupplyDisruption`을 DB ID/name/target capability로 허용하며 나머지 활성 후보는 `active-but-blocked`로 분류
+- proposal scope: v1/v3는 `GDP`, `PMI`, `PowerMix`, `Temperature`, `LiqUtilAdjustment` 5종; v4 extend16은 LUT-backed 10종과 Basecase-only 6종을 DB ID/name/target capability로 허용
 - 기존 v1/v3 mapping rollout의 수정 대상: `tmm_mi_model_param_dimension_map`만; master, Impact Lever, Scenario/proposal, DB schema는 변경하지 않음
 - 공개 proposal/confirmation API와 payload: 변경 없음
-- `new-bc-v4`는 최종 workbook의 대상 시트·헤더·Mt 단위를 고정하고, 0032 DB master·Lever metadata와 업무용 mapping workbook을 함께 정합화함
+- `new-bc-v8`는 최종 workbook의 대상 시트·헤더·단위를 고정하고 v4.1 DB master·Lever metadata와 정합화함
+- ID 13·14 matrix target은 7/8/9행의 Year/Month/Period와 `G:CL` 84개월
+  (2025-01~2031-12)만 사용하며, DB master도 mgmt v0044에서 종료 열 `CL`로 정합화함
 - LiqUtilAdjustment는 `existing_exact` 행 정책을 사용해 최종 시트에 없는 LUT 시설명을 제외하고, Plant/Train/Lifecycle/Nameplate/Period를 최종 대상 행의 표기로 반환함
-- audit user/version: `model-parameter-canonical-v4`, impact catalog version `v4`
+- impact catalog version: 신규 그룹 `v4.1`; 기존 그룹은 저장된 pin 유지
 
-## v4 `new-bc-v4` read-only proposal overlay
+## v4 `new-bc-v8` read-only proposal overlay
 
 이 overlay는 정확히 `api_version=v4`, `generation_strategy=multi_event_model_lever_dimensions`인 신규
 proposal에만 적용한다. `read_only`는 Workbook/reference capability이며 기존 proposal persistence를
 비활성화한다는 뜻이 아니다. 계약은
-`resources/contracts/model-parameter-workbook-contract-v4.json`이며, workbook artifact는 digest가 변하지 않아
-`resources/basecase_v4/new-bc-v1/`을 재사용한다. 기존 `resources/basecase/`와 v1/v3 parser는 유지한다.
+`resources/contracts/model-parameter-workbook-contract-v8.json`이며, 검증용 packaged baseline/fallback artifact는
+`resources/basecase_v4/new-bc-v2/`에 고정한다. 정상 운영 요청은 활성 MI Base에 연결된 세 workbook을
+Object Storage에서 내려받아 같은 v8 구조 계약과 실제 다운로드 hash로 검증한다. v8은 v7의 17종 계약을 유지하면서
+`LiqProdAdjustment`와 `LiqUtilAdjustment` write target의 종료 열을 `DA`에서 `CL`로 바로잡고,
+세 workbook에 추가된 `SUMMARY`/`플랫폼 입력 안내` 시트를 화면 표 정의의 검증 근거로 사용한다.
+Agent가 읽는 17종 source·target record와 값은 `new-bc-v1` 대비 동일하다.
+기존 `resources/basecase/`와 v1/v3 parser는 유지한다.
 
 | Parameter | authoritative source | exact key·변환 | 2026~2030 records |
 |---|---|---|---:|
@@ -39,9 +46,19 @@ proposal에만 적용한다. `read_only`는 Workbook/reference capability이며 
 | PMI | Demand `PMIInput` V:AL | Country, Year, Month | 5,040 |
 | PowerMix | Demand `BCInput` Z:AF | Country, Year, Energy Source; 동일 annual 월 반복만 dedupe | 4,200 |
 | Temperature | Demand `WeatherInput` EI:EY | Country, Year, Month | 5,040 |
+| Population | Demand `BCInput` Q:V | Country, Year; Population (thousands) 절대값 | 845 |
+| HurricaneIntensity | Supply `BCHurricanes` B:K | Year, Month; 승인 강도·시설 검증 후 no-hurricane baseline | 60 |
+| LiqProdAdjustment | Supply `BCLiquefaction` B:N | Country, Plant, Train, Year, Month; capacity × utilization | 23,820 |
 | LiqUtilAdjustment | Supply `BCLiquefaction` B:N | Country, LNG Plant, LNG Plant Train, Year, Month | 23,820 |
 | PipelineAdjustment | Supply `BCPipeline` B:F | Pipeline Name, From/To Country, Year, Month; 연간 capacity 월 확장 | 420 |
 | SupplyDisruption | Supply `BCProduction` C:K + `SeasonalityLogic.csv` | Country, Year, Month; Mt 원본 계수 집계 | 4,908 |
+| User-Adjusted Gas Demand | Demand `DemandOutputOverwrite` D:H | Country, Year, Month, Demand Sub-Sector; BCM absolute | 12 |
+| RegasAdjustment | Supply `RegasAdjustment` B:DK | Continent, Region, Country, Plant, Lifecycle, Nameplate, Year, Month; Mt LNG/month absolute | 22,320 |
+| PNG Contract Volume | Trade `MidstreamContractInput` A:D | Year, From Country, To Country; Mt LNG absolute | 684 |
+| ShippingCost | Trade `ShippingCostInput` B:F | Year; $/d absolute | 5 |
+| RegionalProductionAdjustment | Supply `BCProduction` C:K | Year, Province/Country; Identifier·Year별 Mt 합산 후 Bcm 변환 | 2,187 |
+| ShippingFuelCost | Trade `ShippingCostInput` B:C | Year; IFO380 $/tonne absolute | 5 |
+| CanalToll | Trade `ShippingCostInput` A:C | Canal, Year; Suez/Panama $/crossing absolute | 10 |
 
 정상적인 source 부재에만 기존 LUT same-exact-key fallback을 허용한다. source cached error, non-finite 값,
 상충 duplicate는 해당 exact key를 차단하므로 LUT로 되살리지 않는다. PowerMix는
@@ -53,11 +70,15 @@ LiqUtilAdjustment는 하나의 Lever provenance 안에 exact Plant와 exact Trai
 차단하며 1 초과값을 보존한다. `Life Cycle Category` 공란은 exact record를 제외하지 않고 metadata와
 Step2 판단용 applicability에서만 생략한다.
 
-아래 master 표의 `parameter_hint`와 model target은 0032 DB canonical을 그대로 설명한다. `new-bc-v4`는
+활성 Basecase-only 6종은 등록 LUT가 없어 검증된 workbook slot만 사용한다. 아래 master 표는 0032 역사
+canonical을 설명한다. `new-bc-v8`는
 최종 workbook target과 단위를 검증하며 공개 API/persistence shape, legacy mapping, workbook writer·Formula/Query
 recalc·model engine은 변경하지 않는다.
 
 ## 최종 master
+
+> 아래 표는 이 저장소의 0032 canonical 재현용 역사 master다. 현재 외부개발 v4.1 활성 집합은 문서 상단과
+> proposal capability `extend16-v8`을 따른다.
 
 
 | ID  | use_yn | parameter_name              | parameter_hint                                                                                                                                                                                                                                                                                                                                    |
@@ -134,8 +155,8 @@ recalc·model engine은 변경하지 않는다.
 | 10  | fixed_columns       | 6      | 12         | B:Year,C:Country,D:Drive Train,F:% New Car Sales                                                        | —          | —        | —         | —          | —           | —         | stop_when_all_key_columns_empty |
 | 11  | fixed_columns       | 6      | 12         | J:Year,K:Country,M:Population (Thousands)                                                               | —          | —        | —         | —          | —           | —         | stop_when_all_key_columns_empty |
 | 12  | fixed_columns       | 7      | 13         | B:Year,C:Month,D:Hurricane intensity                                                                    | —          | —        | —         | —          | —           | —         | stop_when_all_key_columns_empty |
-| 13  | matrix_time_columns | 10     | 11         | B:Country,C:LNG Plant,D:LNG Plant Train,E:Life Cycle Category,F:Nameplate Capacity (MTPA)               | —          | 7        | 8         | 9          | G           | DA        | stop_when_all_key_columns_empty |
-| 14  | matrix_time_columns | 10     | 11         | B:Country,C:LNG Plant,D:LNG Plant Train,E:Life Cycle Category,F:Nameplate Capacity (MTPA)               | —          | 7        | 8         | 9          | G           | DA        | stop_when_all_key_columns_empty |
+| 13  | matrix_time_columns | 10     | 11         | B:Country,C:LNG Plant,D:LNG Plant Train,E:Life Cycle Category,F:Nameplate Capacity (MTPA)               | —          | 7        | 8         | 9          | G           | CL        | stop_when_all_key_columns_empty |
+| 14  | matrix_time_columns | 10     | 11         | B:Country,C:LNG Plant,D:LNG Plant Train,E:Life Cycle Category,F:Nameplate Capacity (MTPA)               | —          | 7        | 8         | 9          | G           | CL        | stop_when_all_key_columns_empty |
 | 15  | fixed_columns       | 7      | 13         | B:Year,C:Month,D:Pipeline name,E:From country,F:To country,H:User adjusted capacity (Mt/y)                | —          | —        | —         | —          | —           | —         | stop_when_all_key_columns_empty |
 | 16  | matrix_time_columns | 10     | 11         | B:Continent,C:Region,D:Country,E:Regasification plant,F:Life Cycle Category,G:Nameplate capacity (MTPA) | —          | 9        | 10        | —          | H           | DK        | stop_when_all_key_columns_empty |
 | 17  | fixed_columns       | 7      | 8          | I:Year,J:Month,K:Country,M:Volumes (Mt)                                                                 | —          | —        | —         | —          | —           | —         | stop_when_all_key_columns_empty |
@@ -187,19 +208,28 @@ v4는 선택 dimension value의 `lever_states`와 아래 active catalog binding�
 |---|---|
 | `weather_demand` | Temperature primary; HDD, CDD alternative(비활성 진단) |
 | `power_generation_mix` | PowerMix primary |
-| `economic_activity` | GDP primary; PMI alternative; Population alternative(인구·이민·인구전망 명시 시) |
-| `direct_gas_demand` | User-Adjusted Gas Demand primary |
+| `economic_activity` | GDP primary; PMI alternative |
+| `population_demographics` | Population primary |
+| `direct_gas_demand` | User-Adjusted Gas Demand 비활성 이력 binding |
 | `upstream_production` | SupplyDisruption primary |
-| `liquefaction_availability` | LiqUtilAdjustment primary; LiqProdAdjustment alternative |
+| `liquefaction_utilization` | LiqUtilAdjustment primary |
+| `liquefaction_production_override` | LiqProdAdjustment primary |
 | `regasification_capacity` | RegasAdjustment primary |
-| `natural_disaster_disruption` | HurricaneIntensity primary |
+| `us_gom_hurricane_disruption` | HurricaneIntensity primary |
 | `pipeline_capacity` | PipelineAdjustment primary |
-| `shipping_cost` | ShippingCost primary |
-| `route_disruption` | ShippingCost primary |
-| `contract_volume` | VolumeCancelled primary; PNG Contract Volume alternative |
-| `trade_restriction` | RemainingUnrestrictedAmount primary; VolumeCancelled alternative |
+| `lng_charter_rate` | ShippingCost primary |
+| `png_contract_volume` | PNG Contract Volume primary |
+| `regional_upstream_production` | RegionalProductionAdjustment primary |
+| `lng_vessel_fuel_cost` | ShippingFuelCost primary |
+| `canal_toll` | CanalToll primary |
+| `route_disruption` | ShippingCost, ShippingFuelCost, CanalToll conditional |
+| `trade_restriction` | 공급·시설 6종과 PNG Contract Volume conditional |
+| `inventory_condition` | 수요 4종·공급 6종·PNG Contract Volume conditional |
+| `regional_price_spread` | 수요 4종·공급 6종·PNG 1종·운송 3종 conditional |
+| `financial_market_sentiment` | GDP, PMI conditional |
 
-세 `price_only` Lever는 binding이 없다. CDD/HDD binding을 포함하면 catalog binding occurrence는 20개이며, 비활성 master binding을 제외한 effective executable occurrence는 18개, 고유 활성 parameter는 16개다. 이 수치는 0029 canonical/catalog capability 기준이다. 현재 0030 v4 extend7은 7개 ID만 proposal 후보로 허용하며 v4 binding은 Step1.5 없이 deterministic candidate로 보존한다.
+세 `price_only` Lever도 원인·직접 영향이 실제 model input과 연결될 때만 conditional 후보가 된다. 현재 v4
+extend16은 활성 16개 ID를 proposal 후보로 허용하며 복수·conditional binding은 Step1.5 근거 판정을 거친다.
 
 ### 보류와 보조 resource
 
@@ -219,7 +249,7 @@ v4는 선택 dimension value의 `lever_states`와 아래 active catalog binding�
 
 - 현재 shared mapping은 129행이고 method count는 direct 35, routing 6, indirect 55, na 33이다. 모두 `use_yn='Y'`, `del_yn='N'`이다.
 - direct/routing으로 도달하는 후보는 `GDP`, `PMI`, `PowerMix`, `Temperature`, `Population`, `HurricaneIntensity`, `LiqProdAdjustment`, `LiqUtilAdjustment`, `PipelineAdjustment`, `SupplyDisruption` 10개다.
-- v1/v3는 이 10개 중 `GDP`, `PMI`, `PowerMix`, `Temperature`, `LiqUtilAdjustment`만 허용한다. v4는 여기에 ID 15 `PipelineAdjustment`, ID 17 `SupplyDisruption`을 추가한 extend7 capability를 사용한다.
+- v1/v3는 이 10개 중 `GDP`, `PMI`, `PowerMix`, `Temperature`, `LiqUtilAdjustment`만 허용한다. v4는 이 10개와 Basecase-only 6개를 ID/name/target으로 고정한 extend16 capability를 사용한다.
 - 아래 128행·25/2/55/46 설명과 표는 2026-08-13 변경 전 snapshot 증적이다. 현재 DB 상태로 사용하지 않는다.
 
 ### 변경 전 증적
@@ -259,7 +289,7 @@ legacy direct/routing mapping은 모두 활성·미삭제 master만 참조해야
 
 | 충돌                                             | 최종 선택                                                        | 근거와 반영 위치                                                                                                         |
 | ---------------------------------------------- | ------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------- |
-| v1 mapping 후보는 LUT-backed 10개                            | 0032 master 21행·활성 14행, v1/v3 5종·v4 extend7 7종 proposal scope | 최종 workbook target·unit과 DB canonical/catalog checksum 정합화 |
+| v1 mapping 후보는 LUT-backed 10개                            | 외부개발 DB master 24행·활성 16행, v1/v3 5종·v4 extend16 16종 proposal scope | 최종 workbook target·unit과 DB canonical/catalog checksum 정합화 |
 | 초안의 header/data start/column role과 현재 DB 값이 다름 | 기존 활성 5개는 검증된 DB 값을 유지; 나머지는 실제 workbook 구조와 최종 LUT 계산으로 정규화 | canonical JSON의 21행 전체 basecase_*가 read-back 기준                                                                   |
 | Coal/Gas futures를 활성으로 표시                      | enabled=false 및 use_yn=N                                     | 2026년 이후 strip이 제공되기 전 과거값 이월 금지                                                                                  |
 | ElectrificationRate 활성 여부                      | use_yn=N, LUT spec 없음                                        | 유효 Basecase/LUT/승인 mapping 부재                                                                                     |
@@ -275,7 +305,8 @@ legacy direct/routing mapping은 모두 활성·미삭제 master만 참조해야
 
 아래 DB 명령은 기존 mapping rollout 절차다. 역사적 runtime allow-list-only v0.2.4에서는 실행하지 않았으며,
 당시 DB·canonical·config·workbook은 repository diff와 read-only fingerprint로 불변을 확인했다. 현재
-`new-bc-v4`와 0032 migration은 final workbook target·unit metadata를 함께 정합화한다.
+`new-bc-v8`와 mgmt v0044는 ID 13·14의 master 종료 열을 `CL`로 갱신해 final workbook
+target·unit metadata와 정합화한다. model input 값과 나머지 master·mapping·Lever 데이터는 변경하지 않는다.
 
 1. `poetry run python scripts/model_parameter/apply_model_parameter_v1_v3_mapping.py`로 dry-run한다. live v4 master·Lever canonical을 선검증하고 mapping만 DML한 뒤 129행·35/6/55/33, exact 후보 10개와 전체 불변식을 검증하고 rollback한다.
 2. 승인된 DB에는 mgmt 0032 migration을 적용한다. 적용 후 master 21행·활성 14개와 새 catalog checksum을 확인한다.

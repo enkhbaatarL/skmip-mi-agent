@@ -47,7 +47,7 @@
 
 ### 문제 5. Candidate routing
 
-v4의 단일 primary binding과 primary/alternative 동시 binding을 각각 어떻게 처리하는지 설명하시오. `price_only`, binding 없음, 비활성 parameter, `unchanged` state와 raw candidate가 runtime allow-list 밖인 경우도 함께 설명하시오.
+v4의 단일 deterministic binding, 복수 primary/alternative, conditional binding을 각각 어떻게 처리하는지 설명하시오. `price_only`, binding 없음, 비활성 parameter, `unchanged` state와 raw candidate가 runtime allow-list 밖인 경우도 함께 설명하시오.
 
 ### 문제 6. Step1.5·Step2·Step3
 
@@ -79,7 +79,7 @@ Lever의 `direction`, `pressure_contribution`, domain을 숫자 부호로 직접
 
 ### 문제 9. Canonical rollout과 runtime-only 변경
 
-master와 Lever catalog를 어떻게 적용해야 하는지, checksum이 바뀐 기존 v4 Scenario를 어떻게 처리해야 하는지 설명하시오. 이번 runtime allow-list 변경에서 불변이어야 하는 DB, config, canonical, workbook, confirmation 범위도 포함하시오.
+master와 Lever catalog를 어떻게 적용해야 하는지, checksum이 바뀐 기존 v4 Scenario를 어떻게 처리해야 하는지 설명하시오. 이번 extend14 변경에서 불변인 DB·canonical·workbook artifact·confirmation 범위와 새 contract/capability를 가리키도록 함께 바뀌는 config 범위도 포함하시오.
 
 ### 문제 10. 실패와 저장 호환성
 
@@ -97,36 +97,42 @@ raw active/executable candidate가 있어도 모두 runtime allow-list 밖인 �
 
 ### 정답 3
 
-- 0030 runtime fixture master 21행·활성 14개
+- 외부개발 v4.1 master 24행·활성 16개
 - 체크인 legacy mapping 129행: direct 35, routing 6, indirect 55, na 33
 - active resource LUT-backed 10개
-- Basecase-only 활성 4개: `User-Adjusted Gas Demand`, `RegasAdjustment`, `PNG Contract Volume`, `ShippingCost`
-- future inactive 2개: `RemainingUnrestrictedAmount`, `VolumeCancelled`
+- Basecase-only 활성 6개: `RegasAdjustment`, `PNG Contract Volume`, `ShippingCost`,
+  `RegionalProductionAdjustment`, `ShippingFuelCost`, `CanalToll`
+- inactive 3개: `User-Adjusted Gas Demand`, `RemainingUnrestrictedAmount`, `VolumeCancelled`
 - v1/v3 raw direct/routing reachability 10개
-- v4 active Lever 18개, raw binding occurrence 16개, effective executable 고유 Parameter 14개
+- v4.1 active Lever 21개, binding occurrence 56개(conditional 37개), effective executable 고유 Parameter 16개
 - v1/v3 proposal 이름 allow-list 5개: `GDP`, `PMI`, `PowerMix`, `Temperature`, `LiqUtilAdjustment`
-- v4 extend7 ID capability 7개: 위 5개 + `PipelineAdjustment`, `SupplyDisruption`
+- v4 extend16 ID capability 16개: LUT-backed 10개 + `RegasAdjustment`, `PNG Contract Volume`,
+  `ShippingCost`, `RegionalProductionAdjustment`, `ShippingFuelCost`, `CanalToll`
 
 이 수는 live DB 조회 결과가 아니라 체크인 runtime fixture의 전역 합집합이다. v1/v3 raw reachability
 합집합은 `GDP`, `PMI`, `PowerMix`, `Temperature`, `Population`, `HurricaneIntensity`,
 `LiqProdAdjustment`, `LiqUtilAdjustment`, `PipelineAdjustment`, `SupplyDisruption` 10개다. Basecase-only
-활성 4개에는 legacy direct/routing row를 추가하지 않았다. v4의 effective executable 14개는 Lever-native
+활성 6개에는 legacy direct/routing row를 추가하지 않았다. v4의 effective executable 16개는 Lever-native
 경로이며 shared mapping을 조회하지 않는다. 요청 하나에서는 관련 lineage·선택 value에 해당하는 하위 집합만
-후보가 된다. 이 raw capability는 proposal 허용 범위와 다르다. allow-list 밖이면 active 또는 raw
-executable이어도 `active-but-blocked`로 분류해 LLM·proposal 입력 전에 제외한다. 전역 집합끼리 비교하면
-v1/v3 10개 중 5개, v4 14개 중 9개가 allow-list 밖이다.
+후보가 된다. 외부개발 DB의 v4.1 executable 고유 16개와 extend16 capability는 ID/name/target set equality로
+일치해야 한다. 하나라도 capability에서 빠지면 release 실패이며 LLM·proposal 입력으로 진행하지 않는다.
+v1/v3는 raw 10개 중 5개만 허용한다.
 
 ### 정답 4
 
-**1번, 2번, 3번, 4번.** checksum/code/ID/primary/source-event 무결성은 strict validation이다. `unchanged`는 오류가 아니라 supporting context이며, unchanged-only라서 변화 후보가 0개가 되면 그때 요청을 `INVALID_REQUEST`로 끝낸다.
+**1번, 2번, 3번, 4번.** checksum/code/ID/primary/source-event 무결성은 strict validation이다.
+`unchanged`는 오류가 아니라 supporting context이며, unchanged-only라서 변화 후보가 0개가 되면
+`ABSTAINED_NO_CHANGE`로 정상 미제안 이력을 저장한다. 비동기 요청은 기존 `PROCESSING` 행을
+`ABSTAINED`로 전환하고, 동기 요청도 빈 `PROPOSED` 대신 `ABSTAINED` 행과 결과를 반환한다.
 
 ### 정답 5
 
-allow-list 적용 전 executable binding이 primary 하나뿐이면 `direct`로 분류되어, 그 후보가 allow-list를
-통과할 때 결정적으로 선택한다. primary와 alternative가 함께 있으면 먼저 `routing`으로 분류되며,
-allow-list가 alternative를 제외해 후보가 하나만 남더라도 Step1.5가 applicability와 Scenario/Event/Lever
-맥락을 판단한다. 따라서 남은 primary도 선택되지 않을 수 있다. `price_only`, binding 없음,
-비활성·unsupported parameter는 제외하며 reason code를 내부 증적에 보존한다. raw candidate가
+allow-list 적용 전 executable deterministic binding이 하나뿐이면 `direct`로 분류되어, 그 후보가 allow-list를
+통과할 때 결정적으로 선택한다. 복수 primary/alternative와 단일을 포함한 conditional binding은 Step1.5가
+applicability를 독립 판정한다. 각각 근거가 있으면 설정 상한까지 복수 선택하고, deterministic 빈 응답은 primary
+1건으로 복구하지만 conditional 빈 응답은 0건을 유지한다. binding 없는 `price_only`는 제외하지만 v4.1의
+conditional binding이 있는 `price_only`는 후보 판정으로 진행한다. binding 없음, 비활성·unsupported parameter는
+제외하며 reason code를 내부 증적에 보존한다. raw candidate가
 active/executable이어도 runtime allow-list 밖이면 `PROPOSAL_SCOPE_EXCLUDED`로 분류해 Step1.5 LLM 전에
 제외한다. `unchanged`는 변화 candidate가 아니다.
 
@@ -150,13 +156,20 @@ Lever 방향은 시장·운영 문맥이지 각 모델 입력 필드의 수학�
 
 일반 v4 master·Lever rollout은 mgmt migration을 정본으로 하나의 transaction에서 precondition,
 cross-table active binding, checksum/read-back과 함께 검증·적용한다. checksum이 바뀌면 기존 v4 Scenario를
-새 catalog로 재해석하지 않고 신규 Scenario를 생성한다. 0030 runtime 동기화에서는 version-aware ORM·조회와
-별도 `model-*-canonical-v4-0030` fixture를 적용하되, 외부개발 DB에 0030을 재실행하거나 0029 canonical·정적
-SQL·workbook을 덮어쓰지 않는다. public API payload와 confirmation workflow도 변경하지 않는다.
+새 catalog로 재해석하지 않고 신규 Scenario를 생성한다. v4.1은 master와 legacy mapping을 바꾸지 않고 기존
+v4.0 옆에 같은 Lever Full Set 21행과 conditional binding을 추가한다. versioned capability는 `extend16-v8`,
+workbook contract는 model input이 같아 `new-bc-v8`을 유지하며 local/Kubernetes config의
+catalog version·capability release·hash를 함께 갱신한다. public API payload와 confirmation workflow도 변경하지 않는다.
 
 ### 정답 10
 
-raw active/executable candidate라도 allow-list 밖이면 `active-but-blocked`로 제외하며 LLM이나 proposal 저장으로 진행하지 않는다. 이 필터 뒤 허용 candidate가 0개면 `INVALID_REQUEST`로 종료하고 proposal row를 저장하지 않는다. Lever provenance와 `PROPOSAL_SCOPE_EXCLUDED` 같은 제외 reason code는 public proposal/confirmation 또는 저장 JSON shape에 추가하지 않고 내부 non-input state, trace와 validation warning에 남긴다. public 실패 detail은 경로에 따라 일반화된 메시지만 반환할 수 있다. Confirmation은 원래 proposal과 항목·값을 비교하지 않아 수정·추가·삭제와 구조상 유효한 custom parameter를 허용한다. 각 value에는 `proposedValue` key가 필요하지만 값은 `null`일 수 있고, non-null 값만 persistence에서 유한 숫자로 검증한다.
+raw active/executable candidate라도 allow-list 밖이면 `active-but-blocked`로 제외하며 LLM이나 제안값 생성으로
+진행하지 않는다. 이 필터 뒤 허용 candidate가 0개면 `ABSTAINED_OUT_OF_PROPOSAL_SCOPE`로 정상 미제안 이력을
+저장한다. Lever provenance와 `PROPOSAL_SCOPE_EXCLUDED` 같은 내부 제외 reason code는 public
+proposal/confirmation JSON shape에 새 필드로 추가하지 않고 non-input state, trace와 validation warning에 남긴다.
+callback과 결과 행에는 내부 제외 코드 대신 공개 `ABSTAINED_*` 코드와 사용자 문구를 기록한다. Confirmation은
+원래 proposal과 항목·값을 비교하지 않아 수정·추가·삭제와 구조상 유효한 custom parameter를 허용한다. 각 value에는
+`proposedValue` key가 필요하지만 값은 `null`일 수 있고, non-null 값만 persistence에서 유한 숫자로 검증한다.
 
 ## 4. 점수 해석
 

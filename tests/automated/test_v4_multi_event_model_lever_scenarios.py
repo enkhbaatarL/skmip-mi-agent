@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 from openai import pydantic_function_tool
@@ -779,10 +780,11 @@ def test_v4_finalizer_distributes_zero_probability_weights_deterministically() -
     assert [scenario.baseline_yn for scenario in finalized.scenarios] == [False, True, False]
 
 
-def test_v4_finalizer_injects_fallback_scenario_when_llm_set_misses_one_direction() -> None:
+def test_v4_finalizer_retries_when_injected_fallback_is_below_minimum_probability() -> None:
     # LLM이 제출한 Scenario 3개가 Base(가장 높은 probabilityScore) 대비 전부 bullish 방향이라,
-    # bearish 방향 Scenario가 하나도 없는 상황을 재현한다. 재시도에만 기대지 않고 서버가 직접
-    # Base 대비 bearish 방향 Scenario를 구성해 끼워 넣는지 확인한다.
+    # bearish 방향 Scenario가 하나도 없는 상황을 재현한다. 서버가 방향 보완용 fallback을
+    # 1%로 구성하더라도 최종 Scenario의 최소 확률 5% 계약을 인위적으로 우회하지 않고
+    # 합성 재시도로 넘기는지 확인한다.
     def scenario(title: str, values: dict[str, str], band: str, score: float) -> V4ScenarioCandidateDraft:
         return V4ScenarioCandidateDraft.model_validate(
             {
@@ -856,30 +858,15 @@ def test_v4_finalizer_injects_fallback_scenario_when_llm_set_misses_one_directio
         },
     )
 
-    finalized, _coverage = finalize_v4_generation_result(
-        synthesis,
-        group_title="테스트 그룹",
-        group_summary=_group_summary(),
-        impact_analysis=_analysis(),
-        dimension_design=_dimensions(),
-        impact_levers=_catalog(),
-    )
-
-    assert len(finalized.scenarios) == 4
-    base_result = next(scenario for scenario in finalized.scenarios if scenario.baseline_yn)
-    assert base_result.pressure_band == "balanced"
-    assert base_result.scenario_role not in {"floor", "ceiling"}
-
-    non_base = [scenario for scenario in finalized.scenarios if not scenario.baseline_yn]
-    assert {scenario.scenario_role for scenario in non_base} >= {"floor", "ceiling"}
-    floor_scenario = next(scenario for scenario in non_base if scenario.scenario_role == "floor")
-    assert floor_scenario.pressure_band in {"bearish", "strong_bearish"}
-    assert floor_scenario.dimension_values == {
-        "cold_wave_intensity": "low",
-        "liquefaction_recovery": "fast",
-        "risk_premium": "low",
-    }
-    assert sum(scenario.probability_score for scenario in finalized.scenarios) == 100
+    with pytest.raises(ValueError, match=r"Final probabilityScore must be >= 5%"):
+        finalize_v4_generation_result(
+            synthesis,
+            group_title="테스트 그룹",
+            group_summary=_group_summary(),
+            impact_analysis=_analysis(),
+            dimension_design=_dimensions(),
+            impact_levers=_catalog(),
+        )
 
 
 def test_v4_finalizer_excludes_excess_same_direction_scenarios_beyond_two_slots() -> None:
@@ -2390,6 +2377,13 @@ def test_prepare_v4_fixes_analysis_as_of_for_the_run() -> None:
     payload = V4MultiEventCreateScenariosIn(miEventIds=[202, 101], userId=7)
     with (
         patch.object(v4_flow_module, "_analysis_as_of", return_value="2026-08-07"),
+        patch.object(
+            v4_flow_module,
+            "get_settings",
+            return_value=SimpleNamespace(
+                scenario_group_v4_impact_catalog_version="v4.1",
+            ),
+        ),
         patch.object(v4_flow_module.EventService, "load_events", return_value=events),
         patch.object(
             v4_flow_module.ModelImpactLeverService,
@@ -2412,7 +2406,7 @@ def test_prepare_v4_fixes_analysis_as_of_for_the_run() -> None:
     assert prepared["impact_parameter_axes"] == {"HurricaneIntensity": "slot=B:Year(YYYY, 2026~2030), C:Month(1~12)"}
     assert prepared["analysis_as_of"] == "2026-08-07"
     assert [event.mi_event_id for event in prepared["events"]] == [202, 101]
-    load_active_catalog.assert_called_once_with(catalog_version="v4")
+    load_active_catalog.assert_called_once_with(catalog_version="v4.1")
 
 
 def test_v4_event_timeout_is_retried_without_blocking_the_batch() -> None:
@@ -2721,12 +2715,14 @@ def test_v4_prompts_follow_fact_path_uncertainty_contract() -> None:
         impact_analysis=_analysis().model_dump(),
         dimension_definitions=[item.model_dump() for item in _dimensions().dimension_definitions],
         validation_warnings=[],
+        analysis_as_of="2026-08-07",
     )
     scenario_retry = build_v4_scenario_synthesis_user_prompt(
         events=[{"mi_event_id": 101, "event_title_ko": "동북아 한파"}],
         impact_analysis=_analysis().model_dump(),
         dimension_definitions=[item.model_dump() for item in _dimensions().dimension_definitions],
         validation_warnings=[],
+        analysis_as_of="2026-08-07",
         validation_feedback="scenarios[1].dimensionValues duplicates scenarios[0].dimensionValues",
     )
     interaction = build_v4_interaction_analysis_user_prompt(

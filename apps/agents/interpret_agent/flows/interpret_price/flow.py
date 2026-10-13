@@ -17,7 +17,7 @@ import time
 from langchain_core.runnables import Runnable
 from langgraph.graph import StateGraph
 
-from apps.agents.interpret_agent.constants import AGENT_NAME
+from apps.agents.interpret_agent.constants import AGENT_NAME, INTERPRET_AGENT_VERSION
 from apps.agents.interpret_agent.flows.interpret_price.api_schema import (
     PriceInterpretationCallbackItem,
     PriceInterpretationCallbackOut,
@@ -73,7 +73,9 @@ async def run_interpret_price(
         transaction_id=new_transaction_id(),
         app_identifier=agent_config.aip_app_id,
         agent_name=AGENT_NAME,
+        api_identifier="interpret_price",
         session_id=str(scenario_group_id) if scenario_group_id is not None else None,
+        tags={"interpret_agent_version": INTERPRET_AGENT_VERSION},
     )
     state = InterpretPriceState(
         scenario_group_id=scenario_group_id,
