@@ -217,6 +217,17 @@ Dimension value 조합, JKM `pressureBand`, 근거, role, 상대 확률 가중�
 - `probabilityScore` 정수 합계 100
 - 최고 확률 Scenario 하나의 `baselineYn=Y`
 
+생성 후보의 확률을 합계 100인 정수 점수로 정규화한 뒤, 5 미만인 후보는
+`LOW_PROBABILITY` 사유와 함께 제외 목록으로 이동한다. 정확히 5인 후보는 유지한다.
+후보가 제외되면 남은 후보의 확률을 다시 정규화한다.
+
+조합 검증 후 후보 개수가 달라졌거나 점수 합계가 100이 아니면 재정규화한다.
+정수 배분의 나머지가 같은 경우 기존 baseline을 우선한다.
+
+자동 추가된 fallback을 포함해 최종 점수가 5 미만인 후보가 있으면 기존 합성
+재시도 경로로 이동한다. 최종 생성 개수는 기존 결과 스키마의 3~5개 조건을 따른다.
+재시도 한도를 소진하면 생성 작업이 실패한다.
+
 TTF·HH 관련성이 명확한 경우만 `relatedMarkets`에 보조 근거를 둔다. JKM 근거는 `pressureRationale`이
 정본이며 시장별 별도 price direction을 생성하지 않는다.
 

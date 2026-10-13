@@ -29,6 +29,9 @@ from apps.persistence.model_impact_lever.schema import (
 from apps.persistence.scenario.schema import RelatedMarket
 
 
+MIN_V4_SCENARIO_PROBABILITY_SCORE = 5
+
+
 Materiality = Literal["high", "medium", "low"]
 BalanceDirection = Literal["increase", "decrease", "mixed", "unchanged"]
 BalanceWireValue = Literal[
@@ -2061,18 +2064,76 @@ def finalize_v4_generation_result(
         )
         for scenario in synthesis.scenarios
     ]
+    # LLM의 상대 점수를 합계 100인 정수 백분율로 바꾼다.
+    # 5% 제외 기준은 이 정규화된 점수에 적용한다.
     _normalize_v4_probability_scores(finalized_scenarios)
+
+    # 원본 제외 목록을 복사한 뒤, 이번에 제외할 후보를 추가한다.
+    # 복사하는 이유는 원본 synthesis가 직접 변경되는 것을 막기 위해서다.
+    excluded_scenarios = [candidate.model_copy(deep=True) for candidate in synthesis.excluded_scenarios]
+    retained_scenarios: list[V4ScenarioCandidate] = []
+
+    for scenario in finalized_scenarios:
+        if scenario.probability_score >= MIN_V4_SCENARIO_PROBABILITY_SCORE:
+            # 정확히 5%인 후보도 생성 목록에 유지한다.
+            retained_scenarios.append(scenario)
+            continue
+
+        # 위에서 continue하지 않은, 5% 미만인 후보만 여기서 제외 기록을 남긴다.
+        excluded_scenarios.append(
+            V4ExcludedScenarioCandidate(
+                pressure_band=scenario.pressure_band,
+                reason_code="LOW_PROBABILITY",
+                reason=(
+                    f"정규화된 발생 가능성 {scenario.probability_score:g}%가 "
+                    f"최소 기준 {MIN_V4_SCENARIO_PROBABILITY_SCORE}%보다 낮아 제외했습니다."
+                ),
+                dimension_values=dict(scenario.dimension_values),
+            ),
+        )
+
+    # 후보를 제외한 경우에만 남은 후보들의 점수 합계를 다시 100으로 맞춘다.
+    if len(retained_scenarios) != len(finalized_scenarios):
+        _normalize_v4_probability_scores(retained_scenarios)
+
+    # 이후 검증과 저장에는 유지하기로 한 후보만 전달한다.
+    finalized_scenarios = retained_scenarios
+
+    # 기존 검증에서 조합을 확인하고 baseline·pressure band·역할을 결정한다.
+    # 이 과정에서 fallback이 추가되거나 초과 후보가 제외될 수 있다.
     scenario_count_before_validation = len(finalized_scenarios)
     _validate_scenarios(
         finalized_scenarios,
-        synthesis.excluded_scenarios,
+        excluded_scenarios,
         dimension_definitions=dimension_design.dimension_definitions,
         impact_analysis=impact_analysis,
     )
-    if len(finalized_scenarios) != scenario_count_before_validation:
-        # _validate_scenarios가 Base 대비 양방향 보장을 위해 fallback Scenario를 추가했다면,
-        # probability_score 합계가 100을 넘어서므로 최종 목록으로 다시 정규화한다.
-        _normalize_v4_probability_scores(finalized_scenarios)
+
+    # 하나를 추가하고 하나를 제외하면 개수는 같아도 점수 합계가 달라질 수 있다.
+    # 개수 또는 합계가 바뀐 경우에만 최종 목록의 점수를 다시 정규화한다.
+    if (
+        len(finalized_scenarios) != scenario_count_before_validation
+        or sum(scenario.probability_score for scenario in finalized_scenarios) != 100
+    ):
+        # 정수로 나누고 남은 점수를 배분할 때, 나머지가 같으면 앞의 후보가 우선한다.
+        # 기존 baseline이 동률 후보보다 낮아지지 않도록 baseline을 먼저 배치한다.
+        # 새 목록을 정렬하므로 finalized_scenarios의 표시 순서는 바뀌지 않는다.
+        _normalize_v4_probability_scores(
+            sorted(finalized_scenarios, key=lambda scenario: not scenario.baseline_yn),
+        )
+
+    # 최초 필터 이후에도 검증 함수가 낮은 점수의 fallback을 추가할 수 있다.
+    # 최종 목록에 5% 미만이 있으면 저장하지 않고 기존 합성 재시도로 보낸다.
+    if any(scenario.probability_score < MIN_V4_SCENARIO_PROBABILITY_SCORE for scenario in finalized_scenarios):
+        raise ValueError(
+            "Final probabilityScore must be >= "
+            f"{MIN_V4_SCENARIO_PROBABILITY_SCORE}% for every scenario. "
+            "Regenerate combinations with both bearish and bullish directions "
+            "relative to the baseline; do not artificially raise probabilities."
+        )
+
+    # 최종 생성 개수 3~5개 조건은 기존 결과 스키마에서 검사한다.
+    # 여기서 발생하는 ValidationError도 기존 합성 재시도 경로에서 처리된다.
     result = V4GenerationResult(
         group_title=group_title,
         group_summary=group_summary,
@@ -2080,7 +2141,7 @@ def finalize_v4_generation_result(
         impact_analysis=impact_analysis,
         dimension_definitions=dimension_design.dimension_definitions,
         scenarios=finalized_scenarios,
-        excluded_scenarios=synthesis.excluded_scenarios,
+        excluded_scenarios=excluded_scenarios,
         excluded_dimensions=dimension_design.excluded_dimensions,
         validation_warnings=[
             *impact_analysis.validation_warnings,

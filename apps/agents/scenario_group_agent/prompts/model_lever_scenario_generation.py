@@ -100,6 +100,10 @@ V4_SCENARIO_SYSTEM_PROMPT = (
 그룹 제목은 다음 단계에서 Scenario를 바탕으로 따로 작성하므로 출력하지 마십시오.
 영문 Event·Scenario를 사용하지 말고 description에는 `입력 사실`을 사용하지 마십시오.
 probability는 0~100 정수 백분율로 작성하고 모든 Scenario probability의 합계를 정확히 100으로 맞추십시오.
+생성 목록에는 probability가 5 이상인 Scenario만 포함하십시오.
+5 미만인 후보는 excluded에 reasonCode=LOW_PROBABILITY로 기록하십시오.
+생성 Scenario는 3~5개이며, 최고 확률 Scenario인 Base 대비 상방·하방 조합을 모두 포함해야 합니다.
+개수나 방향 조건을 맞추기 위해 근거 없이 probability를 높이지 마십시오.
 """
 )
 
@@ -954,6 +958,10 @@ def build_v4_scenario_synthesis_user_prompt(
         "- 공통 영향은 분기 효과에 다시 더하지 않습니다.\n"
         "- probability는 공통 사실에 가깝고 추가 가정이 적을수록 높게 부여하는 0~100 정수 백분율입니다. "
         "모든 Scenario probability의 합계를 정확히 100으로 맞춥니다.\n"
+        "- 생성 목록의 probability는 각각 5 이상이어야 합니다. "
+        "5 미만 후보는 excluded에 reasonCode=LOW_PROBABILITY로 기록합니다.\n"
+        "- 생성 개수나 Base 대비 양방향 조건을 맞추기 위해 "
+        "근거 없이 probability를 높이지 마십시오.\n"
         "- relatedMarkets는 `TTF|이유` 또는 `HH|이유` 형식이며 특별한 영향이 있을 때만 씁니다. "
         "한 Scenario 안에서 TTF와 HH는 각각 최대 한 번만 작성하고 같은 시장을 중복하지 마십시오.\n"
         f"{feedback}"
