@@ -8,6 +8,7 @@ from langchain_core.runnables import Runnable
 from langgraph.graph import StateGraph
 
 from apps.agents.scenario_group_agent.constants import AGENT_NAME, API_IDENTIFIER_CREATE_SIGNPOSTS
+from apps.agents.scenario_group_agent.flows.callback_delivery import deliver_operation_callback
 from apps.agents.scenario_group_agent.flows.create_signposts.nodes import (
     check_existing_signposts,
     generate_new_scenario_row_details_node,
@@ -36,7 +37,6 @@ from apps.common.tracing.context import (
 )
 from apps.common.values.error_codes import ErrorCode
 from apps.common.values.response import CallBackBody
-from apps.connectors.callback.callback_client import send_callback
 from apps.persistence.enums import (
     ScenarioGroupStage,
     ScenarioGroupStatus,
@@ -248,14 +248,10 @@ async def run_create_signposts_background(
         )
         callback_payload = CallBackBody(result="failure", reason=str(e))
 
-    # 작업 결과 확정 후 1회 전송: 전송 실패가 반대 결과(failure) callback으로 이어지지 않게 한다.
-    try:
-        await send_callback(callback_url, callback_payload)
-        logger.info(
-            f"[BG][create_signposts] CALLBACK_DONE | group_id={scenario_group_id} | result={callback_payload.result}",
-        )
-    except Exception as cb_err:
-        logger.error(
-            f"[BG][create_signposts] CALLBACK_FAILED | group_id={scenario_group_id} "
-            f"| result={callback_payload.result} | error={cb_err!r}",
-        )
+    await deliver_operation_callback(
+        log_tag="create_signposts",
+        callback_url=callback_url,
+        payload=callback_payload,
+        scenario_group_id=scenario_group_id,
+        operation_id=operation_id,
+    )

@@ -593,6 +593,21 @@ Validation과 Signpost background flow는 다음 설정으로 callback URL을 �
 
 성공·콘텐츠 차단 callback은 `result=success`, 실행 오류는 `result=failure`와 `reason`을 사용한다.
 callback 전송 실패는 Agent 작업 결과와 별도 장애다. 로그에서 graph 실패와 callback delivery 실패를 구분한다.
+작업 결과로 payload를 확정한 뒤 callback은 1회만 전송하며, 성공 callback 전송이 실패해도 `result=failure`
+callback을 재전송하지 않는다. `send_callback` 실패는 `CALLBACK_DELIVERY_FAILED`(-7001)로 래핑되고
+`stage=token|post`, `status_code`로 토큰 발급 실패와 callback 수신 서버 실패를 구분한다. 자동 재시도는 없다.
+
+Create(v4)·Validation·Signpost에 operation이 있으면 전송 결과를 operation event로 남긴다. operation이
+terminal이 된 뒤 기록하므로 operation `status`와 `lastError`는 바꾸지 않고, SSE stream은 terminal event에서
+종료되어 이 event를 실시간 전송하지 않는다. `Last-Event-ID` replay와 operation 조회의 `lastEvent`에는
+나타날 수 있으므로 Client는 완료 판단에 `operation.status`를 사용한다.
+
+| eventType | 의미 | payload |
+| --- | --- | --- |
+| `callback_succeeded` | callback 전송 성공 | `callbackStatus`, `result` |
+| `callback_skipped` | `skip_callback=true`로 전송 생략 | `callbackStatus`, `result` |
+| `callback_failed` | callback 전송 실패 | `callbackStatus`, `result`, `stage`, `url`, `statusCode`, `error` |
+
 비밀값과 OAuth2 token은 문서·로그·report에 기록하지 않는다.
 
 operation terminal commit 직후 heartbeat가 실행되어도 `succeeded|failed`는 정상 종료로 처리해 owner task를
