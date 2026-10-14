@@ -241,14 +241,14 @@ async def run_validate_scenarios_background(
 
     logger.info(f"[BG][validate_scenarios] START | group_id={scenario_group_id}")
     start = time.perf_counter()
+    callback_payload: CallBackBody
     try:
-        callback_payload: CallBackBody = await run_validate_scenarios_inline(
+        callback_payload = await run_validate_scenarios_inline(
             scenario_group_id=scenario_group_id,
             user_id=user_id,
             request_table=request_table,
             operation_id=operation_id,
         )
-        await send_callback(callback_url, callback_payload)
         elapsed_ms = int((time.perf_counter() - start) * 1000)
         logger.info(
             f"[BG][validate_scenarios] END | group_id={scenario_group_id} | elapsed={elapsed_ms}ms",
@@ -258,8 +258,17 @@ async def run_validate_scenarios_background(
         logger.error(
             f"[BG][validate_scenarios] FAILED | group_id={scenario_group_id} | elapsed={elapsed_ms}ms | error={e!r}",
         )
-        error_payload = CallBackBody(result="failure", reason=str(e))
-        try:
-            await send_callback(callback_url, error_payload)
-        except Exception as cb_err:
-            logger.error(f"[BG][validate_scenarios] CALLBACK_FAILED | error={cb_err!r}")
+        callback_payload = CallBackBody(result="failure", reason=str(e))
+
+    # 작업 결과 확정 후 1회 전송: 전송 실패가 반대 결과(failure) callback으로 이어지지 않게 한다.
+    try:
+        await send_callback(callback_url, callback_payload)
+        logger.info(
+            f"[BG][validate_scenarios] CALLBACK_DONE | group_id={scenario_group_id} "
+            f"| result={callback_payload.result}",
+        )
+    except Exception as cb_err:
+        logger.error(
+            f"[BG][validate_scenarios] CALLBACK_FAILED | group_id={scenario_group_id} "
+            f"| result={callback_payload.result} | error={cb_err!r}",
+        )

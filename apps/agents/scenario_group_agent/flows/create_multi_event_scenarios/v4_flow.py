@@ -274,6 +274,7 @@ async def run_v4_multi_event_scenarios_background(
 
     logger.info("[BG][v4 create_scenarios] START | group_id={}", group_id)
     start = time.perf_counter()
+    callback_payload: CallBackBody
     try:
         with mlflow_trace_context(trace_context):
             output = await run_v4_multi_event_scenarios_inline(
@@ -281,13 +282,10 @@ async def run_v4_multi_event_scenarios_background(
                 trace_context=trace_context,
             )
         output_data = _require_output_data(output)
-        await send_callback(
-            callback_url,
-            CreateScenariosOut(
-                result="success",
-                scenario_group=output_data.scenario_group,
-                table=output_data.table,
-            ),
+        callback_payload = CreateScenariosOut(
+            result="success",
+            scenario_group=output_data.scenario_group,
+            table=output_data.table,
         )
         elapsed_ms = int((time.perf_counter() - start) * 1000)
         logger.info(
@@ -303,16 +301,23 @@ async def run_v4_multi_event_scenarios_background(
             elapsed_ms,
             exc,
         )
-        try:
-            await send_callback(
-                callback_url,
-                CallBackBody(result="failure", reason=str(exc)),
-            )
-        except Exception as callback_exc:
-            logger.error(
-                "[BG][v4 create_scenarios] CALLBACK_FAILED | error={!r}",
-                callback_exc,
-            )
+        callback_payload = CallBackBody(result="failure", reason=str(exc))
+
+    # 작업 결과 확정 후 1회 전송: 전송 실패가 반대 결과(failure) callback으로 이어지지 않게 한다.
+    try:
+        await send_callback(callback_url, callback_payload)
+        logger.info(
+            "[BG][v4 create_scenarios] CALLBACK_DONE | group_id={} | result={}",
+            group_id,
+            callback_payload.result,
+        )
+    except Exception as callback_exc:
+        logger.error(
+            "[BG][v4 create_scenarios] CALLBACK_FAILED | group_id={} | result={} | error={!r}",
+            group_id,
+            callback_payload.result,
+            callback_exc,
+        )
 
 
 __all__ = [

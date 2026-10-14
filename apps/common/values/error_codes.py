@@ -53,4 +53,5 @@ class ErrorCode(Enum):
     RDB_DATA_FETCH_FAILED = (-6000, "RDB 데이터 조회시 오류가 발생했습니다.", 500)
     RDB_ACCESS_DENIED = (-6001, "해당 RDB 데이터 접근 권한이 없습니다.", 403)
     HTTP_CONNECTION_ERROR = (-7000, "HTTP연결 실패했습니다.", 502)
+    CALLBACK_DELIVERY_FAILED = (-7001, "콜백 전송에 실패했습니다.", 502)
     UNKNOWN_ERROR = (-9999, "알 수 없는 오류가 발생했습니다.", 500)
