@@ -9,7 +9,7 @@ from apps.persistence.schema_base import ApiModel
 
 class EventPayload(ApiModel):
     mi_event_id: int | str
-    event_type_l2_id: int
+    event_type_l2_id: int | None = None
     event_title_ko: str = ""
     one_line_summary: str = ""
     detail_analysis: str = ""

@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 
 from apps.agents.scenario_group_agent.schemas.endpoint import EventDetailOut
+from apps.persistence.event.models import MiEventModel, MiEventSnapshotModel
 from apps.persistence.event.repository import EventRepository
 
 
@@ -70,6 +71,62 @@ def test_event_repository_builds_context_from_operational_wrapper_shape() -> Non
     backoffice_payload = repository._event_to_backoffice_dict(event)
 
     assert "market_impacts" not in backoffice_payload
+
+
+def test_event_repository_serializes_unclassified_event_without_type_error() -> None:
+    repository = EventRepository(session=Mock())
+    event = SimpleNamespace(
+        mi_event_id=1117,
+        event_type_l2_id=None,
+        one_line_summary="분류 대기 이벤트",
+        search_text="분류 전 검색 문맥",
+        key_bullets_json={"bullets": ["분류 전 근거"]},
+        detail_analysis="분류 전 상세 분석",
+        tags_json=None,
+        occurred_at=None,
+        record_maps=[],
+        crt_dtm=None,
+        mod_dtm=None,
+        latest_record_first_created=None,
+        oldest_record_first_created=None,
+    )
+
+    payload = repository._event_to_core_pipeline_dict(event)
+
+    assert payload["event_type_l2_id"] is None
+    assert payload["event_title_ko"] == "분류 대기 이벤트"
+    assert payload["one_line_summary"] == "분류 전 검색 문맥"
+
+
+def test_event_models_match_nullable_v46_event_type_contract() -> None:
+    assert MiEventModel.__table__.c.event_type_l2_id.nullable is True
+    assert MiEventSnapshotModel.__table__.c.event_type_l2_id.nullable is True
+
+
+def test_event_repository_serializes_unclassified_snapshot_without_catalog_lookup() -> None:
+    repository = EventRepository(session=Mock())
+    repository.fetch_event_type_by_l2_id = Mock()
+    repository.fetch_source_record_ids = Mock(return_value=[])
+    snapshot = SimpleNamespace(
+        mi_event_id=1118,
+        event_type_l2_id=None,
+        one_line_summary="분류 대기 스냅샷",
+        search_text="스냅샷 검색 문맥",
+        key_bullets_json={"bullets": ["분류 전 근거"]},
+        detail_analysis="스냅샷 상세 분석",
+        tags_json=None,
+        occurred_at=None,
+        event_crt_dtm=None,
+        event_mod_dtm=None,
+        latest_record_first_created=None,
+        oldest_record_first_created=None,
+    )
+
+    payload = repository._snapshot_to_pipeline_dict(snapshot)
+
+    assert payload["event_type_l2_id"] is None
+    assert payload["event_type"]["event_type_l2_id"] is None
+    repository.fetch_event_type_by_l2_id.assert_not_called()
 
 
 def test_event_detail_schema_preserves_context_fields() -> None:

@@ -57,8 +57,8 @@ class AuditColumnsMixin:
 
 
 class MiEventContentColumnsMixin:
-    # 기존 event_title 컬럼은 삭제되고 one_line_summary 가 제목 역할을 대신한다.
-    # 기존 one_line_summary 에 담던 요약은 search_text 에 저장한다.
+    # Agent 공개 계약은 one_line_summary 를 제목으로, search_text 를 요약으로 사용한다.
+    # 원본 Event 테이블의 DB 전용 event_title 존재 여부와 무관하게 이 ORM에서는 읽지 않는다.
     search_text: Mapped[str] = mapped_column(
         sqlalchemy.String(500, collation="utf8mb4_bin"),
         nullable=False,
@@ -167,10 +167,10 @@ class MiEventModel(MiEventContentColumnsMixin, AuditColumnsMixin, ORMBase):
         autoincrement=True,
         comment="MI Event PK",
     )
-    event_type_l2_id: Mapped[int] = mapped_column(
+    event_type_l2_id: Mapped[int | None] = mapped_column(
         mysql_types.INTEGER(unsigned=True),
         ForeignKey("tmm_mi_event_type_l2_m.event_type_l2_id"),
-        nullable=False,
+        nullable=True,
         comment="이벤트 유형 L2 FK",
     )
     latest_record_first_created: Mapped[datetime | None] = mapped_column(
@@ -336,9 +336,9 @@ class MiEventSnapshotModel(MiEventContentColumnsMixin, ORMBase):
         nullable=True,
         comment="갱신 시 실제 변경된 Event 컬럼명 목록",
     )
-    event_type_l2_id: Mapped[int] = mapped_column(
+    event_type_l2_id: Mapped[int | None] = mapped_column(
         mysql_types.INTEGER(unsigned=True),
-        nullable=False,
+        nullable=True,
         comment="원본 이벤트 유형 L2 ID (FK 미설정)",
     )
     latest_record_first_created: Mapped[datetime | None] = mapped_column(

@@ -439,8 +439,8 @@ def _load_context(
     dimension_values: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     relations = [
-        SimpleNamespace(mi_event_id=202, display_order=2),
-        SimpleNamespace(mi_event_id=101, display_order=1),
+        SimpleNamespace(mi_event_id=202, event_type_l2_id=12, display_order=2),
+        SimpleNamespace(mi_event_id=101, event_type_l2_id=11, display_order=1),
     ]
     events = {
         101: {
@@ -485,6 +485,7 @@ def test_v4_context_uses_only_selected_value_lever_states_and_ordered_events() -
     context = _load_context(selected_value_id="high")
 
     assert [event["mi_event_id"] for event in context["events"]] == [101, 202]
+    assert [event["event_type_l2_id"] for event in context["events"]] == [11, 12]
     assert context["event"] == {}
     assert context["event_type"] == {}
     assert context["dimension_value_mappings"] == []

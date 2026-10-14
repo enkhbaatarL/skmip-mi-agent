@@ -16,6 +16,10 @@ from apps.persistence.event.models import (
 )
 
 
+def _optional_int(value: Any) -> int | None:  # noqa: ANN401
+    return int(value) if value is not None else None
+
+
 class EventRepository(BaseSyncSQLRepository):
     def insert_event(self, payload: dict[str, Any]) -> int:
         """tmm_mi_mievent_m 에 Event 1건을 insert하고 발급된 PK를 돌려준다.
@@ -244,8 +248,8 @@ class EventRepository(BaseSyncSQLRepository):
 
         return {
             "mi_event_id": str(event.mi_event_id),
-            "event_type_l2_id": int(event.event_type_l2_id),
-            # event_title 컬럼은 one_line_summary 로 대체되고, 기존 요약은 search_text 에 담긴다.
+            "event_type_l2_id": _optional_int(event.event_type_l2_id),
+            # Agent 공개 계약: DB one_line_summary=제목, search_text=요약.
             "event_title_ko": event.one_line_summary or "",
             "one_line_summary": event.search_text or "",
             "key_bullets": [
@@ -281,7 +285,8 @@ class EventRepository(BaseSyncSQLRepository):
         source_record_ids = [int(record.mi_record_id) for record in event.record_maps if record.mi_record_id]
         return {
             "mi_event_id": str(event.mi_event_id),
-            # event_title 컬럼은 one_line_summary 로 대체되고, 기존 요약은 search_text 에 담긴다.
+            "event_type_l2_id": _optional_int(event.event_type_l2_id),
+            # Agent 공개 계약: DB one_line_summary=제목, search_text=요약.
             "event_title_ko": event.one_line_summary or "",
             "one_line_summary": event.search_text or "",
             "key_bullets": [
@@ -366,10 +371,11 @@ class EventRepository(BaseSyncSQLRepository):
         record_maps는 스냅샷이 없어 항상 live 조회로 대체하며, event_type_l2_id는
         FK가 없어 live 카탈로그(tmm_mi_event_type_l2_m)를 별도 조회한다.
         """
-        event_type = self.fetch_event_type_by_l2_id(int(snapshot.event_type_l2_id)) or {}
+        event_type_l2_id = _optional_int(snapshot.event_type_l2_id)
+        event_type = (self.fetch_event_type_by_l2_id(event_type_l2_id) if event_type_l2_id is not None else {}) or {}
         return {
             "mi_event_id": str(snapshot.mi_event_id),
-            "event_type_l2_id": int(snapshot.event_type_l2_id),
+            "event_type_l2_id": event_type_l2_id,
             "event_title_ko": snapshot.one_line_summary or "",
             "one_line_summary": snapshot.search_text or "",
             "key_bullets": [
@@ -389,7 +395,10 @@ class EventRepository(BaseSyncSQLRepository):
             ),
             "event_type": {
                 "event_type_l1_id": event_type.get("event_type_l1_id"),
-                "event_type_l2_id": event_type.get("event_type_l2_id", int(snapshot.event_type_l2_id)),
+                "event_type_l2_id": event_type.get(
+                    "event_type_l2_id",
+                    event_type_l2_id,
+                ),
                 "level_1_code": event_type.get("level_1_code", ""),
                 "level_1_label": event_type.get("level_1_label", ""),
                 "level_2_code": event_type.get("level_2_code", ""),

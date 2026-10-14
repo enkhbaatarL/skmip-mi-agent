@@ -718,10 +718,18 @@ def _v4_group_event_to_context(
         _model_field(relation, "mi_event_id"),
         field_name="scenario_group_event.mi_event_id",
     )
+    relation_event_type_l2_id = _optional_int(
+        _model_field(relation, "event_type_l2_id"),
+    )
     return _json_safe(
         {
             **event,
             "mi_event_id": mi_event_id,
+            "event_type_l2_id": (
+                relation_event_type_l2_id
+                if relation_event_type_l2_id is not None
+                else _optional_int(event.get("event_type_l2_id"))
+            ),
             "display_order": _required_context_int(
                 _model_field(relation, "display_order"),
                 field_name="scenario_group_event.display_order",
