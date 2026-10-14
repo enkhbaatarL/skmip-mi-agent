@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from apps.agents.event_generate_agent.constants import (
@@ -52,6 +52,9 @@ class EventGenerationService:
             )
 
         actor_id = f"{EVENT_ACTOR_ID_PREFIX}{user_id if user_id is not None else DEFAULT_ACTOR_ID}"
+        # 커스텀 이벤트는 원천 Record 가 없으므로 생성 시점을 latest/oldest Record 시각으로 쓴다.
+        # DATETIME(6) 컬럼은 tz 정보가 없어 UTC 기준 naive 값으로 저장한다.
+        created_at = datetime.now(UTC).replace(tzinfo=None)
         session = get_sync_session()
         try:
             repository = EventRepository(session=session)
@@ -67,6 +70,8 @@ class EventGenerationService:
                     "detail_analysis": event.detail_analysis,
                     "tags_json": ({"tags": [str(tag) for tag in event.tags]} if event.tags else None),
                     "occurred_at": _parse_occurred_at(event.occurred_at),
+                    "latest_record_first_created": created_at,
+                    "oldest_record_first_created": created_at,
                     "new_yn": "Y",
                     "crt_usr_logn_id": actor_id,
                     "mod_usr_logn_id": actor_id,
