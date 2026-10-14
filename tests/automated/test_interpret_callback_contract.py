@@ -35,7 +35,7 @@ class InterpretCallbackContractTest(unittest.IsolatedAsyncioTestCase):
 
     def test_callback_url_keeps_existing_path(self) -> None:
         settings = SimpleNamespace(
-            callback_base_url="https://mi.mingovvv.info",
+            callback_base_url="https://mi.homil.co.kr",
             callback_price_interpretations_path=(
                 "/api/v1/mi/next-gen/scenario-groups/{scenario_group_id}/price-interpretations/callback"
             ),
@@ -45,7 +45,7 @@ class InterpretCallbackContractTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(
             callback_url,
-            "https://mi.mingovvv.info/api/v1/mi/next-gen/scenario-groups/52/price-interpretations/callback",
+            "https://mi.homil.co.kr/api/v1/mi/next-gen/scenario-groups/52/price-interpretations/callback",
         )
 
     def test_interpret_routes_are_exposed_only_by_interpret_entrypoint(self) -> None:
@@ -91,7 +91,7 @@ class InterpretCallbackContractTest(unittest.IsolatedAsyncioTestCase):
                 flow,
                 "_resolve_callback_url",
                 return_value=(
-                    "https://mi.mingovvv.info/api/v1/mi/next-gen/scenario-groups/52/price-interpretations/callback"
+                    "https://mi.homil.co.kr/api/v1/mi/next-gen/scenario-groups/52/price-interpretations/callback"
                 ),
             ),
             patch(
@@ -104,7 +104,7 @@ class InterpretCallbackContractTest(unittest.IsolatedAsyncioTestCase):
         callback_url, payload = send_callback.await_args.args
         self.assertEqual(
             callback_url,
-            "https://mi.mingovvv.info/api/v1/mi/next-gen/scenario-groups/52/price-interpretations/callback",
+            "https://mi.homil.co.kr/api/v1/mi/next-gen/scenario-groups/52/price-interpretations/callback",
         )
         self.assertEqual(
             payload.model_dump(by_alias=True, mode="json"),
@@ -140,7 +140,7 @@ class InterpretCallbackContractTest(unittest.IsolatedAsyncioTestCase):
                 flow,
                 "_resolve_callback_url",
                 return_value=(
-                    "https://mi.mingovvv.info/api/v1/mi/next-gen/scenario-groups/52/price-interpretations/callback"
+                    "https://mi.homil.co.kr/api/v1/mi/next-gen/scenario-groups/52/price-interpretations/callback"
                 ),
             ),
             patch(
