@@ -2803,6 +2803,9 @@ def test_v4_prompts_follow_fact_path_uncertainty_contract() -> None:
     assert "원문 표기 그대로 쓰고 `엘엔지`, `제이케이엠`처럼 한글로 음역하지 않습니다" in scenario
     assert "[U1]" in dimension
     assert "label은 핵심 대상과 변화 축을 담되 30자를 넘지 않습니다" in dimension
+    assert "원문 관측값·전망치는 Choice 경계로 그대로 사용합니다" in dimension
+    assert "만든 차이·증가분·감소분·비율은" in dimension
+    assert "label에 `폭`·`변화량`·`감소분`·`증가분`을 쓰려고 Choice 값을 계산해 바꾸지 말고" in dimension
     assert "rationale은 최대 200자의 구체적인 한국어 한 문장" in dimension
     assert "question은 필요한 관측 정보와 판단 대상을 충분히 포함" in dimension
     assert "`사실: … | 파생: … | 가정: … | 영향: …` 형식" in dimension

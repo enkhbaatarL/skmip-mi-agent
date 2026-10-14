@@ -633,6 +633,19 @@ def _render_decision_basis(impact_analysis: dict[str, Any]) -> str:
     return "\n".join(f"- {item}" for item in basis) or "- 없음"
 
 
+# Group 238: 2032년 수요 수준(284 TWh)을 "수요 감소 폭" label 아래 두어 감소량으로 오독된 사례를 막는다.
+_NUMERIC_DIMENSION_LABEL_RULE = (
+    "- question과 숫자·시점 판단 근거에 있는 원문 관측값·전망치는 Choice 경계로 그대로 사용합니다\n"
+    "  (예: `5척 이하`, `2032년 284 TWh`, `112.2 bcfd 이상`). 그 수치로 Choice를 가를 수 있으면 수치 없는\n"
+    "  상태 표현만으로 Choice를 구분하지 않습니다. 단, 원문 수치끼리 빼거나 나눠 만든 차이·증가분·감소분·비율은\n"
+    "  입력 문장에 함께 적혀 있더라도 Choice label에 넣지 않고 why의 `파생`에만 씁니다.\n"
+    "- unit이 있는 수치 Dimension은 label·unit·Choice label이 같은 지표를 가리켜야 합니다. Choice 수치가\n"
+    "  특정 시점의 수준·전망치(예: `2032년 284 TWh`)이면 label도 `2032년 스페인 가스 수요 수준`처럼 수준으로\n"
+    "  씁니다. label에 `폭`·`변화량`·`감소분`·`증가분`을 쓰려고 Choice 값을 계산해 바꾸지 말고, label을 입력\n"
+    "  수치에 맞춰 `수준`으로 씁니다. 비교 기준값(예: 2026년 312 TWh)은 question에 남깁니다.\n"
+)
+
+
 def build_v4_dimension_design_user_prompt(
     *,
     impact_analysis: dict[str, Any],
@@ -685,6 +698,7 @@ def build_v4_dimension_design_user_prompt(
         "## 출력 규칙\n"
         "- from에는 위 U 번호만 사용합니다. Dimension ID와 Value ID는 서버가 부여합니다.\n"
         "- label은 핵심 대상과 변화 축을 담되 30자를 넘지 않습니다.\n"
+        f"{_NUMERIC_DIMENSION_LABEL_RULE}"
         "- question은 필요한 관측 정보와 판단 대상을 충분히 포함하며 글자 수 제한이 없습니다.\n"
         "- rationale은 최대 200자의 구체적인 한국어 한 문장입니다. question의 관측일·분석 기준일·수치·시장 "
         "신호·대상·영향 경로를 생략하지 않고, 질문 어미만 `...하는지에 따라` 형태로 바꿔 Scenario와 JKM "
@@ -791,6 +805,7 @@ def build_v4_additional_dimension_user_prompt(
         "- dimensions에는 위 U 번호만 from으로 참조합니다. 하나의 U는 후보 간 중복 사용하지 않습니다.\n"
         "- 초기 Dimension과 의미가 겹치는 후보는 만들지 않습니다. 변환할 가치가 없으면 빈 dimensions를 반환합니다.\n"
         "- label은 핵심 대상과 변화 축을 담되 30자를 넘지 않습니다.\n"
+        f"{_NUMERIC_DIMENSION_LABEL_RULE}"
         "- question은 필요한 관측 정보와 판단 대상을 충분히 포함하며 글자 수 제한이 없습니다.\n"
         "- rationale은 최대 200자의 구체적인 한국어 한 문장입니다. question의 관측일·분석 기준일·수치·시장 "
         "신호·대상·영향 경로를 생략하지 않고, 질문 어미만 `...하는지에 따라` 형태로 바꿔 Scenario와 JKM "
