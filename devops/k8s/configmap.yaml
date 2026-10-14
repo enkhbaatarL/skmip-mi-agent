@@ -88,7 +88,7 @@ data:
     mlflow_tracking_password: "skgas2ndfloor!"
     mlflow_langchain_run_tracer_inline: false
 
-    callback_oauth2_token_url: https:///api/v1/oauth2/token
+    callback_oauth2_token_url: https://mi.homil.co.kr/api/v1/oauth2/token
     callback_oauth2_client_id: agent-skgas-client
     callback_oauth2_client_secret: ${CALLBACK_OAUTH2_CLIENT_SECRET}
 

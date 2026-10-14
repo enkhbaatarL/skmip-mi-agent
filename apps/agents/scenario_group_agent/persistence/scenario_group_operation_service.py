@@ -20,6 +20,7 @@ from apps.persistence.scenario_group_operation.repository import ScenarioGroupOp
 from apps.persistence.scenario_group_operation.schema import (
     TERMINAL_EVENT_TYPES,
     TERMINAL_OPERATION_STATUSES,
+    CallbackDeliveryStatus,
     OperationHeartbeatState,
     ScenarioGroupOperationEventPayload,
     ScenarioGroupOperationInternalPayload,
@@ -31,6 +32,11 @@ from apps.persistence.signpost.repository import SignpostRepository
 
 
 _CROCKFORD_BASE32 = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
+_CALLBACK_EVENT_TITLES: dict[CallbackDeliveryStatus, str] = {
+    "SUCCEEDED": "Callback을 전송했습니다",
+    "FAILED": "Callback 전송에 실패했습니다",
+    "SKIPPED": "Callback 전송을 건너뛰었습니다",
+}
 
 
 class OperationAlreadyTerminalError(RuntimeError):
@@ -670,6 +676,59 @@ class ScenarioGroupOperationService:
                 terminal=event_payload.event_type in TERMINAL_EVENT_TYPES,
             )
             return event_payload
+        except Exception:
+            session.rollback()
+            raise
+        finally:
+            session.close()
+
+    def record_callback_delivery(
+        self,
+        scenario_group_id: int,
+        operation_id: str,
+        *,
+        callback_status: CallbackDeliveryStatus,
+        result: str,
+        error: Exception | None = None,
+    ) -> None:
+        """callback 전송 결과를 operation 이력에 남긴다.
+
+        callback은 operation이 terminal이 된 뒤 전송되므로 terminal 여부와 무관하게 기록하며,
+        operation status·last_error는 바꾸지 않는다. SSE stream은 terminal event에서 종료되므로 publish하지 않는다.
+        """
+        from apps.common.configs.database.sync_database.connection import get_sync_session
+
+        payload: dict[str, Any] = {"callbackStatus": callback_status, "result": result}
+        if isinstance(error, MIBaseError):
+            payload.update(
+                {
+                    "stage": error.context.get("stage"),
+                    "url": error.context.get("url"),
+                    "statusCode": error.context.get("status_code"),
+                },
+            )
+        if error is not None:
+            payload["error"] = repr(error.__cause__ or error)
+
+        session = get_sync_session()
+        try:
+            repository = ScenarioGroupOperationRepository(session=session)
+            operation = repository.fetch_by_id(scenario_group_id, operation_id, for_update=True)
+            if operation is None:
+                raise MIBaseError(
+                    ErrorCode.ENTITY_NOT_FOUND,
+                    detail=f"Operation not found: scenarioGroupId={scenario_group_id}, operationId={operation_id}",
+                )
+            repository.append_event(
+                operation,
+                event_type=f"callback_{callback_status.lower()}",
+                phase=None,
+                title=_CALLBACK_EVENT_TITLES[callback_status],
+                message_markdown=str(error) if error is not None else "",
+                payload=payload,
+                now=_db_now(),
+            )
+            session.commit()
         except Exception:
             session.rollback()
             raise
