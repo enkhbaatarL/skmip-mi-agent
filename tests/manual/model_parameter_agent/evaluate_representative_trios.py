@@ -31,13 +31,14 @@ import re
 import statistics
 from typing import Any
 
+from tests.manual.model_parameter_agent.release_contract import PROPOSAL_FLOW_RELEASE
+
 
 EXPECTED_API_VERSION = "v4"
 EXPECTED_GENERATION_STRATEGY = "multi_event_model_lever_dimensions"
 EXPECTED_CATALOG_VERSION = "v4.1"
 EXPECTED_CATALOG_CHECKSUM = "7f4ef0b7aa60efb550b9175654fd82350f0c293debf880a9180e7e935db54d69"
-EXPECTED_PROPOSAL_FLOW_RELEASE = "v4.1.7"
-FIXED_TESTSET_SOURCE_FLOW_RELEASE = "v4.1.2"
+EXPECTED_PROPOSAL_FLOW_RELEASE = PROPOSAL_FLOW_RELEASE
 EXPANDED_EVENT_SELECTION_POLICY = "expanded_event_cohort/add-only"
 REGENERATED_EVENT_POOL_SELECTION_POLICY = "existing_event_pool/add-only-regenerated-scenarios"
 PRESSURE_RANK = {
@@ -122,7 +123,7 @@ READ_ONLY_KPI_COLUMN_DEFINITIONS = (
     ),
     (
         "Release 고정",
-        "Scenario Lever v4.1과 Proposal Flow v4.1.7이 실제 preflight 증적에 함께 기록됐는지",
+        "Scenario Lever v4.1과 현재 Proposal Flow release가 실제 preflight 증적에 함께 기록됐는지",
     ),
     (
         "Runtime-capable / coverage limit",
@@ -2921,7 +2922,9 @@ def build_reusable_testset(
     selection_policy = str(plan.get("selection_policy") or "")
     group_count = len(groups)
     if selection_policy == EXPANDED_EVENT_SELECTION_POLICY:
-        dataset_id = "model-parameter-v4.1.2-expanded-event-cohort-20-groups-20261007"
+        dataset_id = (
+            f"model-parameter-{EXPECTED_PROPOSAL_FLOW_RELEASE}-expanded-event-cohort-20-groups-20261007"
+        )
         purpose = "Reusable expanded Event cohort for Scenario Lever and Proposal Flow regression evaluation"
         cohort_identity = {
             "selection_policy": selection_policy,
@@ -2932,7 +2935,10 @@ def build_reusable_testset(
             ),
         }
     else:
-        dataset_id = f"model-parameter-v4.1.2-existing-event-pool-regenerated-{group_count}-groups-20261007"
+        dataset_id = (
+            f"model-parameter-{EXPECTED_PROPOSAL_FLOW_RELEASE}-existing-event-pool-regenerated-"
+            f"{group_count}-groups-20261007"
+        )
         purpose = "Reusable representative-trio cohort regenerated add-only from the fixed existing Event pool"
         source_event_ids = [int(item) for item in plan.get("source_event_ids") or []]
         cohort_event_ids = [int(item) for item in plan.get("cohort_event_ids") or []]
@@ -2957,7 +2963,7 @@ def build_reusable_testset(
             "generation_strategy": EXPECTED_GENERATION_STRATEGY,
             "scenario_lever_release": EXPECTED_CATALOG_VERSION,
             "scenario_lever_catalog_checksum": EXPECTED_CATALOG_CHECKSUM,
-            "proposal_flow_release": FIXED_TESTSET_SOURCE_FLOW_RELEASE,
+            "proposal_flow_release": EXPECTED_PROPOSAL_FLOW_RELEASE,
             "selection_policy": plan.get("selection_policy"),
             "group_count": len(groups),
             "representative_scenarios_per_group": 3,
@@ -2989,6 +2995,7 @@ def validate_immutable_testset(
     *,
     source: str,
     sha256: str,
+    expected_proposal_flow_release: str = EXPECTED_PROPOSAL_FLOW_RELEASE,
 ) -> dict[str, Any]:
     contract = testset.get("contract") if isinstance(testset.get("contract"), Mapping) else {}
     testset_groups = testset.get("groups") if isinstance(testset.get("groups"), list) else []
@@ -3018,9 +3025,12 @@ def validate_immutable_testset(
     expected_group_count = len(plan_identity)
     expected_scenario_count = expected_group_count * 3
     expected_dataset_id = (
-        "model-parameter-v4.1.2-expanded-event-cohort-20-groups-20261007"
+        f"model-parameter-{expected_proposal_flow_release}-expanded-event-cohort-20-groups-20261007"
         if selection_policy == EXPANDED_EVENT_SELECTION_POLICY
-        else f"model-parameter-v4.1.2-existing-event-pool-regenerated-{expected_group_count}-groups-20261007"
+        else (
+            f"model-parameter-{expected_proposal_flow_release}-existing-event-pool-regenerated-"
+            f"{expected_group_count}-groups-20261007"
+        )
     )
     checks = {
         "dataset_id_fixed": testset.get("dataset_id") == expected_dataset_id,
@@ -3028,7 +3038,8 @@ def validate_immutable_testset(
         "generation_strategy_fixed": contract.get("generation_strategy") == EXPECTED_GENERATION_STRATEGY,
         "scenario_lever_release_fixed": contract.get("scenario_lever_release") == EXPECTED_CATALOG_VERSION,
         "catalog_checksum_fixed": contract.get("scenario_lever_catalog_checksum") == EXPECTED_CATALOG_CHECKSUM,
-        "proposal_flow_release_fixed": contract.get("proposal_flow_release") == FIXED_TESTSET_SOURCE_FLOW_RELEASE,
+        "proposal_flow_release_fixed": contract.get("proposal_flow_release")
+        == expected_proposal_flow_release,
         "selection_policy_fixed": contract.get("selection_policy") == selection_policy,
         "group_count_matches_plan": contract.get("group_count") == len(testset_identity) == expected_group_count > 0,
         "exactly_3_scenarios_per_group": contract.get("representative_scenarios_per_group") == 3
@@ -3729,7 +3740,7 @@ def render_markdown(report: Mapping[str, Any]) -> str:
         read_only_release.get("proposal_flow_release") or report.get("proposal_flow_release")
     ) == EXPECTED_PROPOSAL_FLOW_RELEASE
     lines = [
-        "# v4.1 Scenario Lever / v4.1.7 Proposal Flow 대표 3개 품질 평가",
+        f"# v4.1 Scenario Lever / {report.get('proposal_flow_release')} Proposal Flow 대표 3개 품질 평가",
         "",
         f"- 생성 시각(UTC): {report['generated_at']}",
         f"- Proposal 품질 실행 상태: `{report.get('execution_status')}`",

@@ -82,7 +82,7 @@ Read-only KPI:
 최종 표는 아래 핵심 7개 안팎으로 압축한다.
 
 - 대상 Group / 전체·대표 Scenario
-- Scenario Lever `v4.1` / Proposal Flow `v4.1.2` release pin
+- Scenario Lever `v4.1` / 현재 Proposal Flow release pin
 - `runtime-capable` / `coverage limit`
 - `current write eligible` / `covered`
 - 3개 이상 write eligible Group / coverage-limit Group
@@ -153,7 +153,7 @@ DB read-back에서 가진 Group이다. Parameter 종류 동일·값 변별은 �
 기존 Scenario를 그대로 수집하는 대신 reference fixture의 Event 40개로 Scenario를 다시 만들라는 요청은
 `existing_event_pool/add-only-regenerated-scenarios` 정책으로 분리한다. 원본 Group/Scenario를 삭제·수정하지 않고
 Event별 신규 v4 Group을 생성한 뒤 validation/confirmation을 수행한다. ordered Event ID 40개 exact 일치, Event
-고유성, 원본 Group 40개 보존, 신규 Group 40개 순증, Scenario Lever `v4.1`/Proposal Flow `v4.1.2`를 hard gate로
+고유성, 원본 Group 40개 보존, 신규 Group 40개 순증, Scenario Lever `v4.1`/현재 Proposal Flow release를 hard gate로
 둔다. 전체 신규 Scenario preflight 뒤 대표 3개/Group plan을 만들고 Proposal 실행 전에
 `evaluate_representative_trios.py freeze`로 fixture를 1회 고정한다. 이후 Proposal-only 실행은 해당 SHA-256과
 identity를 사용하며 confirmation/callback을 호출하지 않는다. Object Storage가 없는 로컬 환경에서는 승인된

@@ -204,8 +204,8 @@ tests/fixtures/model_parameter_agent/<dataset>.json`으로 해당 campaign의 �
 덮어쓰지 않는다. 기존 expanded Event campaign은 20 Group·60 Scenario 계약을 유지하고, 기존 Event 풀 재생성
 campaign은 40 Group·120 대표 Scenario 계약을 사용한다. v4.1.7 Before/After는 기존
 `v4_1_2_existing_latest_distinct_representative_trio_40_groups_20261007.json`의 ordered Group/Event/Scenario
-ID를 그대로 사용하며 신규·교체 Scenario를 섞지 않는다. fixture의 source Flow 표기는 v4.1.2로 유지하고 실제
-실행 manifest의 target Flow `v4.1.7`은 별도 release gate로 검증한다.
+ID를 그대로 사용하며 신규·교체 Scenario를 섞지 않는다. 과거 fixture의 source Flow 표기는 이력으로
+보존하되, 신규 fixture와 실행 manifest는 항상 현재 Proposal Flow release를 같은 release gate로 검증한다.
 이후에는 `--testset-input`으로 fixture SHA-256과 ordered Group/Event/Scenario ID를
 plan과 exact 대조하며 fixture를 다시 생성하지 않는다. 고정 assertion은 release contract·Group/Scenario selection이며
 LLM 결과 baseline은 회귀 비교용 관측값이다. expanded campaign fixture에는

@@ -193,7 +193,7 @@ Step1.5/2/3 semantic abstention도 MI Base 준비 뒤 종료되므로 예외의 
   `existing_event_pool/add-only-regenerated-scenarios`로 기록한다. 원본 40 Group은 삭제·수정하지 않고 Event별 새
   v4 Group을 하나씩 생성·validation·confirmation하며 Signpost는 Proposal 입력에 필요하지 않으면 생략한다.
   원본/재생성 Event ID 순서 exact 일치, Event 40개 고유성, 신규 Group 40개 순증, 원본 Group 40개 보존,
-  Scenario Lever `v4.1`/Proposal Flow `v4.1.2`를 hard gate로 둔다. 이 모드는 expanded Event cohort가 아니므로
+  Scenario Lever `v4.1`/현재 Proposal Flow release를 hard gate로 둔다. 이 모드는 expanded Event cohort가 아니므로
   Event 비중복이나 신규 Event 순증을 요구하지 않는다.
 - 사용자가 Event cohort 확장을 먼저 요구하면 `same_logical_inputs/add-only`를 쓰지 않는다. baseline Event ID를
   exclusion set으로 고정하고 서로 다른 신규 Event 20개를 먼저 선택한 `expanded_event_cohort/add-only` campaign을
@@ -265,7 +265,7 @@ Step1.5/2/3 semantic abstention도 MI Base 준비 뒤 종료되므로 예외의 
   그 파일이 없는 일반 CI는 Neuro parity 검사를 실행한 것으로 간주하지 않는다. secret-valued 항목은 값과
   key를 증적에서 제외하거나 마스킹한다. Neuro parity를 검증한다고 선언한 Report에 config snapshot이
   빠지면 완료로 처리하지 않는다.
-- v4.1.2 proposal-only frozen-context 검사는 persisted Scenario/Event/Group drift를 fail-closed로 유지하되,
+- 현재 Proposal Flow의 proposal-only frozen-context 검사는 persisted Scenario/Event/Group drift를 fail-closed로 유지하되,
   graph 실행 중 최상위에 추가되는 request-local `mi_base_case_id` pin은 Scenario mutation으로 분류하지 않는다.
   다른 context 차이는 persistence 전에 계속 차단한다.
 - logic/config 변경은 `rollout-model-parameters`, release 검증은 `verify-model-parameter-release`, 배포는

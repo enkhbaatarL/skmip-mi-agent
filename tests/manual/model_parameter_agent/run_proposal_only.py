@@ -83,6 +83,7 @@ from tests.manual.model_parameter_agent.evaluate_proposals import (
     _evaluate_scenario,
     _failure_trace_from_exception,
 )
+from tests.manual.model_parameter_agent.release_contract import PROPOSAL_FLOW_RELEASE
 from tests.manual.model_parameter_agent.runner_common import (
     fetch_proposal_db_row,
     json_safe,
@@ -96,7 +97,6 @@ EVIDENCE_SCHEMA_VERSION = 6
 UNCOVERED_POLICY_VERSION = "uncovered-only-v1"
 RELEASE_REPLAY_POLICY_VERSION = "release-replay-v1"
 BASELINE_CAPABILITY_RELEASE = "extend16-v8"
-PROPOSAL_FLOW_RELEASE = "v4.1.7"
 EXPECTED_V4_0_CATALOG_CHECKSUM = "416017351f2b9539370963a3ca413914876da55a1db3f41e3dacd34bd466c763"
 EXPECTED_V4_1_CATALOG_CHECKSUM = "7f4ef0b7aa60efb550b9175654fd82350f0c293debf880a9180e7e935db54d69"
 EXPECTED_NEW_BC_V8_CONTRACT_SHA256 = "686640c7a47b215112997d7e34483ccdd9c01672be8e13a077e75e0afe0486a7"

@@ -1175,7 +1175,7 @@ def test_regenerated_event_pool_testset_freezes_dynamic_40_group_identity() -> N
         sha256="sha",
     )
 
-    assert dataset["dataset_id"] == ("model-parameter-v4.1.2-existing-event-pool-regenerated-40-groups-20261007")
+    assert dataset["dataset_id"] == ("model-parameter-v4.1.7-existing-event-pool-regenerated-40-groups-20261007")
     assert dataset["cohort_identity"]["event_pool_reused_exactly"] is True
     assert result["pass"] is True
 
@@ -1459,12 +1459,24 @@ def test_existing_latest_fixture_validator_matches_dynamic_plan_identity() -> No
         ],
     }
 
-    result = validate_existing_testset(plan, testset)
+    current_release_result = validate_existing_testset(plan, testset)
+    assert current_release_result["checks"]["proposal_flow_release_fixed"] is False
+    assert current_release_result["pass"] is False
+
+    result = validate_existing_testset(
+        plan,
+        testset,
+        expected_proposal_flow_release="v4.1.2",
+    )
 
     assert result["pass"] is True
     mutated = json.loads(json.dumps(testset))
     mutated["groups"][0]["event_signature"][0] += 1
-    mismatch = validate_existing_testset(plan, mutated)
+    mismatch = validate_existing_testset(
+        plan,
+        mutated,
+        expected_proposal_flow_release="v4.1.2",
+    )
     assert mismatch["checks"]["plan_identity_matches_testset"] is False
     assert mismatch["pass"] is False
 
@@ -1474,11 +1486,21 @@ def test_immutable_testset_matches_plan_by_ordered_group_event_and_scenario_ids(
     testset = json.loads(testset_bytes)
     plan = json.loads(REPRESENTATIVE_PLAN.read_text(encoding="utf-8"))
 
+    current_release_result = validate_immutable_testset(
+        plan,
+        testset,
+        source=str(REUSABLE_TESTSET),
+        sha256="test-sha",
+    )
+    assert current_release_result["checks"]["proposal_flow_release_fixed"] is False
+    assert current_release_result["pass"] is False
+
     result = validate_immutable_testset(
         plan,
         testset,
         source=str(REUSABLE_TESTSET),
         sha256="test-sha",
+        expected_proposal_flow_release="v4.1.2",
     )
 
     assert result["pass"] is True
@@ -1489,6 +1511,7 @@ def test_immutable_testset_matches_plan_by_ordered_group_event_and_scenario_ids(
         testset,
         source=str(REUSABLE_TESTSET),
         sha256="test-sha",
+        expected_proposal_flow_release="v4.1.2",
     )
     assert mismatch["checks"]["plan_identity_matches_testset"] is False
     assert mismatch["pass"] is False

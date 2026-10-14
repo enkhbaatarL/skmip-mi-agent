@@ -54,7 +54,6 @@ from tests.manual.model_parameter_agent.evaluate_representative_trios import (
     EXPECTED_CATALOG_VERSION,
     EXPECTED_GENERATION_STRATEGY,
     EXPECTED_PROPOSAL_FLOW_RELEASE,
-    FIXED_TESTSET_SOURCE_FLOW_RELEASE,
     PRESSURE_RANK,
     _current_write_eligible,
     _parameter_set,
@@ -71,7 +70,9 @@ from tests.manual.model_parameter_agent.run_proposal_only import (
 
 SELECTION_POLICY = "existing-scenario/latest-distinct-ordered-event-set/max-50"
 RECENCY_POLICY = "scenario_group.mod_dtm DESC, scenario_group_id DESC"
-DEFAULT_DATASET_ID = "model-parameter-v4.1.2-existing-latest-distinct-40-groups-20261007"
+DEFAULT_DATASET_ID = (
+    f"model-parameter-{EXPECTED_PROPOSAL_FLOW_RELEASE}-existing-latest-distinct-40-groups-20261007"
+)
 ELIGIBLE_STATUSES = frozenset({"created", "realized"})
 
 
@@ -781,7 +782,12 @@ def build_testset(
     }
 
 
-def validate_testset(plan: Mapping[str, Any], testset: Mapping[str, Any]) -> dict[str, Any]:
+def validate_testset(
+    plan: Mapping[str, Any],
+    testset: Mapping[str, Any],
+    *,
+    expected_proposal_flow_release: str = EXPECTED_PROPOSAL_FLOW_RELEASE,
+) -> dict[str, Any]:
     contract = testset.get("contract") if isinstance(testset.get("contract"), Mapping) else {}
     groups = [group for group in testset.get("groups") or [] if isinstance(group, Mapping)]
     plan_groups = [group for group in plan.get("groups") or [] if isinstance(group, Mapping)]
@@ -809,7 +815,7 @@ def validate_testset(plan: Mapping[str, Any], testset: Mapping[str, Any]) -> dic
         "scenario_lever_release_fixed": contract.get("scenario_lever_release") == EXPECTED_CATALOG_VERSION,
         "catalog_checksum_fixed": contract.get("scenario_lever_catalog_checksum") == EXPECTED_CATALOG_CHECKSUM,
         "proposal_flow_release_fixed": contract.get("proposal_flow_release")
-        == FIXED_TESTSET_SOURCE_FLOW_RELEASE,
+        == expected_proposal_flow_release,
         "selection_policy_fixed": contract.get("selection_policy") == SELECTION_POLICY,
         "read_only_source_policy_fixed": contract.get("source_mutation_policy") == "read-only-existing-scenarios",
         "group_count_within_cap": contract.get("group_count") == len(groups)
