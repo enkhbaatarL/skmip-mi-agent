@@ -24,6 +24,8 @@ from apps.agents.model_parameter_agent.utils.resource_runtime import (
 from apps.agents.model_parameter_agent.utils.workbook_contract import (
     PACKAGE_RESOURCE_DIR,
     load_workbook_contract,
+    validate_workbook_hashes,
+    workbook_sha256,
 )
 from apps.common.configs.config import (
     ModelParameterMiBaseFallbackConfig,
@@ -370,6 +372,91 @@ def test_scnrcase_workbook_role_tokens_must_be_unambiguous() -> None:
         match="Ambiguous SCNRCASE workbook role",
     ):
         mi_base_resources._classify_inputs(snapshot, bucket="mi-bucket")
+
+
+def test_auxiliary_sources_are_materialized_inside_request_release(
+    tmp_path: Path,
+) -> None:
+    contract = load_workbook_contract()
+    staging_root = tmp_path / "staging"
+    workbook_hashes: dict[str, str] = {}
+    for role, artifact in contract.workbooks.items():
+        workbook_path = staging_root / contract.resource_directory / artifact.filename
+        workbook_path.parent.mkdir(parents=True, exist_ok=True)
+        workbook_path.write_bytes(f"{role}-workbook".encode())
+        workbook_hashes[role] = workbook_sha256(workbook_path)
+    dynamic_contract = mi_base_resources._contract_with_hashes(
+        contract,
+        hashes=workbook_hashes,
+    )
+
+    mi_base_resources._stage_auxiliary_sources(
+        contract=dynamic_contract,
+        configured_root=PACKAGE_RESOURCE_DIR,
+        staging_root=staging_root,
+    )
+
+    validate_workbook_hashes(dynamic_contract, resource_root=staging_root)
+    for parameter in dynamic_contract.parameters.values():
+        for source in parameter.reference_source.auxiliary_sources.values():
+            auxiliary_path = staging_root / source.path
+            assert auxiliary_path.is_file()
+            assert not auxiliary_path.is_symlink()
+            assert auxiliary_path.resolve().is_relative_to(staging_root.resolve())
+
+
+def test_workbook_contract_failure_logs_case_release_and_root_cause(
+    tmp_path: Path,
+) -> None:
+    bucket = "mi-bucket"
+    objects = {
+        (bucket, "SCNRCASE/demand.xlsm"): b"demand-current-base",
+        (bucket, "SCNRCASE/supply.xlsm"): b"supply-current-base",
+        (bucket, "SCNRCASE/trade.xlsm"): b"trade-current-base",
+    }
+    snapshot = _complete_snapshot(bucket=bucket, objects=objects)
+    inputs = mi_base_resources._classify_inputs(snapshot, bucket=bucket)
+    client = _FakeStorageClient(objects)
+    first_metadata = asyncio.run(mi_base_resources._head_inputs(client, inputs))
+    configured_paths = _configured_resource_paths()
+    storage = _storage_config(tmp_path, bucket=bucket)
+    cache_root = tmp_path / "mi-base"
+    root_cause = "Workbook auxiliary source is missing: parameter=SupplyDisruption, source=seasonality"
+    log_error = Mock()
+
+    with (
+        patch.object(
+            mi_base_resources,
+            "extract_workbook_references",
+            side_effect=MIBaseError(ErrorCode.INVALID_REQUEST, detail=root_cause),
+        ),
+        patch.object(mi_base_resources.logger, "error", log_error),
+        pytest.raises(
+            mi_base_resources.MiBaseResourceFallbackError,
+            match="Workbook auxiliary source is missing",
+        ),
+    ):
+        asyncio.run(
+            mi_base_resources._download_release(
+                snapshot=snapshot,
+                inputs=inputs,
+                first_metadata=first_metadata,
+                release_root=cache_root / "releases" / "case-15-test",
+                cache_root=cache_root,
+                configured_paths=configured_paths,
+                storage=storage,
+                client=client,
+                deadline=float("inf"),
+                linked_file_fingerprint="linked-file-fingerprint",
+                remote_metadata_fingerprint="remote-metadata-fingerprint",
+            ),
+        )
+
+    log_error.assert_called_once()
+    log_arguments = log_error.call_args.args
+    assert log_arguments[1] == snapshot.case_id
+    assert log_arguments[2] == configured_paths.workbook_contract.release_id
+    assert root_cause in log_arguments[3]
 
 
 def test_only_scnrcase_workbooks_are_downloaded_for_calculation(

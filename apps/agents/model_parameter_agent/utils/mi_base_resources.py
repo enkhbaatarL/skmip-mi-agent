@@ -342,7 +342,7 @@ def _stage_auxiliary_sources(
         source = (configured_root / relative_path).resolve(strict=True)
         destination = staging_root / relative_path
         destination.parent.mkdir(parents=True, exist_ok=True)
-        destination.symlink_to(source)
+        shutil.copy2(source, destination)
 
 
 def _link_legacy_basecase_files(
@@ -556,7 +556,15 @@ async def _download_release(
                 use_cache=False,
             )
         except MIBaseError as exc:
-            message = "MI Base workbook contract validation failed"
+            reason = _safe_reason(exc)
+            logger.error(
+                "[model-parameter] MI Base workbook contract validation failed | "
+                "case_id={} contract_release={} reason={}",
+                snapshot.case_id,
+                dynamic_contract.release_id,
+                reason,
+            )
+            message = f"MI Base workbook contract validation failed: {reason}"
             raise MiBaseResourceFallbackError(message) from exc
         marker = staging_root / _COMPLETE_FILE_NAME
         marker.write_text(
