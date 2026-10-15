@@ -83,11 +83,11 @@ Implement one reproducible v4 release set and propagate it through the parameter
 7. Implement formulas in deterministic adapters. Cover missing joins, duplicate aggregation, closed facilities, month bounds, non-finite values, sign handling, and source values that must not be renormalized.
 8. Bump adapter, catalog, or resource-manifest schema versions whenever interpretation or serialized shape changes so an incompatible cache cannot be reused.
 9. Keep MI Base fallback boundaries explicit. The default selected-active-Base path uses only current remote files or a
-   cache matching the same case/run/linked-file identity and validated workbook hashes. Explicit
+   cache matching the same case/SCNRCASE-linked-file identity and validated workbook hashes. Explicit
    `active_case_unavailable_mode=configured_fallback` may use registered Basecase data only when the current remote
    identity was never observed (disabled client/client initialization/metadata availability failure); incomplete linked
    inputs or download/hash/contract failure after current metadata is observed must still fail closed. Record
-   `source=configured_fallback`, pinned case/run, and packaged workbook hashes. When no active Base exists, configured
+   `source=configured_fallback`, pinned case, and packaged workbook hashes. When no active Base exists, configured
    fallback is likewise allowed only by explicit policy, and v4 contract artifacts resolve from canonical packaged
    `resources/` rather than a release wrapper that lacks `basecase_v4/`.
 10. Keep full reference rows in server-side indexes. Send compact period groups and fixed-axis hierarchies to Step2, and only the validated effective reference for each exact slot to Step3.

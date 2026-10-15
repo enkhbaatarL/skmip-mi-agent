@@ -1164,10 +1164,9 @@ async def prepare_mi_base_resources(
             )
     logger.info(
         "[model-parameter] resolved Basecase resources | scenario_id={} case_id={} "
-        "run_seq={} source={} linked_file_counts={}",
+        "source={} linked_file_counts={}",
         state.scenario_id,
         selection.case_id,
-        selection.run_seq,
         selection.source,
         dict(selection.linked_file_counts),
     )

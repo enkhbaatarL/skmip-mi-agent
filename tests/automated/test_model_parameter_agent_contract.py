@@ -4285,7 +4285,6 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
                     },
                 ),
                 case_id=15,
-                run_seq=71,
                 linked_file_counts={"SCNRCASE": 3},
                 fallback_reason="not exported",
             ),
@@ -4667,7 +4666,6 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
                     },
                 ),
                 case_id=15,
-                run_seq=71,
                 linked_file_counts={"SCNRCASE": 3},
                 fallback_reason="not exported",
             ),
@@ -4694,7 +4692,6 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
         assert trace["trace_mi_base_resource"] == {
             "source": "configured_fallback",
             "case_id": 15,
-            "run_seq": 71,
             "workbook_sha256": {
                 "demand": "demand-sha256",
                 "supply": "supply-sha256",

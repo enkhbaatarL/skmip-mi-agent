@@ -176,7 +176,7 @@ POST /model-parameters/scenarios/100/proposals
 바뀌어도 요청의 기준은 바뀌지 않는다. 활성 Base가 없으면 `NULL`을 저장한다. 기본 정책에서는
 background 작업을 실패시키며, `model_parameter_mi_base_fallback.no_active_case_mode`를
 `configured_fallback`으로 명시한 환경만 기존 설정 Basecase를 사용한다. 선택한 Base의 Object Storage를
-확인할 수 없을 때는 동일 case/run/file identity와 workbook hash/contract를 검증한 cache만 허용한다.
+확인할 수 없을 때는 동일 `case_id`·`SCNRCASE` file identity와 workbook hash/contract를 검증한 cache만 허용한다.
 이 식별자와 fallback 정책은 내부 추적용이며 기존 요청·응답·callback JSON은 변경하지 않는다.
 
 이 preflight는 resource runtime 등록 여부까지 보장하지 않는다. 허용 후보가 있어 HTTP `200`과 `PROCESSING`을

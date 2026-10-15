@@ -2439,7 +2439,6 @@ def evaluate_execution(plan: Mapping[str, Any], execution: Mapping[str, Any]) ->
             {
                 "source": item.get("source"),
                 "case_id": item.get("case_id"),
-                "run_seq": item.get("run_seq"),
                 "workbook_sha256": item.get("workbook_sha256"),
             },
             sort_keys=True,
@@ -2700,7 +2699,7 @@ def evaluate_execution(plan: Mapping[str, Any], execution: Mapping[str, Any]) ->
             f"{len(mi_base_trace_summary['missing_trace_scenario_ids'])}건입니다.",
         )
     if not mi_base_trace_summary["identity_consistent"]:
-        review_reasons.append("실행 attempt 사이 MI Base case/run/workbook identity가 일치하지 않습니다.")
+        review_reasons.append("실행 attempt 사이 MI Base case/workbook identity가 일치하지 않습니다.")
     if historical_evidence_backfilled:
         review_reasons.append(
             f"MI Base trace {len(backfilled_mi_base_rows)}건은 직접 관측이 아닌 명시적 승인 기반 소급 보정입니다.",

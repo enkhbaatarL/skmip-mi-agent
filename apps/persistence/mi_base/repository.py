@@ -19,7 +19,7 @@ from apps.persistence.mi_base.schema import MiBaseFilePayload
 
 _ACTIVE_MI_BASE_SQL = text(
     """
-    SELECT case_id, last_run_id
+    SELECT case_id
     FROM tmd_mdl_scnrcasem
     WHERE actv_base_yn = 'Y'
       AND del_yn = 'N'
@@ -30,21 +30,10 @@ _ACTIVE_MI_BASE_SQL = text(
 
 _MI_BASE_BY_CASE_ID_SQL = text(
     """
-    SELECT case_id, last_run_id
+    SELECT case_id
     FROM tmd_mdl_scnrcasem
     WHERE case_id = :case_id
       AND del_yn = 'N'
-    LIMIT 1
-    """,
-)
-
-_RUN_SEQUENCE_SQL = text(
-    """
-    SELECT run_seq
-    FROM tmd_mdl_scnrcaseh
-    WHERE run_id = :run_id
-      AND del_yn = 'N'
-    ORDER BY run_seq DESC
     LIMIT 1
     """,
 )
@@ -62,15 +51,9 @@ _LINKED_FILES_SQL = text(
            file_rel_obj_dstg_no
     FROM tcm_filel
     WHERE del_yn = 'N'
-      AND (
-          (file_rel_obj_spt_cd = 'SCNRCASE'
-           AND file_rel_obj_dstg_no = :case_id)
-          OR
-          (:run_seq IS NOT NULL
-           AND file_rel_obj_spt_cd IN ('SCNRCASEH', 'SCNRCASEHI', 'SCNRCASEHTF')
-           AND file_rel_obj_dstg_no = :run_seq)
-      )
-    ORDER BY file_rel_obj_spt_cd, file_no
+      AND file_rel_obj_spt_cd = 'SCNRCASE'
+      AND file_rel_obj_dstg_no = :case_id
+    ORDER BY file_no
     """,
 )
 
@@ -91,27 +74,15 @@ class MiBaseRepository(BaseSyncSQLRepository):
         )
         return dict(row) if row is not None else None
 
-    def fetch_run_seq(self, run_id: str) -> int | None:
-        row = (
-            self.session.execute(
-                _RUN_SEQUENCE_SQL,
-                {"run_id": run_id},
-            )
-            .mappings()
-            .one_or_none()
-        )
-        return int(row["run_seq"]) if row is not None else None
-
     def fetch_linked_files(
         self,
         *,
         case_id: int,
-        run_seq: int | None,
     ) -> list[MiBaseFilePayload]:
         rows = (
             self.session.execute(
                 _LINKED_FILES_SQL,
-                {"case_id": case_id, "run_seq": run_seq},
+                {"case_id": case_id},
             )
             .mappings()
             .all()
