@@ -134,6 +134,10 @@ cache의 workbook SHA-256과 contract를 다시 검증하고, 같은 identity에
 사용하지 않는다. 입력 3종 구성, 현재 remote identity, download 정합성 또는 workbook contract가 잘못됐거나
 검증 cache가 없으면 기본 정책에서는 기존 등록 Basecase로 바꾸지 않고 요청을 실패시킨다.
 
+Workbook contract가 요구하는 `SeasonalityLogic.csv` 같은 보조 source도 요청별 cache 안에 실제 파일로
+복사한 뒤 digest를 검증한다. 외부 resource root를 가리키는 symbolic link는 cache containment 검증을
+통과할 수 없으므로 사용하지 않는다.
+
 Object Storage를 사용할 수 없는 환경에서 운영자 또는 승인된 품질 campaign이
 `model_parameter_mi_base_fallback.active_case_unavailable_mode=configured_fallback`을 명시하면 예외적으로 등록
 Basecase를 사용할 수 있다. 이 모드는 client 초기화·metadata head처럼 **현재 remote identity를 하나도 확정하지
