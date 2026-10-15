@@ -122,8 +122,8 @@ data:
     model_parameter_variation_profile_enabled: true
     model_parameter_grounded_slot_recovery_enabled: true
     model_parameter_max_total_selected_slots: 300
-    model_parameter_max_step2_prompt_bytes: 262144
-    model_parameter_max_step3_prompt_bytes: 262144
+    model_parameter_max_step2_prompt_bytes: 327680
+    model_parameter_max_step3_prompt_bytes: 327680
     model_parameter_resource_storage:
       enabled: true
       endpoint_url: http://mip-minio:9000

@@ -147,10 +147,14 @@ v1의 기존 candidate key 형식은 유지한다. 병합된 v3/v4 parameter tas
 | v3 | group relation `display_order` 순서의 `events` 배열 | composite dimension, 원본 mapping dimension, source event/ref lineage와 승인 projection |
 | v4 | group relation `display_order` 순서의 `events` 배열 | 선택 value와 전체 Lever state·binding provenance, parameter hint·semantic axes |
 
-v3/v4 event 항목에는 event ID, `display_order`, title, one-line summary, 앞 5개 key bullet, 앞 8개 tag와
-`detail_analysis` 앞부분을 넣는다. detail 상한은 기존 v3는 event당 1,200자, 현재 운영 v4는 event당
-6,000자다. 최대 5개 event의 확장된 본문도 Step1.5·Step2·Step3 compact JSON byte guard를 그대로
-적용하며, 상한을 넘으면 LLM 호출 전에 실패한다. Event 자연어는 선택된 v4 dimension/value를 설명하는
+v3/v4 event 항목에는 event ID, `display_order`, title, one-line summary, 발생 시점·근거 관측 기간,
+앞 5개 key bullet과 앞 8개 tag, `numeric_facts_md`, `detail_analysis` 앞부분을 넣는다. 정량 근거 표는 Event별로
+한 번만 넣고 중요도가 높은 행부터 최대 12행·4,000자로 제한한다. detail 상한은 v3 event당 4,000자,
+v4 event당 6,000자이며 v1 단일 Event도 같은 정량 근거 압축을 사용한다. 현재 Scenario의 가격 압력
+구간·상대 역할·판단 근거·관련 시장도 brief에 보존한다. 같은 그룹의 비교용 Scenario 본문은 각 1,200자까지 포함한다. 최대 5개 event의
+확장된 본문도 Step1.5·Step2·Step3 compact JSON byte guard를 그대로 적용하며, 상한을 넘으면 LLM 호출 전에
+실패한다. 기본 byte guard는 Step1.5·Step2·Step3 모두 327,680 bytes다.
+Event 자연어와 정량 근거는 선택된 v4 dimension/value를 설명하는
 데이터일 뿐 prompt 지시를 바꾸거나 선택되지 않은 Scenario branch를 활성화하지 않는다. Step2의 slot
 catalog에는 값·기준값이 없고, v4에서만 hierarchy terminal의 적용성 판단에 필요한
 `Life Cycle Category`를 `applicability_attributes`로 보존한다. Step3에는 exact 좌표별 단일
@@ -548,6 +552,8 @@ flowchart LR
 |---|---|
 | Step1.5 | legacy routing, v4 복수 binding과 conditional binding의 applicability 판단에 호출 |
 | 관련 문맥 | 각 단계와 현재 후보에 필요한 dimension/value/Event/Lever만 남기고 무관 정보와 상태·감사 컬럼 제외 |
+| Event 정량 근거 | Event별 Markdown 표를 공통 `scenario_brief`에 한 번만 넣고 중요도 기준 최대 12행·4,000자로 제한; 후보 task마다 반복하지 않음 |
+| Event·Scenario 본문 | 제안 성공에 직접 필요한 v3 Event detail만 1,200자에서 4,000자로 완화하고 v4 detail 6,000자·bullet 5개·tag 8개·비교 Scenario 1,200자는 유지; 현재 Scenario narrative와 Group 설명은 별도 글자 절단 없음 |
 | 후보 task | 같은 파라미터의 여러 source를 한 task로 병합하고 legacy lineage 또는 v4 Lever provenance 보존 |
 | Step2 입력 | Basecase/LUT 원본 행·값·출처·일반 metadata를 제외한 compact 좌표 catalog. v4만 terminal별 값이 있는 `Life Cycle Category`를 판단 전용 `applicability_attributes`로 포함 |
 | Step2 응답 | 기본 `candidate_key + slot_axes`; 설비 표기 추론 시 원문 Plant/Train 근거와 좌표 일치 note도 수신 |
@@ -575,19 +581,19 @@ flowchart LR
 
 | DB 테이블 | 읽는 주요 컬럼 | prompt 또는 서버 사용 위치 |
 |---|---|---|
-| `tmm_mi_scenario_m` | `scenario_id`, `title`, `narrative`, `dimension_values`, `impact_jkm`, `impact_ttf`, `impact_hh` | `scenario_brief` |
+| `tmm_mi_scenario_m` | `scenario_id`, `title`, `narrative`, `dimension_values`, 가격 impact, `baseline_yn`, `global_pressure_band`, `scenario_role`, `global_pressure_rationale`, `related_markets` | `scenario_brief` |
 | `tmm_mi_scenario_group_m` | `title`, `summary`, `description`, `dimension_selected`, `api_version`, `generation_strategy`, `dimension_definitions`, catalog checksum | adapter 분기, v3 lineage 또는 v4 selected value·Lever 검증 |
 | `tmm_mi_scenario_group_event_m` | `mi_event_id`, `event_type_l2_id`, `scenario_dimension_template_id`, `display_order` | v3는 source ref 역투영, v4는 `mi_event_id`·`display_order` 관계만 사용 |
 | `tmm_mi_scenario_dimension_template_m` | `scenario_dimension_template_id`, `template_json` | v1 관련 dimension과 v3 source ref relation 검증 |
 | `tmm_mi_dimension_value_mapping_m` | `dimension_id`, `display_value`, `source_projections`, `status`, `mapping_version` | 같은 v3 자유 value의 approved projection 보조 근거와 warning |
-| `tmm_mi_mievent_m` | `mi_event_id`, `event_type_l2_id`, `event_title`, `one_line_summary`, `key_bullets_json`, `detail_analysis`, `tags_json` | v1 `scenario_brief.event` 또는 제한된 v3 `scenario_brief.events[]` |
+| `tmm_mi_mievent_m` | `mi_event_id`, `event_type_l2_id`, `one_line_summary`(제목), `search_text`(요약), `key_bullets_json`, `detail_analysis`, `numeric_facts_md`, `tags_json`, `occurred_at`, 근거 record 기간 | v1 `scenario_brief.event` 또는 제한된 v3/v4 `scenario_brief.events[]`; 정량 근거는 대상·지표·단위·기간·수치 역할이 현재 branch와 맞을 때만 사용 |
 | `tmm_mi_model_param_dimension_map` | `event_type_l2_id`, `dimension_key`, `dimension_label`, `mapping_method`, `model_param_id`, `comment` | v1/v3 후보 선정, selection/supporting dimension. v4는 조회하지 않음 |
 | `tmm_mi_model_impact_lever_m` | Lever code/ID, domain, binding, applicability, active/catalog version | v4 catalog checksum·code/ID 검증과 executable 후보 선정 |
 | `tmm_mi_model_param_m` | `parameter_name`, `parameter_hint`, `semantic_axes`, `model_file`, `model_sheet`, `model_table`, `basecase_*` | parameter task, 모델 대상, 서버 Basecase·slot catalog 생성 |
 | `tmm_mi_event_type_l1_m` | `event_type_l1_id`, `level_1_code`, `level_1_label` | event type 문맥 조회 |
 | `tmm_mi_event_type_l2_m` | `event_type_l2_id`, `event_type_l1_id`, `level_2_code`, `level_2_label` | v1/v3 legacy mapping 문맥. v4 후보 선정에는 사용하지 않음 |
 
-prompt에 넣지 않는 대표 정보는 scenario의 상태·확률·baseline 여부, group의 상태·단계·사용자 정보, event의 일자·감사 컬럼, model parameter의 Excel 행·열 설정 원문이다. v3에서는 lineage grounding을 위해 event ID/type을 예외적으로 `events[]`에 포함한다.
+prompt에 넣지 않는 대표 정보는 scenario의 상태·확률, group의 상태·단계·사용자 정보, event의 생성·수정 감사 컬럼, model parameter의 Excel 행·열 설정 원문이다. v3에서는 lineage grounding을 위해 event ID/type을 예외적으로 `events[]`에 포함한다.
 
 <a id="hint-and-mapping-comment"></a>
 
@@ -670,7 +676,7 @@ PMI catalog의 국가·연도별 월 좌표는 다음과 같은 계층으로 표
 }
 ```
 
-서로 다른 hierarchy branch의 축과 period group을 섞어 새 좌표를 만들 수 없다. `maxParameterSlots`는 입력 catalog를 자르는 값이 아니라 LLM이 파라미터별로 반환할 slot 수의 상한이다. 요청 전체 선택 slot은 `model_parameter_max_total_selected_slots`로 제한한다. Step1.5와 Step2 prompt는 `model_parameter_max_step2_prompt_bytes`, Step3 prompt는 `model_parameter_max_step3_prompt_bytes`를 사용해 LLM 호출 전에 제한한다.
+서로 다른 hierarchy branch의 축과 period group을 섞어 새 좌표를 만들 수 없다. `maxParameterSlots`는 입력 catalog를 자르는 값이 아니라 LLM이 파라미터별로 반환할 slot 수의 상한이다. 요청 전체 선택 slot은 `model_parameter_max_total_selected_slots`로 제한한다. Step1.5와 Step2 prompt는 `model_parameter_max_step2_prompt_bytes`, Step3 prompt는 `model_parameter_max_step3_prompt_bytes`를 사용해 LLM 호출 전에 제한한다. 기본값은 둘 다 327,680 bytes이며 내부 모델의 실제 context 상한이 더 작다면 배포 config에서 낮춰야 한다.
 
 예를 들어 v4 `LiqUtilAdjustment`에서 같은 Freeport LNG parent 아래 T1 terminal이
 `{"Life Cycle Category":["Operational"]}`, T4가 `{"Life Cycle Category":["Planned"]}`이면 기존 설비

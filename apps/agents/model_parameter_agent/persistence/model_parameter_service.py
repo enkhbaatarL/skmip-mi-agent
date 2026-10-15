@@ -1746,6 +1746,9 @@ def _scenario_to_context_dict(scenario: Any) -> dict[str, Any]:
         "global_pressure_rationale": _json_safe(
             getattr(scenario, "global_pressure_rationale", None),
         ),
+        "related_markets": _json_safe(
+            getattr(scenario, "related_markets", None) or [],
+        ),
     }
 
 

@@ -847,7 +847,7 @@ def test_five_event_prompt_is_bounded_and_step2_guard_runs_before_llm() -> None:
     assert [event["event_id"] for event in brief["events"]] == [101, 102, 103, 104, 105]
     assert all(len(event["key_bullets"]) == 5 for event in brief["events"])
     assert all(len(event["tags"]) == 8 for event in brief["events"])
-    assert all(len(event["detail_excerpt"]) == 1200 for event in brief["events"])
+    assert all(len(event["detail_excerpt"]) == 1600 for event in brief["events"])
 
     candidate = {
         "candidate_key": "parameter|v3|supply|target|sharedparameter",

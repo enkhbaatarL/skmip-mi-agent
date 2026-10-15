@@ -119,9 +119,14 @@ from apps.common.values.error_codes import ErrorCode
 TIME_SLOT_AXIS_NAMES = {"Year", "Month", "Period"}
 HARD_MAX_PARAMETER_SLOTS = 100
 DEFAULT_MAX_TOTAL_SELECTED_SLOTS = 300
-DEFAULT_MAX_PROMPT_BYTES = 262_144
-V3_EVENT_DETAIL_MAX_CHARS = 1_200
+DEFAULT_MAX_PROMPT_BYTES = 327_680
+V3_EVENT_DETAIL_MAX_CHARS = 4_000
 V4_EVENT_DETAIL_MAX_CHARS = 6_000
+EVENT_KEY_BULLETS_MAX_ITEMS = 5
+EVENT_TAGS_MAX_ITEMS = 8
+EVENT_NUMERIC_FACTS_MAX_CHARS = 4_000
+EVENT_NUMERIC_FACTS_MAX_ROWS = 12
+SIBLING_SCENARIO_NARRATIVE_MAX_CHARS = 1_200
 DEFAULT_TRANSIENT_RETRY_MAX_ATTEMPTS = 2
 DEFAULT_TRANSIENT_RETRY_BASE_DELAY_SECONDS = 0.5
 DEFAULT_TRANSIENT_RETRY_MAX_JITTER_SECONDS = 0.25
@@ -3519,6 +3524,55 @@ def _filter_v4_selected_dimension_values(
     return selected_definitions
 
 
+def _markdown_table_cells(line: str) -> list[str]:
+    return [cell.strip() for cell in line.strip().strip("|").split("|")]
+
+
+def _is_markdown_table_separator(line: str) -> bool:
+    cells = _markdown_table_cells(line)
+    return bool(cells) and all(re.fullmatch(r":?-{3,}:?", cell.replace(" ", "")) for cell in cells)
+
+
+def _numeric_fact_priority(line: str) -> int:
+    cells = _markdown_table_cells(line)
+    if not cells:
+        return -1
+    try:
+        return int(cells[0])
+    except ValueError:
+        return -1
+
+
+def _compact_numeric_facts_md(value: object) -> str:
+    lines = [re.sub(r"[ \t]+", " ", line.strip()) for line in str(value or "").splitlines() if line.strip()]
+    if not lines:
+        return ""
+
+    selected_lines = lines[:EVENT_NUMERIC_FACTS_MAX_ROWS]
+    if len(lines) >= 2 and "중요도" in _markdown_table_cells(lines[0]) and _is_markdown_table_separator(lines[1]):
+        ranked_rows = sorted(
+            enumerate(lines[2:]),
+            key=lambda item: (-_numeric_fact_priority(item[1]), item[0]),
+        )
+        selected_lines = [
+            lines[0],
+            lines[1],
+            *(line for _, line in ranked_rows[:EVENT_NUMERIC_FACTS_MAX_ROWS]),
+        ]
+
+    bounded_lines: list[str] = []
+    current_chars = 0
+    for line in selected_lines:
+        added_chars = len(line) + (1 if bounded_lines else 0)
+        if current_chars + added_chars > EVENT_NUMERIC_FACTS_MAX_CHARS:
+            break
+        bounded_lines.append(line)
+        current_chars += added_chars
+    if not bounded_lines:
+        return selected_lines[0][:EVENT_NUMERIC_FACTS_MAX_CHARS]
+    return "\n".join(bounded_lines)
+
+
 def _bounded_multi_event_brief(
     event: dict[str, Any],
     *,
@@ -3544,9 +3598,15 @@ def _bounded_multi_event_brief(
             ),
             "title": (event.get("event_title_ko") or event.get("event_title") or event.get("title")),
             "one_line_summary": event.get("one_line_summary"),
-            "key_bullets": bullets[:5] if isinstance(bullets, list) else [],
-            "tags": tags[:8] if isinstance(tags, list) else [],
+            "key_bullets": (bullets[:EVENT_KEY_BULLETS_MAX_ITEMS] if isinstance(bullets, list) else []),
+            "tags": (tags[:EVENT_TAGS_MAX_ITEMS] if isinstance(tags, list) else []),
+            "numeric_facts_md": _compact_numeric_facts_md(
+                event.get("numeric_facts_md"),
+            ),
             "detail_excerpt": detail,
+            "occurred_at": event.get("occurred_at"),
+            "evidence_window_start": event.get("oldest_record_first_created"),
+            "evidence_window_end": event.get("latest_record_first_created"),
         },
     )
 
@@ -3604,6 +3664,13 @@ def _scenario_brief_for_value_prompt(
             "impact_jkm": impact.get("jkm"),
             "impact_ttf": impact.get("ttf"),
             "impact_hh": impact.get("hh"),
+            "baseline_yn": scenario.get("baseline_yn"),
+            "global_pressure_band": scenario.get("global_pressure_band"),
+            "scenario_role": scenario.get("scenario_role"),
+            "global_pressure_rationale": scenario.get(
+                "global_pressure_rationale",
+            ),
+            "related_markets": scenario.get("related_markets"),
         },
     )
     dimension_template_brief = _drop_none_or_empty(
@@ -3616,8 +3683,18 @@ def _scenario_brief_for_value_prompt(
             "event_title": event.get("event_title_ko") or event.get("event_title"),
             "one_line_summary": event.get("one_line_summary"),
             "key_bullets_json": event.get("key_bullets"),
+            "numeric_facts_md": _compact_numeric_facts_md(
+                event.get("numeric_facts_md"),
+            ),
             "detail_analysis": event.get("detail_analysis"),
             "tag_json": event.get("tags"),
+            "occurred_at": event.get("occurred_at"),
+            "evidence_window_start": event.get(
+                "oldest_record_first_created",
+            ),
+            "evidence_window_end": event.get(
+                "latest_record_first_created",
+            ),
         },
     )
     brief: dict[str, Any] = {
@@ -3647,7 +3724,7 @@ def _scenario_brief_for_value_prompt(
                     {
                         "scenario_id": item.get("scenario_id"),
                         "title": item.get("title"),
-                        "narrative_excerpt": str(item.get("narrative") or "")[:1_200],
+                        "narrative_excerpt": str(item.get("narrative") or "")[:SIBLING_SCENARIO_NARRATIVE_MAX_CHARS],
                         "dimension_values": _filter_dimension_values(
                             item.get("dimension_values"),
                             allowed_dimension_keys,

@@ -290,8 +290,8 @@ class Settings(BaseSettings):
     model_parameter_max_parameter_slots: int = Field(default=100, ge=1)
     model_parameter_max_value_prompt_basecase_records: int = Field(default=100, ge=1)
     model_parameter_max_total_selected_slots: int = Field(default=300, ge=1)
-    model_parameter_max_step2_prompt_bytes: int = Field(default=262_144, ge=1)
-    model_parameter_max_step3_prompt_bytes: int = Field(default=262_144, ge=1)
+    model_parameter_max_step2_prompt_bytes: int = Field(default=327_680, ge=1)
+    model_parameter_max_step3_prompt_bytes: int = Field(default=327_680, ge=1)
     model_parameter_max_routing_candidates_per_dimension: int = Field(default=2, ge=1)
     model_parameter_v4_max_routing_candidates_per_dimension: int = Field(
         default=3,

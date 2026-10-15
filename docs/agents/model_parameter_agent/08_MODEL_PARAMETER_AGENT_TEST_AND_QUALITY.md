@@ -104,8 +104,9 @@ DB/canonical만 맞거나 LUT 테스트만 통과하거나 전체 파라미터 �
 - v4 authoritative 2026~2030 record 수는 GDP 815, PMI 5,040, PowerMix 4,200, Temperature 5,040,
   LiqUtilAdjustment 23,820, PipelineAdjustment 420, SupplyDisruption 4,908이어야 한다. legacy adjustment target 관찰치는
   authoritative count나 slot whitelist로 평가하지 않는다.
-- v4 ordered Event의 `detail_analysis`는 event당 앞 6,000자까지 Step2·Step3 brief에 포함되고,
-  5개 Event와 현재 extend16 catalog를 합친 compact Step2 packet이 byte guard 안인지 자동화로 확인한다.
+- v3/v4 ordered Event의 `detail_analysis`는 각각 event당 앞 4,000자·6,000자,
+  `numeric_facts_md`는 중요도순 최대 12행·4,000자까지 공통 brief에 포함되고, 5개 Event와 현재
+  extend16 catalog를 합친 compact Step2 packet이 기본 327,680-byte guard 안인지 자동화로 확인한다.
 - Step2 slot은 exact Basecase+LUT union 안에 있어야 한다.
 - v4 Step2 compact catalog는 값·reference 없이 terminal별 값이 있는 `Life Cycle Category`를 판단 전용
   `applicability_attributes`로 보존하며, v1/v3와 반환 `slot_axes`에는 이 속성이 없어야 한다.
