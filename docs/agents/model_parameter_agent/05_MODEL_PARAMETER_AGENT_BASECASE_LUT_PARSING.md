@@ -123,6 +123,9 @@ background는 이 값을 다시 읽어 활성 Base 변경에 영향받지 않는
 `SCNRCASEH/SCNRCASEHI/SCNRCASEHTF + run_seq`를 함께 조회한다. 그러나 제안값 계산에
 실제로 읽는 것은 `SCNRCASE` Demand·Supply·Trade `.xlsm` 3종뿐이다. 결과·중간·Trade Flow
 파일은 존재 건수를 서버 log에 남기는 metadata이며 계산 입력으로 다운로드하지 않는다.
+각 입력 역할은 `org_file_nm`에 대소문자와 무관한 독립 영문 토큰 `Demand`, `Supply`, `Trade`가
+있는지로 판별하며 `Model_Input`, `플랫폼입력` 같은 추가 문구는 요구하지 않는다. 한 파일명에 서로 다른
+역할 토큰이 함께 있거나 같은 역할의 `.xlsm`이 둘 이상이면 임의로 선택하지 않고 실패한다.
 
 입력 3종은 기존 `model_parameter_resource_storage` endpoint·bucket·credential·timeout·local cache
 설정을 그대로 사용한다. 요청별 immutable cache에 받은 뒤 기존 v1/v3 경로와 v4

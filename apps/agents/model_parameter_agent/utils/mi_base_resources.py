@@ -47,7 +47,7 @@ from apps.persistence.mi_base.schema import MiBaseFilePayload, MiBaseSnapshot
 
 MI_BASE_RELATION_CODE = "SCNRCASE"
 RUN_RELATION_CODES = ("SCNRCASEH", "SCNRCASEHI", "SCNRCASEHTF")
-_ROLE_PATTERN = re.compile(r"\b(demand|supply|trade)\s+model[_ ]input\b", re.IGNORECASE)
+_ROLE_TOKEN_PATTERN = re.compile(r"\b(demand|supply|trade)\b", re.IGNORECASE)
 _COMPLETE_FILE_NAME = ".complete.json"
 _LOCK_FILE_NAME = ".mi-base.lock"
 _CACHE_MARKER_SCHEMA_VERSION = 1
@@ -197,10 +197,13 @@ def _classify_inputs(
         if Path(original_name).suffix.lower() != ".xlsm":
             continue
         normalized_name = original_name.replace("_", " ")
-        match = _ROLE_PATTERN.search(normalized_name)
-        if match is None:
+        roles = {match.group(1).lower() for match in _ROLE_TOKEN_PATTERN.finditer(normalized_name)}
+        if not roles:
             continue
-        role = match.group(1).lower()
+        if len(roles) > 1:
+            message = f"Ambiguous SCNRCASE workbook role: file_no={file.file_no} roles={sorted(roles)}"
+            raise MiBaseResourceFallbackError(message)
+        role = next(iter(roles))
         if role in selected:
             message = f"Duplicate SCNRCASE workbook role: role={role}"
             raise MiBaseResourceFallbackError(message)

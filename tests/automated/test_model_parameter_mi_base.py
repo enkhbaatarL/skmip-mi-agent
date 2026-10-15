@@ -310,6 +310,78 @@ def _storage_config(
     )
 
 
+def test_scnrcase_workbooks_are_classified_by_role_token_only() -> None:
+    snapshot = MiBaseSnapshot(
+        case_id=219,
+        files=[
+            _file(
+                file_no=1,
+                relation_code="SCNRCASE",
+                destination_no=219,
+                name="복호화_Trade_v11_플랫폼입력_최종_v8_플랫폼전달.xlsm",
+                path="https://storage.example/mi-bucket/SCNRCASE/trade.xlsm",
+            ),
+            _file(
+                file_no=2,
+                relation_code="SCNRCASE",
+                destination_no=219,
+                name="Demand_v5_플랫폼입력_최종_v8_플랫폼전달.xlsm",
+                path="https://storage.example/mi-bucket/SCNRCASE/demand.xlsm",
+            ),
+            _file(
+                file_no=3,
+                relation_code="SCNRCASE",
+                destination_no=219,
+                name="Output_v3_플랫폼입력_최종_v8_플랫폼전달.xlsm",
+                path="https://storage.example/mi-bucket/SCNRCASE/output.xlsm",
+            ),
+            _file(
+                file_no=4,
+                relation_code="SCNRCASE",
+                destination_no=219,
+                name="Supply_v14_플랫폼입력_최종_v6_플랫폼전달.xlsm",
+                path="https://storage.example/mi-bucket/SCNRCASE/supply.xlsm",
+            ),
+            _file(
+                file_no=5,
+                relation_code="SCNRCASE",
+                destination_no=219,
+                name="result_trade.csv",
+                path="https://storage.example/mi-bucket/SCNRCASE/result_trade.csv",
+            ),
+        ],
+    )
+
+    selected = mi_base_resources._classify_inputs(snapshot, bucket="mi-bucket")
+
+    assert [(item.role, item.file.file_no) for item in selected] == [
+        ("demand", 2),
+        ("supply", 4),
+        ("trade", 1),
+    ]
+
+
+def test_scnrcase_workbook_role_tokens_must_be_unambiguous() -> None:
+    snapshot = MiBaseSnapshot(
+        case_id=219,
+        files=[
+            _file(
+                file_no=1,
+                relation_code="SCNRCASE",
+                destination_no=219,
+                name="Demand_Supply_v1_플랫폼입력.xlsm",
+                path="https://storage.example/mi-bucket/SCNRCASE/ambiguous.xlsm",
+            ),
+        ],
+    )
+
+    with pytest.raises(
+        mi_base_resources.MiBaseResourceFallbackError,
+        match="Ambiguous SCNRCASE workbook role",
+    ):
+        mi_base_resources._classify_inputs(snapshot, bucket="mi-bucket")
+
+
 def test_only_scnrcase_workbooks_are_downloaded_for_calculation(
     tmp_path: Path,
 ) -> None:
