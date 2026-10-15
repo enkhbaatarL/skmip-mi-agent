@@ -146,7 +146,7 @@ DB/canonical만 맞거나 LUT 테스트만 통과하거나 전체 파라미터 �
 - proposal-only runner는 이 결과를 일반 `FAIL`이 아닌 Scenario `ABSTAINED`, campaign `REVIEW`로 분류한다.
   구조화 증적이나 필수 step/token 관측이 빠지면 별도 `REVIEW`로 남긴다.
 - retry 후 성공해도 앞선 실패 attempt를 지우지 않고 `REVIEW`로 남긴다.
-- 활성 MI Base 실행은 graph와 post-graph trace의 `case_id`·`run_seq`·role별 workbook SHA-256이 같아야 한다.
+- 활성 MI Base 실행은 graph와 post-graph trace의 `case_id`·role별 workbook SHA-256이 같아야 한다.
   기본 정책에서 remote와 `verified_cache`의 source 전환은 같은 content identity에서만 허용한다. 승인된
   `active_case_unavailable_mode=configured_fallback` campaign은 remote identity가 관측되기 전의 가용성 실패에만
   등록 Basecase를 사용하고 graph/trace 모두 같은 configured hash를 증적한다. remote metadata 관측 뒤의

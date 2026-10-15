@@ -412,7 +412,7 @@ def test_evaluate_scenario_preserves_partial_trace_on_output_failure(
     monkeypatch.setattr(
         proposal_evaluation,
         "mi_base_resource_identity",
-        lambda _selection: {"case_id": None, "run_seq": None, "workbook_sha256": {}},
+        lambda _selection: {"case_id": None, "workbook_sha256": {}},
     )
     monkeypatch.setattr(
         proposal_evaluation,

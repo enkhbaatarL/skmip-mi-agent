@@ -270,12 +270,12 @@ routing 후보를 탈락시키지 않는다. Step1.5 compact JSON도 LLM 호출 
 
 1. 접수 시점의 활성 MI Base `case_id`를 proposal 행에 고정하고, background는 그 값을
    다시 읽는다. 동기 경로도 graph 진입 전 한 번 선택한 값을 유지한다.
-2. 선택한 Base의 `last_run_id`로 `tmd_mdl_scnrcaseh.run_id`를 조회해 `run_seq`를 얻고,
-   `SCNRCASE + case_id`와 `SCNRCASEH/HI/HTF + run_seq`의 연결 파일 metadata를 읽는다.
-3. 계산에는 `SCNRCASE` Demand·Supply·Trade 입력 workbook 3종만 내려받아 사용한다.
-   결과·중간·Trade Flow 파일은 존재 건수만 내부 log에 남기고 제안값을 계산하는 데 읽지 않는다.
+2. `tcm_filel`에서 `SCNRCASE + case_id`의 연결 파일 metadata만 읽는다. 실행 결과·중간 파일을
+   찾는 `run_seq`는 조회하지 않는다.
+3. `org_file_nm`의 독립 영문 토큰으로 Demand·Supply·Trade `.xlsm`을 한 개씩 식별해 내려받는다.
+   `Model_Input` 같은 추가 문구는 요구하지 않는다.
 4. 활성 Base가 없으면 기본적으로 실패하고, 명시적 운영 설정에서만 기존 설정 resource를 사용한다.
-   선택된 Base의 Object Storage metadata를 확인할 수 없으면 같은 case/run/SCNRCASE 파일 identity와
+   선택된 Base의 Object Storage metadata를 확인할 수 없으면 같은 `case_id`·`SCNRCASE` 파일 identity와
    workbook hash/contract를 검증한 cache만 사용한다. 입력 3종 구성 또는 workbook 검증이 잘못됐거나
    검증 cache가 없으면 다른 Basecase로 바꾸지 않고 실패한다. 활성 Base가 복수여도 임의 선택하지 않는다.
 5. v1/v3는 선택된 request-local Basecase 경로에 DB `basecase_*` 설정을 적용해 읽는다.

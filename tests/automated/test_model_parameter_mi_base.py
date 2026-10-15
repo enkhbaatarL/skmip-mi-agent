@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
@@ -62,12 +63,12 @@ def _file(
 def test_active_mi_base_selection_allows_zero_or_one_and_rejects_multiple() -> None:
     empty_repository = SimpleNamespace(fetch_active_candidates=list)
     one_repository = SimpleNamespace(
-        fetch_active_candidates=lambda: [{"case_id": 15, "last_run_id": "run-15"}],
+        fetch_active_candidates=lambda: [{"case_id": 15}],
     )
     duplicate_repository = SimpleNamespace(
         fetch_active_candidates=lambda: [
-            {"case_id": 16, "last_run_id": "run-16"},
-            {"case_id": 15, "last_run_id": "run-15"},
+            {"case_id": 16},
+            {"case_id": 15},
         ],
     )
 
@@ -77,24 +78,19 @@ def test_active_mi_base_selection_allows_zero_or_one_and_rejects_multiple() -> N
         MiBaseService._load_active_case_id(duplicate_repository)
 
 
-def test_mi_base_snapshot_uses_last_run_id_and_run_seq_for_linked_files() -> None:
+def test_mi_base_snapshot_uses_case_id_for_scnrcase_files() -> None:
     repository = Mock()
-    repository.fetch_by_case_id.return_value = {
-        "case_id": 15,
-        "last_run_id": "20260727_103605_7740",
-    }
-    repository.fetch_run_seq.return_value = 71
+    repository.fetch_by_case_id.return_value = {"case_id": 15}
     repository.fetch_linked_files.return_value = []
 
     snapshot = MiBaseService._load_snapshot(repository, case_id=15)
 
     assert snapshot.case_id == 15
-    assert snapshot.run_seq == 71
-    repository.fetch_run_seq.assert_called_once_with("20260727_103605_7740")
-    repository.fetch_linked_files.assert_called_once_with(case_id=15, run_seq=71)
+    repository.fetch_run_seq.assert_not_called()
+    repository.fetch_linked_files.assert_called_once_with(case_id=15)
 
 
-def test_linked_file_query_uses_case_id_and_latest_run_seq() -> None:
+def test_linked_file_query_uses_only_scnrcase_and_case_id() -> None:
     class EmptyRows:
         def mappings(self) -> EmptyRows:
             return self
@@ -106,29 +102,26 @@ def test_linked_file_query_uses_case_id_and_latest_run_seq() -> None:
     class FakeSession:
         def __init__(self) -> None:
             self.statement = ""
-            self.parameters: dict[str, int | None] = {}
+            self.parameters: dict[str, int] = {}
 
         def execute(
             self,
             statement: object,
-            parameters: dict[str, int | None],
+            parameters: dict[str, int],
         ) -> EmptyRows:
             self.statement = str(statement)
             self.parameters = parameters
             return EmptyRows()
 
     session = FakeSession()
-    files = MiBaseRepository(session=session).fetch_linked_files(
-        case_id=15,
-        run_seq=71,
-    )
+    files = MiBaseRepository(session=session).fetch_linked_files(case_id=15)
 
     assert files == []
-    assert session.parameters == {"case_id": 15, "run_seq": 71}
+    assert session.parameters == {"case_id": 15}
     assert "file_rel_obj_spt_cd = 'SCNRCASE'" in session.statement
     assert "file_rel_obj_dstg_no = :case_id" in session.statement
-    assert "'SCNRCASEH', 'SCNRCASEHI', 'SCNRCASEHTF'" in session.statement
-    assert "file_rel_obj_dstg_no = :run_seq" in session.statement
+    assert "SCNRCASEH" not in session.statement
+    assert "run_seq" not in session.statement
 
 
 class _FakeStorageClient:
@@ -272,7 +265,6 @@ def _complete_snapshot(
     bucket: str,
     objects: dict[tuple[str, str], bytes],
     case_id: int = 15,
-    run_seq: int = 71,
 ) -> MiBaseSnapshot:
     files = [
         _file(
@@ -287,8 +279,6 @@ def _complete_snapshot(
     ]
     return MiBaseSnapshot(
         case_id=case_id,
-        last_run_id=f"run-{run_seq}",
-        run_seq=run_seq,
         files=files,
     )
 
@@ -394,8 +384,6 @@ def test_only_scnrcase_workbooks_are_downloaded_for_calculation(
     client = _FakeStorageClient(objects)
     snapshot = MiBaseSnapshot(
         case_id=15,
-        last_run_id="run-15",
-        run_seq=71,
         files=[
             _file(
                 file_no=1,
@@ -420,13 +408,6 @@ def test_only_scnrcase_workbooks_are_downloaded_for_calculation(
                 name="(Base) Trade Model_Input.xlsm",
                 path=f"https://storage.example/{bucket}/SCNRCASE/trade.xlsm",
                 size=len(objects[(bucket, "SCNRCASE/trade.xlsm")]),
-            ),
-            _file(
-                file_no=4,
-                relation_code="SCNRCASEH",
-                destination_no=71,
-                name=None,
-                path=None,
             ),
         ],
     )
@@ -473,13 +454,7 @@ def test_only_scnrcase_workbooks_are_downloaded_for_calculation(
 
     assert selection.source == "mi_base"
     assert selection.case_id == 15
-    assert selection.run_seq == 71
-    assert selection.linked_file_counts == {
-        "SCNRCASE": 3,
-        "SCNRCASEH": 1,
-        "SCNRCASEHI": 0,
-        "SCNRCASEHTF": 0,
-    }
+    assert selection.linked_file_counts == {"SCNRCASE": 3}
     assert client.download_calls == [
         (bucket, "SCNRCASE/demand.xlsm"),
         (bucket, "SCNRCASE/supply.xlsm"),
@@ -487,6 +462,12 @@ def test_only_scnrcase_workbooks_are_downloaded_for_calculation(
     ]
     assert client.closed is True
     assert (selection.basecase_dir / "Demand Model_Input.xlsm").is_file()
+    marker = json.loads(
+        (selection.workbook_resource_root / ".complete.json").read_text(encoding="utf-8"),
+    )
+    assert marker["schema_version"] == 2
+    assert "last_run_id" not in marker
+    assert "run_seq" not in marker
 
 
 def test_incomplete_scnrcase_workbooks_fail_without_cross_case_fallback(
@@ -648,7 +629,6 @@ def test_object_storage_outage_uses_only_verified_same_file_cache(
     assert initial.source == "mi_base"
     assert cached.source == "verified_cache"
     assert cached.case_id == snapshot.case_id
-    assert cached.run_seq == snapshot.run_seq
     assert cached.workbook_resource_root == initial.workbook_resource_root
     assert cached.fallback_reason is not None
     assert unavailable_client.download_calls == []
@@ -695,7 +675,6 @@ def test_object_storage_outage_uses_configured_fallback_only_when_explicitly_ena
 
     assert selection.source == "configured_fallback"
     assert selection.case_id == snapshot.case_id
-    assert selection.run_seq == snapshot.run_seq
     assert selection.basecase_dir == configured_paths.basecase_dir
     assert selection.workbook_resource_root == PACKAGE_RESOURCE_DIR
     assert selection.fallback_reason is not None
@@ -824,15 +803,18 @@ def test_configured_fallback_is_not_used_after_current_remote_identity_is_observ
     assert client.download_calls == [(bucket, "SCNRCASE/demand.xlsm")]
 
 
-def test_verified_cache_rejects_different_run_identity(tmp_path: Path) -> None:
+def test_verified_cache_rejects_different_scnrcase_file_identity(tmp_path: Path) -> None:
     bucket = "mi-bucket"
     objects = {
         (bucket, "SCNRCASE/demand.xlsm"): b"demand-current-base",
         (bucket, "SCNRCASE/supply.xlsm"): b"supply-current-base",
         (bucket, "SCNRCASE/trade.xlsm"): b"trade-current-base",
     }
-    cached_snapshot = _complete_snapshot(bucket=bucket, objects=objects, run_seq=71)
-    current_snapshot = _complete_snapshot(bucket=bucket, objects=objects, run_seq=72)
+    cached_snapshot = _complete_snapshot(bucket=bucket, objects=objects)
+    changed_demand = cached_snapshot.files[0].model_copy(update={"file_no": 999})
+    current_snapshot = cached_snapshot.model_copy(
+        update={"files": [changed_demand, *cached_snapshot.files[1:]]},
+    )
     configured_paths = _configured_resource_paths()
     storage = _storage_config(tmp_path, bucket=bucket)
     settings = _settings(storage)

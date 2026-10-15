@@ -21,8 +21,6 @@ class MiBaseFilePayload(ApiModel):
 
 class MiBaseSnapshot(ApiModel):
     case_id: int
-    last_run_id: str | None = None
-    run_seq: int | None = None
     files: list[MiBaseFilePayload] = Field(default_factory=list)
 
     def files_for(self, relation_code: str) -> tuple[MiBaseFilePayload, ...]:
