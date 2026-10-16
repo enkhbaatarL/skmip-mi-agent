@@ -96,14 +96,13 @@ V4_STRATEGY = "multi_event_model_lever_dimensions"
 EVIDENCE_SCHEMA_VERSION = 6
 UNCOVERED_POLICY_VERSION = "uncovered-only-v1"
 RELEASE_REPLAY_POLICY_VERSION = "release-replay-v1"
-BASELINE_CAPABILITY_RELEASE = "extend16-v8"
-EXPECTED_V4_0_CATALOG_CHECKSUM = "416017351f2b9539370963a3ca413914876da55a1db3f41e3dacd34bd466c763"
-EXPECTED_V4_1_CATALOG_CHECKSUM = "7f4ef0b7aa60efb550b9175654fd82350f0c293debf880a9180e7e935db54d69"
-EXPECTED_NEW_BC_V8_CONTRACT_SHA256 = "686640c7a47b215112997d7e34483ccdd9c01672be8e13a077e75e0afe0486a7"
-EXPECTED_EXTEND16_V8_CONTRACT_SHA256 = "cfc4971841a290ccf87251630f9f5c2d2a99062464d5b1e16db41ce22317f0eb"
-EXPECTED_RESOURCE_SEMANTIC_SCHEMA_HASH = "a1bbd691bcc1f22d336e83ea5dc0f30f0cc13f7c4cb3b4100bf96292b17ad4a2"
+BASELINE_CAPABILITY_RELEASE = "extend17-v10"
+EXPECTED_V4_1_CATALOG_CHECKSUM = "467749ea59c3af7e875669be23da00c0fd8ef7c226256f9518a5945e36e4d7c4"
+EXPECTED_NEW_BC_V10_CONTRACT_SHA256 = "c7005dcbd20d7ae32f27c903c07b5a334552955d23280dfdde9d2737e7a0d778"
+EXPECTED_EXTEND17_V10_CONTRACT_SHA256 = "269fda833216a29fe52555e87be7f58d40ad514a97c6e0a78fa43dad170f78c4"
+EXPECTED_RESOURCE_SEMANTIC_SCHEMA_HASH = "3644a4c69d903a793bf7247b278eef678ec4945dcbeb53858ee0ee9dba52cd41"
 EXPECTED_PACKAGED_RESOURCE_FINGERPRINT = "b1686b6308e8ba094277417bb79bfd85bfe05bb8013c20ed20545b9b2f9c1a44"
-EXPECTED_WORKBOOK_PARAMETER_NAMES = frozenset(
+EXPECTED_V10_WORKBOOK_PARAMETER_NAMES = frozenset(
     {
         "GDP",
         "PMI",
@@ -121,36 +120,30 @@ EXPECTED_WORKBOOK_PARAMETER_NAMES = frozenset(
         "ShippingCost",
         "RegionalProductionAdjustment",
         "ShippingFuelCost",
-        "CanalToll",
+        "Suez Canal Cost",
+        "Panama Canal Cost",
     },
 )
-EXPECTED_EXTEND16_ALLOWLIST = frozenset(
-    EXPECTED_WORKBOOK_PARAMETER_NAMES - {"User-Adjusted Gas Demand"},
+EXPECTED_V6_CAPABILITY_NAMES = frozenset(
+    EXPECTED_V10_WORKBOOK_PARAMETER_NAMES - {"User-Adjusted Gas Demand"},
 )
-RUNTIME_PROPOSAL_CAPABILITY_NAMES = frozenset(load_proposal_capability_contract().by_name)
+EXPECTED_EXTEND17_ALLOWLIST = EXPECTED_V6_CAPABILITY_NAMES
+_PROPOSAL_CAPABILITY_CONTRACT = load_proposal_capability_contract()
+RUNTIME_PROPOSAL_CAPABILITY_NAMES = frozenset(
+    item.parameter_name
+    for item in _PROPOSAL_CAPABILITY_CONTRACT.parameters_for("v4.1")
+)
 CAPABILITY_RELEASES: dict[str, dict[str, Any]] = {
     BASELINE_CAPABILITY_RELEASE: {
         "catalog_version": "v4.1",
         "catalog_checksum": EXPECTED_V4_1_CATALOG_CHECKSUM,
-        "runtime_allowlist": EXPECTED_EXTEND16_ALLOWLIST,
-        "proposal_capability_release_id": "extend16-v8",
-        "proposal_capability_sha256": EXPECTED_EXTEND16_V8_CONTRACT_SHA256,
-        "workbook_parameter_names": EXPECTED_WORKBOOK_PARAMETER_NAMES,
-        "resource_release_id": "new-bc-v8",
-        "workbook_contract_sha256": EXPECTED_NEW_BC_V8_CONTRACT_SHA256,
-        "resource_semantic_schema_hash": EXPECTED_RESOURCE_SEMANTIC_SCHEMA_HASH,
-        "effective_resource_fingerprint": EXPECTED_PACKAGED_RESOURCE_FINGERPRINT,
-        "uncovered_policy_version": UNCOVERED_POLICY_VERSION,
-    },
-    "extend16-v8-v4.0-compat": {
-        "catalog_version": "v4.0",
-        "catalog_checksum": EXPECTED_V4_0_CATALOG_CHECKSUM,
-        "runtime_allowlist": EXPECTED_EXTEND16_ALLOWLIST,
-        "proposal_capability_release_id": "extend16-v8",
-        "proposal_capability_sha256": EXPECTED_EXTEND16_V8_CONTRACT_SHA256,
-        "workbook_parameter_names": EXPECTED_WORKBOOK_PARAMETER_NAMES,
-        "resource_release_id": "new-bc-v8",
-        "workbook_contract_sha256": EXPECTED_NEW_BC_V8_CONTRACT_SHA256,
+        "runtime_allowlist": EXPECTED_EXTEND17_ALLOWLIST,
+        "proposal_capability_parameter_names": EXPECTED_V6_CAPABILITY_NAMES,
+        "proposal_capability_release_id": "extend17-v10",
+        "proposal_capability_sha256": EXPECTED_EXTEND17_V10_CONTRACT_SHA256,
+        "workbook_parameter_names": EXPECTED_V10_WORKBOOK_PARAMETER_NAMES,
+        "resource_release_id": "new-bc-v10",
+        "workbook_contract_sha256": EXPECTED_NEW_BC_V10_CONTRACT_SHA256,
         "resource_semantic_schema_hash": EXPECTED_RESOURCE_SEMANTIC_SCHEMA_HASH,
         "effective_resource_fingerprint": EXPECTED_PACKAGED_RESOURCE_FINGERPRINT,
         "uncovered_policy_version": UNCOVERED_POLICY_VERSION,
@@ -642,10 +635,17 @@ def _release_contract_errors(
             f"expected={PROPOSAL_FLOW_RELEASE!r}, "
             f"actual={resource_manifest.get('proposal_flow_release')!r}",
         )
-    if expected_allowlist != RUNTIME_PROPOSAL_CAPABILITY_NAMES:
+    catalog_version = str(release["catalog_version"])
+    runtime_capability_names = frozenset(
+        item.parameter_name
+        for item in _PROPOSAL_CAPABILITY_CONTRACT.parameters_for(catalog_version)
+    )
+    if catalog_version == "v4.1":
+        runtime_capability_names = RUNTIME_PROPOSAL_CAPABILITY_NAMES
+    if expected_allowlist != runtime_capability_names:
         errors.append(
             "runtime capability drifted from the approved capability release: "
-            f"expected={sorted(expected_allowlist)}, actual={sorted(RUNTIME_PROPOSAL_CAPABILITY_NAMES)}",
+            f"expected={sorted(expected_allowlist)}, actual={sorted(runtime_capability_names)}",
         )
     if resource_manifest.get("release_id") != release["resource_release_id"]:
         errors.append(
@@ -663,7 +663,10 @@ def _release_contract_errors(
         errors.append("proposal capability release ID does not match the approved capability release")
     if resource_manifest.get("proposal_capability_sha256") != release["proposal_capability_sha256"]:
         errors.append("proposal capability content drifted from the approved capability release")
-    if set(resource_manifest.get("proposal_capability_parameter_names") or ()) != expected_allowlist:
+    expected_capability_names = set(
+        release.get("proposal_capability_parameter_names", expected_allowlist),
+    )
+    if set(resource_manifest.get("proposal_capability_parameter_names") or ()) != expected_capability_names:
         errors.append("proposal capability parameters do not match the approved capability release")
     expected_contract_sha256 = str(release["workbook_contract_sha256"])
     if resource_manifest.get("contract_sha256") != expected_contract_sha256:
@@ -717,16 +720,35 @@ def _release_contract_errors(
 async def _evaluate_scenario_with_frozen_context(
     scenario_id: int,
     scenario_context: Mapping[str, Any],
+    *,
+    allowed_parameter_names: frozenset[str] = EXPECTED_EXTEND17_ALLOWLIST,
 ) -> dict[str, Any]:
     return await _evaluate_scenario(
         scenario_id,
         expected_scenario_context=scenario_context,
         require_pre_persistence_quality_pass=True,
-        allowed_parameter_names=EXPECTED_EXTEND16_ALLOWLIST,
+        allowed_parameter_names=allowed_parameter_names,
     )
 
 
-def _runtime_dependencies() -> RunnerDependencies:
+def _runtime_dependencies(
+    capability_release: str = BASELINE_CAPABILITY_RELEASE,
+) -> RunnerDependencies:
+    allowed_parameter_names = frozenset(
+        str(item)
+        for item in _capability_contract(capability_release)["runtime_allowlist"]
+    )
+
+    async def evaluate_scenario_with_context(
+        scenario_id: int,
+        scenario_context: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        return await _evaluate_scenario_with_frozen_context(
+            scenario_id,
+            scenario_context,
+            allowed_parameter_names=allowed_parameter_names,
+        )
+
     service = ModelParameterService()
     return RunnerDependencies(
         load_context=service.load_context,
@@ -738,7 +760,7 @@ def _runtime_dependencies() -> RunnerDependencies:
         build_quality_evidence=build_v4_scenario_evidence,
         prepare_resources=_ensure_model_parameter_test_resource_runtime,
         schema_preflight=_schema_preflight,
-        evaluate_scenario_with_context=_evaluate_scenario_with_frozen_context,
+        evaluate_scenario_with_context=evaluate_scenario_with_context,
         require_registered_resources=True,
     )
 
@@ -900,7 +922,7 @@ def _preflight_scenario(
             "scenario_context_fingerprint": scenario_context_fingerprint,
             "quality": quality_payload,
             "capability_release": capability_release,
-            "runtime_allowlist": sorted(RUNTIME_PROPOSAL_CAPABILITY_NAMES),
+            "runtime_allowlist": sorted(release["runtime_allowlist"]),
             "resource": dict(resource_manifest),
             "policy_version": UNCOVERED_POLICY_VERSION,
         }
@@ -1721,7 +1743,7 @@ async def run_campaign(
     dependencies: RunnerDependencies | None = None,
 ) -> dict[str, Any]:
     _validate_options(options)
-    dependencies = dependencies or _runtime_dependencies()
+    dependencies = dependencies or _runtime_dependencies(options.capability_release)
     started_at = datetime.now(UTC)
     resource_manifest = _resource_manifest()
     mi_base_fallback_policy = get_settings().model_parameter_mi_base_fallback.model_dump(mode="json")

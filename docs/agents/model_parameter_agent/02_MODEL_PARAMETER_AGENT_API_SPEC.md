@@ -16,13 +16,14 @@
 
 경로의 두 ID는 실제 숫자로 바꾼다. 배포 환경에 따라 경로 앞에 별도 공통 prefix가 붙을 수 있다. `userId`는 선택 항목이며, 제안 API는 body 자체를 생략해도 된다.
 
-외부개발 DB v4.1 기준선은 master 24행·활성 16개, Agent proposal capability 16개
-(LUT-backed 10개 + Basecase-only 6개),
-v1/v3 raw mapping-reachable 전역 합집합 10개와 v4 effective executable-binding 전역 합집합 16개다.
-v4.1 active Lever는 21개이고 binding occurrence는 56개(conditional 37개)다. 이 수치는 요청 하나의
-후보 수가 아니다. v1/v3는 기존 5종 이름 allow-list를 유지하고, v4 extend16은 DB ID/name/target과
-`model-parameter-proposal-capabilities-v4`가 일치하는 ID
-`{4, 6, 7, 8, 11, 12, 13, 14, 15, 16, 17, 18, 20, 22, 23, 24}`을 허용한다. 실제 응답의 `proposalParameters`에는 요청별 raw matching, version별 capability gate,
+현재 v4.1 기준선은 master 26행·활성 17개, 신규 Agent proposal capability 17개
+(LUT-backed 10개 + Basecase-only 7개),
+v1/v3 raw mapping-reachable 전역 합집합 10개와 v4.1 effective executable-binding 전역 합집합 17개다.
+v4.1 active Lever는 21개이고 binding occurrence는 56개(conditional 41개)다. 이 수치는 요청 하나의
+후보 수가 아니다. v1/v3는 기존 5종 이름 allow-list를 유지하고, v4.1 `extend17-v10`은 DB ID/name/target과
+`model-parameter-proposal-capabilities-v6`가 일치하는 ID
+`{4, 6, 7, 8, 11, 12, 13, 14, 15, 16, 17, 18, 20, 22, 23, 25, 26}`을 허용한다. ID 24
+`CanalToll`은 비활성이며 v4/v4.0 proposal 호환 경로는 제공하지 않는다. 실제 응답의 `proposalParameters`에는 요청별 raw matching, version별 capability gate,
 exact Basecase/LUT slot을 모두 통과한 하위 집합만 나타난다. endpoint, request body와
 proposal/confirmation의 파라미터 JSON shape는 유지한다. proposal 결과에는 처리 결과를 명확히 구분하기 위한
 `status`, `resultCode`, `resultMessage`, `resultStage`가 추가된다.
@@ -43,9 +44,9 @@ v3/v4에서도 endpoint와 기존 optional `eventId` 필드는 유지된다. 개
 GET /model-parameters/logical-table-catalog
 ```
 
-검토 완료된 `20261010-v3-final` 카탈로그를 화면용
+검토 완료된 `20261016-v4-canal-split` 카탈로그를 화면용
 `modelFile → parameterName → tables[].displayName` 구조로 반환한다. 전체 정본은 정식 논리 테이블
-199행(고유 193개)이며, 그중 `modelParamId`로 master에 연결된 22개 파라미터·54개 관계를 이 계층에 담는다.
+199행(고유 193개)이며, 그중 `modelParamId`로 master에 연결된 23개 파라미터·54개 관계를 이 계층에 담는다.
 연결되지 않은 정식 테이블 145행도 체크인 canonical에는 보존하지만 파라미터 계층에는 임의 배치하지 않는다.
 
 ```json
@@ -53,12 +54,12 @@ GET /model-parameters/logical-table-catalog
   "status": "success",
   "message": "model parameter logical table catalog retrieved",
   "data": {
-    "catalogVersion": "20261010-v3-final",
+    "catalogVersion": "20261016-v4-canal-split",
     "hierarchy": ["modelFile", "parameterName", "tables.displayName"],
     "entryCount": 199,
     "logicalTableCount": 193,
     "mappedEntryCount": 54,
-    "parameterCount": 22,
+    "parameterCount": 23,
     "files": [{
       "modelFile": "Demand",
       "parameters": [{
@@ -82,9 +83,9 @@ GET /model-parameters/logical-table-catalog
 ```
 
 화면 라벨은 반드시 `displayName`을 사용한다. `modelTableKey`의 `table1`, `table2` 등은 기존
-proposal/confirmation 저장·검증용 machine key이며, 화면에 표시할 정식 명칭이 아니다. 하나의 machine key가
-여러 정식 논리 테이블을 가리킬 수 있다. 예를 들어 `CanalToll`의 Suez/Panama 두 표는 모두 `table4`를
-사용한다. 기본 화면은 `useYn=Y`인 파라미터와 `uiVisible=true`인 표를 사용하고, 비활성·숨김 관계는 관리·검증
+proposal/confirmation 저장·검증용 machine key이며, 화면에 표시할 정식 명칭이 아니다. Suez와 Panama는
+각각 `Suez Canal Cost / table4`, `Panama Canal Cost / table5`인 별도 Parameter·표다. 기본 화면은
+`useYn=Y`인 파라미터와 `uiVisible=true`인 표를 사용하고, 비활성·숨김 관계는 관리·검증
 용도로만 유지한다. `modelParamId`가 유일한 master join key이며 `parameterCode` 문자열로 join하지 않는다.
 
 ## 1. 동기 제안 API
@@ -133,7 +134,7 @@ POST /model-parameters/scenarios/100/proposals/sync
 
 `proposalParameters`가 사용자가 검토할 제안 목록이다. `basecaseValue`는 현재 모델 값, `lutValue`는 참고값, `proposedValue`는 AI 제안값이다. GDP는 비율 단위이므로 이 샘플의 `0.019`는 `1.9%`, `0.0185`는 `1.85%`를 뜻한다.
 
-Proposal Flow v4.1.7부터 공개 rationale은 간결한 존댓말의 업무 설명만 담는다. 내부 진단에 필요한 evidence enum,
+Proposal Flow v4.1.9도 v4.1.7에서 확정한 간결한 존댓말의 공개 rationale 계약을 유지한다. 내부 진단에 필요한 evidence enum,
 variation policy release/mode, fallback 여부와 candidate/slot 식별자는 trace에 유지하되 이 문자열에는 노출하지 않는다.
 slot rationale은 적용 대상, 시나리오 영향, 현재값→제안값, 산정 근거와 계산, 주요 가정, 사용자 확인사항을
 명시한다. API field와 DB JSON shape는 이전 release와 같다.

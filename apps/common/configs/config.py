@@ -276,7 +276,7 @@ class Settings(BaseSettings):
     mi_mcp_timeout_sec: float = Field(default=60.0, gt=0)
 
     # Model parameter proposal
-    model_parameter_proposal_flow_release: str = Field(default="v4.1.7", min_length=1)
+    model_parameter_proposal_flow_release: str = Field(default="v4.1.9", min_length=1)
     model_parameter_transient_retry_max_attempts: int = Field(default=2, ge=1, le=5)
     model_parameter_transient_retry_base_delay_seconds: float = Field(default=0.5, ge=0.0, le=30.0)
     model_parameter_transient_retry_max_jitter_seconds: float = Field(default=0.25, ge=0.0, le=30.0)

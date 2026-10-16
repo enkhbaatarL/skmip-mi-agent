@@ -13,7 +13,7 @@ from apps.agents.model_parameter_agent.constants import (
     PROPOSAL_SCOPE_EXCLUDED_REASON_CODE,
 )
 from apps.agents.model_parameter_agent.utils.proposal_capabilities import (
-    EXPECTED_EXTEND16_RELEASE_ID,
+    EXPECTED_EXTEND17_RELEASE_ID,
     validate_v4_candidate_capability,
 )
 from apps.agents.model_parameter_agent.utils.runtime_cache import (
@@ -832,6 +832,12 @@ def _match_v4_parameter_candidates(  # noqa: C901
     candidates: list[dict[str, Any]] = []
     non_inputs: list[dict[str, Any]] = []
     seen_candidate_keys: set[str] = set()
+    impact_catalog_version = _clean_text(
+        scenario_context.get("impact_catalog_version"),
+    )
+    impact_catalog_checksum = _clean_text(
+        scenario_context.get("impact_catalog_checksum"),
+    )
     for lineage in lineage_items:
         for lever_state in lineage.get("lever_states") or []:
             if not isinstance(lever_state, dict):
@@ -846,6 +852,12 @@ def _match_v4_parameter_candidates(  # noqa: C901
                 lever_state,
                 mapping_method="excluded",
                 mapping_comment=None,
+            )
+            common_payload.update(
+                {
+                    "impact_catalog_version": impact_catalog_version,
+                    "impact_catalog_checksum": impact_catalog_checksum,
+                },
             )
             if direction == "unchanged":
                 non_inputs.append(
@@ -932,6 +944,12 @@ def _match_v4_parameter_candidates(  # noqa: C901
                     mapping_comment=_clean_text(
                         binding.get("applicability"),
                     ),
+                )
+                source_payload.update(
+                    {
+                        "impact_catalog_version": impact_catalog_version,
+                        "impact_catalog_checksum": impact_catalog_checksum,
+                    },
                 )
                 binding_provenance = {
                     "lever_code": lever_state.get("lever_code"),
@@ -1687,7 +1705,7 @@ def partition_proposal_parameter_candidates(
                 allowed.append(
                     {
                         **candidate,
-                        "proposal_capability_release_id": EXPECTED_EXTEND16_RELEASE_ID,
+                        "proposal_capability_release_id": EXPECTED_EXTEND17_RELEASE_ID,
                         "proposal_reference_mode": capability.reference_mode,
                         "proposal_exact_axes": list(capability.exact_axes),
                         "proposal_evidence_policy": capability.evidence_policy,
