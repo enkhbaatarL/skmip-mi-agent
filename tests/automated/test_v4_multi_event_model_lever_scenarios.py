@@ -17,6 +17,7 @@ from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.api_sch
 from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.state import (
     V4MultiEventGenerationState,
 )
+from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.v4_budget import scenario_count_range
 from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.v4_enums import (
     StateDirection,
 )
@@ -55,6 +56,10 @@ from apps.agents.scenario_group_agent.prompts.model_lever_scenario_generation im
     event_open_question_budgets,
     is_v4_unconfirmed_statement,
     summarize_parameter_slots,
+)
+from apps.agents.scenario_group_agent.utils.scenario_similarity import (
+    ScenarioSimilarityInput,
+    find_similar_scenario_pairs,
 )
 from apps.agents.scenario_group_agent.utils.scenario_group_summary import (
     EVENT_SUMMARY_PREVIEW_LENGTH,
@@ -2382,6 +2387,7 @@ def test_prepare_v4_fixes_analysis_as_of_for_the_run() -> None:
             "get_settings",
             return_value=SimpleNamespace(
                 scenario_group_v4_impact_catalog_version="v4.1",
+                scenario_synthesis_policy="distinct_driver",
             ),
         ),
         patch.object(v4_flow_module.EventService, "load_events", return_value=events),
@@ -2405,6 +2411,8 @@ def test_prepare_v4_fixes_analysis_as_of_for_the_run() -> None:
 
     assert prepared["impact_parameter_axes"] == {"HurricaneIntensity": "slot=B:Year(YYYY, 2026~2030), C:Month(1~12)"}
     assert prepared["analysis_as_of"] == "2026-08-07"
+    assert prepared["scenario_synthesis_policy"] == "distinct_driver"
+    assert prepared["scenario_count_range"] == (3, 5)
     assert [event.mi_event_id for event in prepared["events"]] == [202, 101]
     load_active_catalog.assert_called_once_with(catalog_version="v4.1")
 
@@ -3080,3 +3088,328 @@ def test_v4_scenario_discards_duplicate_related_markets_after_first() -> None:
     assert synthesis.scenarios[0].related_markets == [
         RelatedMarket(market="TTF", rationale="첫 번째 TTF 근거를 유지한다."),
     ]
+
+
+# --- distinct_driver Scenario 합성 정책 ---------------------------------------------------------
+
+# _dimensions()의 값별 pressureContribution 합산:
+# cold_wave_intensity high=+1 low=-1, liquefaction_recovery delayed=+1 fast=-1, risk_premium high=+1 low=-1
+
+
+def _policy_synthesis(
+    scenarios: list[tuple[str, dict[str, str], float]],
+    excluded: list[tuple[str, dict[str, str]]] | None = None,
+) -> V4ScenarioSynthesisResult:
+    return V4ScenarioSynthesisResult.model_validate(
+        {
+            "groupDescription": "공통 영향 경로와 잔여 불확실성을 결합한 JKM 시나리오",
+            "scenarios": [
+                {
+                    "title": title,
+                    "narrative": f"{title} 전개",
+                    "dimensionValues": values,
+                    "commonImpactPathIds": ["path_101_demand", "path_202_supply"],
+                    "appliedInteractionIds": [],
+                    # distinct_driver는 서버가 Base 대비로 band를 다시 계산하므로 LLM band는 결과에 쓰지 않는다.
+                    "pressureBand": "balanced",
+                    "pressureBreakdown": {
+                        "commonImpact": "공통 영향",
+                        "valueDelta": "선택값 효과",
+                        "interactionEffect": "적용된 Event Interaction이 없다.",
+                    },
+                    "probabilityScore": probability,
+                    "explanation": f"{title}의 JKM 압력 근거를 자연어로 설명한다.",
+                }
+                for title, values, probability in scenarios
+            ],
+            "excludedScenarios": [
+                {
+                    "pressureBand": "balanced",
+                    "reasonCode": reason_code,
+                    "reason": "검토 후 제외",
+                    "dimensionValues": values,
+                }
+                for reason_code, values in (excluded or [])
+            ],
+        },
+    )
+
+
+def _combo(cold: str, liquefaction: str, risk: str) -> dict[str, str]:
+    return {"cold_wave_intensity": cold, "liquefaction_recovery": liquefaction, "risk_premium": risk}
+
+
+def _finalize_policy(
+    synthesis: V4ScenarioSynthesisResult,
+    *,
+    count_range: tuple[int, int] = (3, 5),
+) -> tuple[V4GenerationResult, object]:
+    return finalize_v4_generation_result(
+        synthesis,
+        group_title="테스트 그룹",
+        group_summary=_group_summary(),
+        impact_analysis=_analysis(),
+        dimension_design=_dimensions(),
+        impact_levers=_catalog(),
+        policy="distinct_driver",
+        scenario_count_range=count_range,
+    )
+
+
+@pytest.mark.parametrize(
+    ("event_count", "band_unique_range", "distinct_driver_range"),
+    [(1, (3, 5), (3, 5)), (2, (3, 5), (3, 5)), (3, (3, 5), (4, 6)), (4, (3, 5), (5, 7)), (5, (3, 5), (6, 8))],
+)
+def test_scenario_count_range_by_policy_and_event_count(
+    event_count: int,
+    band_unique_range: tuple[int, int],
+    distinct_driver_range: tuple[int, int],
+) -> None:
+    assert scenario_count_range(event_count, policy="band_unique") == band_unique_range
+    assert scenario_count_range(event_count, policy="distinct_driver") == distinct_driver_range
+
+
+def test_distinct_driver_allows_shared_bands_and_rebases_bands_on_the_baseline() -> None:
+    synthesis = _policy_synthesis(
+        [
+            ("기준", _combo("high", "fast", "low"), 40),  # -1, Base
+            ("수요 주도 상방", _combo("high", "delayed", "low"), 25),  # +1 → delta +2
+            ("공급 주도 상방", _combo("low", "delayed", "high"), 20),  # +1 → delta +2
+            ("전면 완화", _combo("low", "fast", "low"), 15),  # -3 → delta -2
+        ],
+        excluded=[("INSUFFICIENT_EVIDENCE", _combo("low", "delayed", "low"))],  # -1 → delta 0
+    )
+
+    finalized, _coverage = _finalize_policy(synthesis)
+
+    by_title = {scenario.title: scenario for scenario in finalized.scenarios}
+    assert by_title["기준"].baseline_yn is True
+    assert by_title["기준"].pressure_band == "balanced"
+    assert by_title["수요 주도 상방"].pressure_band == "strong_bullish"
+    assert by_title["공급 주도 상방"].pressure_band == "strong_bullish"
+    assert by_title["전면 완화"].pressure_band == "strong_bearish"
+    assert by_title["전면 완화"].scenario_role == "floor"
+    assert by_title["수요 주도 상방"].scenario_role == "ceiling"
+    assert [scenario.title for scenario in finalized.scenarios][-1] == "전면 완화"
+    assert finalized.excluded_scenarios[0].pressure_band == "balanced"
+    assert finalized.scenario_synthesis_policy == "distinct_driver"
+    assert finalized.scenario_count_range is not None
+    assert (finalized.scenario_count_range.target_min, finalized.scenario_count_range.max) == (3, 5)
+    assert finalized.scenario_count_shortfall is None
+    assert finalized.direction_coverage_gaps == []
+
+
+def test_distinct_driver_retries_when_a_reachable_direction_is_missing() -> None:
+    synthesis = _policy_synthesis(
+        [
+            ("기준", _combo("high", "fast", "low"), 50),  # -1, Base
+            ("전면 완화", _combo("low", "fast", "low"), 30),  # -3
+            ("공급 회복 지연 상쇄", _combo("low", "delayed", "low"), 20),  # -1
+        ],
+    )
+
+    with pytest.raises(ValueError, match="상방 Scenario가 없습니다"):
+        _finalize_policy(synthesis)
+
+
+def test_distinct_driver_records_an_unreachable_direction_as_a_gap() -> None:
+    synthesis = _policy_synthesis(
+        [
+            ("전면 경색", _combo("high", "delayed", "high"), 50),  # +3, 가능한 최대 합산인 Base
+            ("수요만 강세", _combo("high", "fast", "low"), 30),  # -1
+            ("전면 완화", _combo("low", "fast", "low"), 20),  # -3
+        ],
+    )
+
+    finalized, _coverage = _finalize_policy(synthesis)
+
+    assert finalized.direction_coverage_gaps == ["bullish"]
+    assert [scenario.pressure_band for scenario in finalized.scenarios] == [
+        "balanced",
+        "strong_bearish",
+        "strong_bearish",
+    ]
+
+
+def test_distinct_driver_trims_scenarios_over_the_maximum_and_keeps_both_directions() -> None:
+    synthesis = _policy_synthesis(
+        [
+            ("기준", _combo("high", "fast", "low"), 30),  # -1, Base
+            ("수요 주도 상방", _combo("high", "delayed", "low"), 15),  # delta +2
+            ("전면 경색", _combo("high", "delayed", "high"), 15),  # delta +4
+            ("공급 주도 상방", _combo("low", "delayed", "high"), 14),  # delta +2
+            ("수요 약세 상쇄", _combo("low", "delayed", "low"), 13),  # delta 0
+            ("전면 완화", _combo("low", "fast", "low"), 13),  # delta -2
+        ],
+    )
+
+    finalized, _coverage = _finalize_policy(synthesis, count_range=(3, 4))
+
+    titles = [scenario.title for scenario in finalized.scenarios]
+    assert len(titles) == 4
+    assert "전면 완화" in titles
+    assert {"수요 약세 상쇄", "공급 주도 상방"}.isdisjoint(titles)
+    assert [candidate.reason_code for candidate in finalized.excluded_scenarios] == [
+        "EXCEEDS_MAX_COUNT",
+        "EXCEEDS_MAX_COUNT",
+    ]
+    assert sum(scenario.probability_score for scenario in finalized.scenarios) == 100
+
+
+def test_distinct_driver_rejects_legacy_exclusion_reason_codes() -> None:
+    synthesis = _policy_synthesis(
+        [
+            ("기준", _combo("high", "fast", "low"), 40),
+            ("수요 주도 상방", _combo("high", "delayed", "low"), 35),
+            ("전면 완화", _combo("low", "fast", "low"), 25),
+        ],
+        excluded=[("NOT_INDEPENDENT", _combo("low", "delayed", "low"))],
+    )
+
+    with pytest.raises(ValueError, match="reasonCode must be one of"):
+        _finalize_policy(synthesis)
+
+
+def test_distinct_driver_records_shortfall_below_the_target_minimum() -> None:
+    synthesis = _policy_synthesis(
+        [
+            ("기준", _combo("high", "fast", "low"), 40),
+            ("수요 주도 상방", _combo("high", "delayed", "low"), 35),
+            ("전면 완화", _combo("low", "fast", "low"), 25),
+        ],
+        excluded=[
+            ("INSUFFICIENT_EVIDENCE", _combo("low", "delayed", "low")),
+            ("DUPLICATE", _combo("low", "delayed", "high")),
+        ],
+    )
+
+    finalized, _coverage = _finalize_policy(synthesis, count_range=(5, 7))
+
+    assert finalized.scenario_count_shortfall is not None
+    assert finalized.scenario_count_shortfall.target_min == 5
+    assert finalized.scenario_count_shortfall.actual == 3
+    assert finalized.scenario_count_shortfall.excluded_reason_counts == {"DUPLICATE": 1, "INSUFFICIENT_EVIDENCE": 1}
+
+
+def test_band_unique_finalizer_records_policy_and_similarity_without_changing_results() -> None:
+    finalized, _coverage = _finalized()
+
+    assert finalized.scenario_synthesis_policy == "band_unique"
+    assert finalized.scenario_count_range is not None
+    assert (finalized.scenario_count_range.target_min, finalized.scenario_count_range.max) == (3, 5)
+    assert finalized.scenario_count_shortfall is None
+
+
+def test_similar_scenario_pairs_detect_one_dimension_and_title_similarity() -> None:
+    pairs = find_similar_scenario_pairs(
+        [
+            ScenarioSimilarityInput("미국 공급 회복 우세", "bearish", {"d1": "a", "d2": "x"}),
+            ScenarioSimilarityInput("유럽 수요 둔화", "bearish", {"d1": "b", "d2": "x"}),
+            ScenarioSimilarityInput("미국 공급 회복 우세 지속", "bullish", {"d1": "c", "d2": "y"}),
+        ],
+    )
+
+    kinds_by_titles = {tuple(pair["scenario_titles"]): pair["kinds"] for pair in pairs}
+    assert kinds_by_titles == {
+        ("미국 공급 회복 우세", "유럽 수요 둔화"): ["same_band_one_dimension"],
+        ("미국 공급 회복 우세", "미국 공급 회복 우세 지속"): ["similar_title"],
+    }
+
+
+def test_v4_synthesis_prompt_keeps_band_unique_rules_and_switches_for_distinct_driver() -> None:
+    common = {
+        "analysis_as_of": "2026-10-16",
+        "events": [{"mi_event_id": 1}, {"mi_event_id": 2}, {"mi_event_id": 3}],
+        "impact_analysis": {},
+        "dimension_definitions": [],
+        "validation_warnings": [],
+    }
+
+    band_unique = build_v4_scenario_synthesis_user_prompt(**common)
+    distinct_driver = build_v4_scenario_synthesis_user_prompt(
+        **common,
+        policy="distinct_driver",
+        scenario_count_range=(4, 6),
+    )
+
+    assert "다섯 pressure band를 한 번씩" in band_unique
+    assert "NOT_INDEPENDENT" in band_unique
+    assert "다섯 pressure band를 한 번씩" not in distinct_driver
+    assert "선택한 이벤트 3개를 기준으로 Scenario 4~6개" in distinct_driver
+    assert "Base 대비 상대" in distinct_driver
+    for reason_code in ("INSUFFICIENT_EVIDENCE", "CONTRADICTION", "DUPLICATE", "LOW_PROBABILITY"):
+        assert reason_code in distinct_driver
+    assert "NOT_INDEPENDENT" not in distinct_driver
+
+
+def _policy_state(**overrides: object) -> V4MultiEventGenerationState:
+    return V4MultiEventGenerationState.model_validate(
+        {
+            "events": [
+                EventPayload(mi_event_id=101, event_type_l2_id=8, event_title_ko="동북아 한파"),
+                EventPayload(mi_event_id=202, event_type_l2_id=12, event_title_ko="미국 액화 차질"),
+            ],
+            "impact_levers": _catalog(),
+            "analysis_draft": _analysis(),
+            "dimension_draft": _dimensions(),
+            "scenario_synthesis_policy": "distinct_driver",
+            "scenario_count_range": (5, 7),
+            "scenario_attempt": 1,
+            **overrides,
+        },
+    )
+
+
+def _three_scenario_synthesis() -> V4ScenarioSynthesisResult:
+    return _policy_synthesis(
+        [
+            ("기준", _combo("high", "fast", "low"), 40),
+            ("수요 주도 상방", _combo("high", "delayed", "low"), 35),
+            ("전면 완화", _combo("low", "fast", "low"), 25),
+        ],
+    )
+
+
+def test_v4_shortfall_retries_synthesis_once_and_keeps_the_first_result() -> None:
+    update = v4_nodes.finalize_v4_scenarios(_policy_state(scenario_draft=_three_scenario_synthesis()))
+
+    assert update["finalized_result"] is None
+    assert update["scenario_retryable"] is True
+    assert update["scenario_error_code"] == ErrorCode.LLM_INVALID_RESPONSE_ERROR.name
+    assert "목표 최소 5개" in update["scenario_error"]
+    assert update["scenario_shortfall_retried"] is True
+    assert len(update["scenario_shortfall_fallback"].scenarios) == 3
+
+
+def test_v4_shortfall_is_accepted_after_the_single_retry() -> None:
+    first = v4_nodes.finalize_v4_scenarios(_policy_state(scenario_draft=_three_scenario_synthesis()))
+    state = _policy_state(
+        scenario_draft=_three_scenario_synthesis(),
+        scenario_attempt=2,
+        **{key: first[key] for key in ("scenario_shortfall_retried", "scenario_shortfall_fallback")},
+        scenario_shortfall_fallback_coverage=first["scenario_shortfall_fallback_coverage"],
+    )
+
+    update = v4_nodes.finalize_v4_scenarios(state)
+
+    assert update["scenario_error"] is None
+    assert update["finalized_result"].scenario_count_shortfall.actual == 3
+
+
+def test_v4_shortfall_fallback_is_used_when_the_retry_cannot_continue() -> None:
+    first = v4_nodes.finalize_v4_scenarios(_policy_state(scenario_draft=_three_scenario_synthesis()))
+    state = _policy_state(
+        scenario_draft=None,
+        scenario_attempt=3,
+        scenario_error="LLM 호출 실패",
+        scenario_retryable=True,
+        scenario_shortfall_retried=True,
+        scenario_shortfall_fallback=first["scenario_shortfall_fallback"],
+        scenario_shortfall_fallback_coverage=first["scenario_shortfall_fallback_coverage"],
+    )
+
+    update = v4_nodes.finalize_v4_scenarios(state)
+
+    assert update["scenario_error"] is None
+    assert update["finalized_result"] is first["scenario_shortfall_fallback"]
+    assert v4_nodes.route_after_v4_scenarios(state.model_copy(update=update)) == "generate_v4_group_title"

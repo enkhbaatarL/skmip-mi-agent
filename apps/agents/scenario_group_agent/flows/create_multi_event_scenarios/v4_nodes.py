@@ -54,6 +54,7 @@ from apps.agents.scenario_group_agent.prompts.model_lever_scenario_generation im
     V4_EVENT_IMPACT_SYSTEM_PROMPT,
     V4_GROUP_TITLE_SYSTEM_PROMPT,
     V4_INTERACTION_SYSTEM_PROMPT,
+    V4_SCENARIO_DISTINCT_DRIVER_SYSTEM_PROMPT,
     V4_SCENARIO_SYSTEM_PROMPT,
     build_v4_dimension_design_user_prompt,
     build_v4_event_fact_candidates,
@@ -519,7 +520,11 @@ class SynthesizeV4ScenariosNode(BaseNode):
             ]
             readable: V4ReadableScenarioSynthesisDraft = await invoke_stage_structured_output(
                 output_schema=V4ReadableScenarioSynthesisDraft,
-                system_prompt=V4_SCENARIO_SYSTEM_PROMPT,
+                system_prompt=(
+                    V4_SCENARIO_DISTINCT_DRIVER_SYSTEM_PROMPT
+                    if state.scenario_synthesis_policy == "distinct_driver"
+                    else V4_SCENARIO_SYSTEM_PROMPT
+                ),
                 user_prompt=build_v4_scenario_synthesis_user_prompt(
                     analysis_as_of=state.analysis_as_of,
                     events=[event.model_dump() for event in state.events],
@@ -532,6 +537,8 @@ class SynthesizeV4ScenariosNode(BaseNode):
                         state.scenario_error,
                         state.scenario_error_code,
                     ),
+                    policy=state.scenario_synthesis_policy,
+                    scenario_count_range=state.scenario_count_range,
                 ),
                 trace_context=runtime.context if runtime is not None else None,
                 stage="scenario_synthesis",
@@ -568,12 +575,34 @@ class SynthesizeV4ScenariosNode(BaseNode):
             }
 
 
+def _shortfall_fallback_update(state: V4MultiEventGenerationState) -> dict[str, Any] | None:
+    """개수 미달 재시도 전에 보관한 결과로 Scenario 단계를 마칠 상태 갱신값을 만든다."""
+    if state.scenario_shortfall_fallback is None or state.scenario_shortfall_fallback_coverage is None:
+        return None
+    logger.warning(
+        "[NODE][finalize_v4_scenarios] SHORTFALL_FALLBACK_USED | "
+        f"scenario_count={len(state.scenario_shortfall_fallback.scenarios)}"
+    )
+    return {
+        "finalized_result": state.scenario_shortfall_fallback,
+        "parameter_coverage": state.scenario_shortfall_fallback_coverage,
+        "scenario_error": None,
+        "scenario_error_code": None,
+        "scenario_retryable": False,
+    }
+
+
 def finalize_v4_scenarios(state: V4MultiEventGenerationState) -> dict[str, Any]:
-    if (
-        state.scenario_draft is None
-        or not isinstance(state.analysis_draft, V4EventImpactAnalysisResult)
-        or not isinstance(state.dimension_draft, V4DimensionDesignResult)
+    if not isinstance(state.analysis_draft, V4EventImpactAnalysisResult) or not isinstance(
+        state.dimension_draft,
+        V4DimensionDesignResult,
     ):
+        return {}
+    if state.scenario_draft is None:
+        # 합성 호출이 실패했다. 더 시도할 수 없으면 개수 미달 재시도 전 결과로 마친다.
+        can_retry = state.scenario_retryable and state.scenario_attempt < MAX_STAGE_ATTEMPTS
+        if not can_retry and (fallback_update := _shortfall_fallback_update(state)) is not None:
+            return fallback_update
         return {}
     try:
         finalized, coverage = finalize_v4_generation_result(
@@ -584,17 +613,15 @@ def finalize_v4_scenarios(state: V4MultiEventGenerationState) -> dict[str, Any]:
             impact_analysis=state.analysis_draft,
             dimension_design=state.dimension_draft,
             impact_levers=state.impact_levers,
+            policy=state.scenario_synthesis_policy,
+            scenario_count_range=state.scenario_count_range,
         )
-        return {
-            "finalized_result": finalized,
-            "parameter_coverage": coverage,
-            "scenario_error": None,
-            "scenario_error_code": None,
-            "scenario_retryable": False,
-        }
     except Exception as exc:
         detail, error_code, retryable = classify_llm_error(exc)
-        if retryable and state.scenario_attempt < MAX_STAGE_ATTEMPTS:
+        can_retry = retryable and state.scenario_attempt < MAX_STAGE_ATTEMPTS
+        if not can_retry and (fallback_update := _shortfall_fallback_update(state)) is not None:
+            return fallback_update
+        if can_retry:
             _emit_internal_retry(
                 phase="scenario_synthesis",
                 stage="scenario_synthesis",
@@ -608,6 +635,52 @@ def finalize_v4_scenarios(state: V4MultiEventGenerationState) -> dict[str, Any]:
             "scenario_error_code": error_code,
             "scenario_retryable": retryable,
         }
+
+    shortfall = finalized.scenario_count_shortfall
+    if (
+        shortfall is not None
+        and not state.scenario_shortfall_retried
+        and state.scenario_attempt < MAX_STAGE_ATTEMPTS
+    ):
+        # 목표 최소 개수에 못 미치면 합성을 한 번만 다시 시도한다. 재시도 결과가 더 적거나 실패하면
+        # 보관한 이 결과를 쓴다.
+        target_min, max_count = state.scenario_count_range
+        error_code = ErrorCode.LLM_INVALID_RESPONSE_ERROR.name
+        _emit_internal_retry(
+            phase="scenario_synthesis",
+            stage="scenario_synthesis",
+            attempt=state.scenario_attempt + 1,
+            validation_code=error_code,
+        )
+        return {
+            "finalized_result": None,
+            "parameter_coverage": None,
+            "scenario_error": (
+                f"생성된 Scenario {shortfall.actual}개가 목표 최소 {target_min}개보다 적습니다. "
+                f"Dimension 선택지로 근거가 있고 서로 구분되는 조합을 추가해 {target_min}~{max_count}개를 "
+                "만드십시오. 만들 수 없는 조합은 excluded에 INSUFFICIENT_EVIDENCE·CONTRADICTION·DUPLICATE 중 "
+                "사유와 함께 기록하십시오."
+            ),
+            "scenario_error_code": error_code,
+            "scenario_retryable": True,
+            "scenario_shortfall_retried": True,
+            "scenario_shortfall_fallback": finalized,
+            "scenario_shortfall_fallback_coverage": coverage,
+        }
+    fallback = state.scenario_shortfall_fallback
+    if (
+        fallback is not None
+        and state.scenario_shortfall_fallback_coverage is not None
+        and len(fallback.scenarios) > len(finalized.scenarios)
+    ):
+        return _shortfall_fallback_update(state) or {}
+    return {
+        "finalized_result": finalized,
+        "parameter_coverage": coverage,
+        "scenario_error": None,
+        "scenario_error_code": None,
+        "scenario_retryable": False,
+    }
 
 
 def route_after_v4_scenarios(state: V4MultiEventGenerationState) -> str:
@@ -739,6 +812,11 @@ def persist_v4_generation(state: V4MultiEventGenerationState) -> dict[str, Any]:
             }
             for scenario in finalized.scenarios
         ],
+        scenario_synthesis_policy=finalized.scenario_synthesis_policy,
+        scenario_count_range=finalized.scenario_count_range,
+        scenario_count_shortfall=finalized.scenario_count_shortfall,
+        direction_coverage_gaps=list(finalized.direction_coverage_gaps),
+        similar_scenario_pairs=finalized.similar_scenario_pairs,
     )
     scenarios = [
         {

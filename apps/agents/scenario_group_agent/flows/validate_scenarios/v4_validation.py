@@ -12,6 +12,10 @@ from typing import Any
 import unicodedata
 
 from apps.agents.scenario_group_agent.flows.add_dimension.nodes import filter_available_candidates
+from apps.agents.scenario_group_agent.utils.pressure_band import (
+    PRESSURE_CONTRIBUTION_SCORES,
+    relative_pressure_band,
+)
 from apps.agents.scenario_group_agent.utils.dimension_values import (
     DimensionValueCatalog,
     build_dimension_value_catalog,
@@ -22,6 +26,25 @@ from apps.persistence.scenario_group_operation.schema import ValidationCheckPayl
 
 V4_GENERATION_STRATEGY = "multi_event_model_lever_dimensions"
 PRESSURE_CONTRIBUTION_ORDER = {"bearish": 0, "balanced": 1, "bullish": 2}
+V4_MIN_SCENARIO_COUNT = 3
+V4_MAX_SCENARIO_COUNT = 8
+
+# Create가 제외한 조합을 사용자가 다시 넣었을 때 사유 코드별 안내. 옛 코드는 새 코드로 읽는다.
+_EXCLUDED_REASON_ALIASES = {"NOT_INDEPENDENT": "DUPLICATE", "LOW_DISTINCTIVENESS": "DUPLICATE"}
+_EXCLUDED_REINTRODUCED_ADVICE = {
+    "INSUFFICIENT_EVIDENCE": "근거가 부족해 제외한 조합입니다. 근거를 확인한 뒤 진행하세요.",
+    "CONTRADICTION": "선택값끼리 논리가 충돌해 제외한 조합입니다. 의도한 조합인지 확인한 뒤 진행하세요.",
+    "DUPLICATE": "기존 시나리오와 사실상 같은 조합이라 제외했습니다. 다른 시나리오와 겹치지 않는지 확인하세요.",
+    "LOW_PROBABILITY": "낮은 가능성 조합임을 확인한 뒤 그대로 진행할 수 있습니다.",
+    "EXCEEDS_MAX_COUNT": "최대 개수를 넘어 제외한 조합입니다. 다른 시나리오와 겹치지 않는지 확인하세요.",
+}
+_EXCLUDED_REINTRODUCED_DEFAULT_REASON = {
+    "INSUFFICIENT_EVIDENCE": "Create에서 근거 부족으로 제외한 조합입니다.",
+    "CONTRADICTION": "Create에서 논리 충돌로 제외한 조합입니다.",
+    "DUPLICATE": "Create에서 기존 시나리오와 중복으로 제외한 조합입니다.",
+    "LOW_PROBABILITY": "Create에서 낮은 가능성으로 제외한 조합입니다.",
+    "EXCEEDS_MAX_COUNT": "Create에서 최대 개수 초과로 제외한 조합입니다.",
+}
 
 
 def _get(payload: dict[str, Any], snake_key: str, camel_key: str) -> object:
@@ -746,13 +769,16 @@ def analyze_v4_validation_request(  # noqa: C901
         )
 
     rows = request_table.get("rows") or []
-    if not 2 <= len(rows) <= 7:
+    if not V4_MIN_SCENARIO_COUNT <= len(rows) <= V4_MAX_SCENARIO_COUNT:
         analysis.checks.append(
             _check(
                 "V4_SCENARIO_COUNT",
                 status="FAIL",
                 blocking=True,
-                detail=f"최종 Scenario 수는 2~7개여야 합니다. 현재 {len(rows)}개입니다.",
+                detail=(
+                    f"최종 Scenario 수는 {V4_MIN_SCENARIO_COUNT}~{V4_MAX_SCENARIO_COUNT}개여야 합니다. "
+                    f"현재 {len(rows)}개입니다."
+                ),
             )
         )
 
@@ -961,9 +987,10 @@ def analyze_v4_validation_request(  # noqa: C901
     for candidate in excluded_candidates:
         if not isinstance(candidate, dict):
             continue
-        reason_code = str(_get(candidate, "reason_code", "reasonCode") or "")
+        raw_reason_code = str(_get(candidate, "reason_code", "reasonCode") or "")
+        reason_code = _EXCLUDED_REASON_ALIASES.get(raw_reason_code, raw_reason_code)
         raw_values = _get(candidate, "dimension_values", "dimensionValues") or {}
-        if reason_code != "LOW_PROBABILITY" or not isinstance(raw_values, dict):
+        if reason_code not in _EXCLUDED_REINTRODUCED_ADVICE or not isinstance(raw_values, dict):
             continue
         canonical_values: dict[str, str] = {}
         for dimension_id, raw_value in raw_values.items():
@@ -978,15 +1005,15 @@ def analyze_v4_validation_request(  # noqa: C901
         row_key = final_combinations.get(tuple(sorted(canonical_values.items())))
         if row_key is None:
             continue
-        reason = str(candidate.get("reason") or "Create에서 낮은 가능성으로 제외한 조합입니다.")
+        reason = str(candidate.get("reason") or _EXCLUDED_REINTRODUCED_DEFAULT_REASON[reason_code])
         analysis.checks.append(
             _check(
-                "V4_LOW_PROBABILITY_REINTRODUCED",
+                "V4_EXCLUDED_COMBINATION_REINTRODUCED",
                 status="WARN",
                 blocking=False,
-                detail=reason,
+                detail=f"[{reason_code}] {reason}",
                 offenders=[row_key],
-                advice=["낮은 가능성 조합임을 확인한 뒤 그대로 진행할 수 있습니다."],
+                advice=[_EXCLUDED_REINTRODUCED_ADVICE[reason_code]],
             )
         )
     return analysis
@@ -1017,13 +1044,7 @@ def normalize_v4_probability_scores(scores: list[float]) -> list[int]:
     return floors
 
 
-def validate_v4_pressure_aggregate(  # noqa: C901
-    *,
-    rows: list[CanonicalScenarioRow],
-    dimension_definitions: list[dict[str, Any]],
-    pressure_bands: dict[str, str],
-) -> list[ValidationCheckPayload]:
-    contribution_score = {"bullish": 1, "balanced": 0, "bearish": -1}
+def _contribution_by_value(dimension_definitions: list[dict[str, Any]]) -> dict[tuple[str, str], int]:
     contribution_by_value: dict[tuple[str, str], int] = {}
     for definition in dimension_definitions:
         dimension_id = _definition_id(definition)
@@ -1032,7 +1053,53 @@ def validate_v4_pressure_aggregate(  # noqa: C901
                 continue
             contribution = _pressure_contribution(value)
             if dimension_id and (value_id := _value_id(value)) and contribution is not None:
-                contribution_by_value[(dimension_id, value_id)] = contribution_score[contribution]
+                contribution_by_value[(dimension_id, value_id)] = PRESSURE_CONTRIBUTION_SCORES[contribution]
+    return contribution_by_value
+
+
+def rebase_v4_pressure_bands(
+    *,
+    rows: list[CanonicalScenarioRow],
+    dimension_definitions: list[dict[str, Any]],
+    probability_scores: dict[str, float],
+) -> tuple[str | None, dict[str, str]]:
+    """편집된 표의 Base 행과 Base 대비 pressure band를 계산한다.
+
+    Base는 적용 단계(_apply_v4_baseline_and_roles)와 같게 probability가 가장 높고, 같으면 표시 순서가
+    앞선 행이다. 반환값은 (Base row key, row key별 band)다.
+    """
+    if not rows:
+        return None, {}
+    contribution_by_value = _contribution_by_value(dimension_definitions)
+    scores = {
+        row.client_row_key: sum(
+            contribution_by_value.get((dimension_id, value_id), 0)
+            for dimension_id, value_id in row.dimension_values.items()
+        )
+        for row in rows
+    }
+    baseline = max(
+        rows,
+        key=lambda row: (probability_scores.get(row.client_row_key, 0.0), -row.display_order),
+    )
+    base_score = scores[baseline.client_row_key]
+    return baseline.client_row_key, {
+        row.client_row_key: relative_pressure_band(scores[row.client_row_key] - base_score) for row in rows
+    }
+
+
+def validate_v4_pressure_aggregate(  # noqa: C901
+    *,
+    rows: list[CanonicalScenarioRow],
+    dimension_definitions: list[dict[str, Any]],
+    pressure_bands: dict[str, str],
+    baseline_row_key: str | None = None,
+) -> list[ValidationCheckPayload]:
+    """band 부호와 순서를 pressureContribution 합산과 대조한다.
+
+    baseline_row_key가 있으면 strong band의 부호를 Base 대비 차이로 검사하고, 없으면 절대 합산으로 검사한다.
+    """
+    contribution_by_value = _contribution_by_value(dimension_definitions)
 
     pressure_rank = {
         "strong_bearish": 0,
@@ -1053,10 +1120,15 @@ def validate_v4_pressure_aggregate(  # noqa: C901
         scored.append((row, band, score))
 
     checks: list[ValidationCheckPayload] = []
+    base_score = next(
+        (score for row, _band, score in scored if row.client_row_key == baseline_row_key),
+        0,
+    )
     extreme_offenders = [
-        f"{row.client_row_key}:{band}={score}"
+        f"{row.client_row_key}:{band}={score - base_score}"
         for row, band, score in scored
-        if (band == "strong_bullish" and score <= 0) or (band == "strong_bearish" and score >= 0)
+        if (band == "strong_bullish" and score - base_score <= 0)
+        or (band == "strong_bearish" and score - base_score >= 0)
     ]
     if extreme_offenders:
         checks.append(
@@ -1064,7 +1136,12 @@ def validate_v4_pressure_aggregate(  # noqa: C901
                 "V4_PRESSURE_EXTREME_SIGN",
                 status="FAIL",
                 blocking=True,
-                detail="strong pressureBand의 부호가 Dimension pressureContribution 합과 일치하지 않습니다.",
+                detail=(
+                    "strong pressureBand의 부호가 Base 대비 Dimension pressureContribution 합 차이와 "
+                    "일치하지 않습니다."
+                    if baseline_row_key is not None
+                    else "strong pressureBand의 부호가 Dimension pressureContribution 합과 일치하지 않습니다."
+                ),
                 offenders=extreme_offenders,
             )
         )

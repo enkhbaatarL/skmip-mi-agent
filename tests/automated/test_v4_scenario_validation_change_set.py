@@ -30,6 +30,7 @@ from apps.agents.scenario_group_agent.flows.validate_scenarios.v4_validation imp
     apply_v4_additional_dimension_autofill_selections,
     build_v4_additional_dimension_autofill_plan,
     normalize_v4_probability_scores,
+    rebase_v4_pressure_bands,
     render_reason_markdown,
     scenario_fingerprint,
     validate_v4_pressure_aggregate,
@@ -1034,6 +1035,48 @@ def test_pressure_aggregate_order_and_strong_sign_are_blocking() -> None:
     assert all(check.blocking for check in checks)
 
 
+def test_pressure_extreme_sign_uses_baseline_delta_when_baseline_is_given() -> None:
+    analysis = _analyze(_table())
+    # scenario:1 합산 +2(Base), scenario:2 합산 0, scenario:3 합산 -2
+    pressure_bands = {
+        "scenario:1": "balanced",
+        "scenario:2": "strong_bearish",
+        "scenario:3": "strong_bearish",
+    }
+
+    absolute_checks = validate_v4_pressure_aggregate(
+        rows=analysis.canonical_rows,
+        dimension_definitions=DEFINITIONS,
+        pressure_bands=pressure_bands,
+    )
+    relative_checks = validate_v4_pressure_aggregate(
+        rows=analysis.canonical_rows,
+        dimension_definitions=DEFINITIONS,
+        pressure_bands=pressure_bands,
+        baseline_row_key="scenario:1",
+    )
+
+    assert {check.check_id for check in absolute_checks} == {"V4_PRESSURE_EXTREME_SIGN"}
+    assert relative_checks == []
+
+
+def test_rebase_v4_pressure_bands_uses_highest_probability_row_as_baseline() -> None:
+    analysis = _analyze(_table())
+
+    baseline_row_key, bands = rebase_v4_pressure_bands(
+        rows=analysis.canonical_rows,
+        dimension_definitions=DEFINITIONS,
+        probability_scores={"scenario:1": 50, "scenario:2": 30, "scenario:3": 20},
+    )
+
+    assert baseline_row_key == "scenario:1"
+    assert bands == {
+        "scenario:1": "balanced",
+        "scenario:2": "strong_bearish",
+        "scenario:3": "strong_bearish",
+    }
+
+
 def test_scenario_fingerprint_ignores_workflow_status_but_detects_content_changes() -> None:
     scenarios = _scenarios()
     original = scenario_fingerprint(scenarios)
@@ -1761,6 +1804,42 @@ def test_v4_role_recalculation_keeps_floor_and_ceiling_distinct_on_ties() -> Non
     assert scenarios[1].baseline_yn == "Y"
 
 
+def test_v4_role_recalculation_rebases_bands_and_excludes_baseline_from_floor_and_ceiling() -> None:
+    combinations = [
+        # (dimension_values, probability) — 합산: +2, 0, -2, 0
+        ({"demand": "demand_high", "supply": "supply_low"}, 40),
+        ({"demand": "demand_high", "supply": "supply_high"}, 20),
+        ({"demand": "demand_low", "supply": "supply_high"}, 15),
+        ({"demand": "demand_low", "supply": "supply_low"}, 25),
+    ]
+    scenarios = [
+        SimpleNamespace(
+            scenario_id=index,
+            display_order=index,
+            probability_score=probability,
+            dimension_values=values,
+            global_pressure_band="strong_bullish",
+            baseline_yn="N",
+            scenario_role=None,
+            mod_usr_logn_id=None,
+        )
+        for index, (values, probability) in enumerate(combinations, start=1)
+    ]
+
+    ScenarioService()._apply_v4_baseline_and_roles(scenarios, DEFINITIONS, user_id=101)
+
+    assert [scenario.baseline_yn for scenario in scenarios] == ["Y", "N", "N", "N"]
+    assert [scenario.global_pressure_band for scenario in scenarios] == [
+        "balanced",
+        "strong_bearish",
+        "strong_bearish",
+        "strong_bearish",
+    ]
+    assert scenarios[0].scenario_role is None
+    assert scenarios[2].scenario_role == "floor"
+    assert scenarios[3].scenario_role == "ceiling"
+
+
 @pytest.mark.parametrize(
     ("mutation", "check_id"),
     [
@@ -1787,8 +1866,8 @@ def test_deterministic_v4_input_checks_block(
     assert any(check.check_id == check_id and check.blocking for check in analysis.checks)
 
 
-@pytest.mark.parametrize(("row_count", "blocking"), [(1, True), (2, False), (7, False), (8, True)])
-def test_v4_scenario_count_accepts_two_through_seven(row_count: int, blocking: bool) -> None:
+@pytest.mark.parametrize(("row_count", "blocking"), [(2, True), (3, False), (8, False), (9, True)])
+def test_v4_scenario_count_accepts_three_through_eight(row_count: int, blocking: bool) -> None:
     base_rows = _table()["rows"]
     rows = []
     for index in range(row_count):
@@ -1807,14 +1886,26 @@ def test_v4_scenario_count_accepts_two_through_seven(row_count: int, blocking: b
     assert bool(count_checks) is blocking
 
 
-def test_low_probability_excluded_combination_warns_but_can_proceed() -> None:
+@pytest.mark.parametrize(
+    ("reason_code", "expected_code"),
+    [
+        ("LOW_PROBABILITY", "LOW_PROBABILITY"),
+        ("INSUFFICIENT_EVIDENCE", "INSUFFICIENT_EVIDENCE"),
+        ("CONTRADICTION", "CONTRADICTION"),
+        ("DUPLICATE", "DUPLICATE"),
+        ("EXCEEDS_MAX_COUNT", "EXCEEDS_MAX_COUNT"),
+        ("NOT_INDEPENDENT", "DUPLICATE"),
+        ("LOW_DISTINCTIVENESS", "DUPLICATE"),
+    ],
+)
+def test_excluded_combination_reintroduced_warns_but_can_proceed(reason_code: str, expected_code: str) -> None:
     table = _table()
     table["rows"][0]["title"] = "상방 수정"
     diagnostics = {
         "excludedCandidates": [
             {
-                "reasonCode": "LOW_PROBABILITY",
-                "reason": "관측 사실 대비 가능성이 낮습니다.",
+                "reasonCode": reason_code,
+                "reason": "Create에서 제외한 조합입니다.",
                 "dimensionValues": {"demand": "demand_high", "supply": "supply_low"},
             }
         ]
@@ -1822,9 +1913,28 @@ def test_low_probability_excluded_combination_warns_but_can_proceed() -> None:
 
     analysis = _analyze(table, diagnostics)
 
-    warning = next(check for check in analysis.checks if check.check_id == "V4_LOW_PROBABILITY_REINTRODUCED")
+    warning = next(check for check in analysis.checks if check.check_id == "V4_EXCLUDED_COMBINATION_REINTRODUCED")
     assert warning.status == "WARN"
     assert warning.blocking is False
+    assert warning.detail.startswith(f"[{expected_code}]")
+
+
+def test_excluded_combination_with_unknown_reason_code_is_not_reported() -> None:
+    table = _table()
+    table["rows"][0]["title"] = "상방 수정"
+    diagnostics = {
+        "excludedCandidates": [
+            {
+                "reasonCode": "SOMETHING_ELSE",
+                "reason": "알 수 없는 사유",
+                "dimensionValues": {"demand": "demand_high", "supply": "supply_low"},
+            }
+        ]
+    }
+
+    analysis = _analyze(table, diagnostics)
+
+    assert not any(check.check_id == "V4_EXCLUDED_COMBINATION_REINTRODUCED" for check in analysis.checks)
 
 
 def test_changed_v4_result_stores_only_changed_full_upsert() -> None:

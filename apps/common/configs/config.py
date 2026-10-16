@@ -344,6 +344,9 @@ class Settings(BaseSettings):
     additional_dimension_stale_after_seconds: float = Field(default=240.0, gt=0)
     hide_price_pressure: bool = True
     scenario_group_v4_impact_catalog_version: str = Field(default="v4.1", min_length=1)
+    # v4 Scenario 합성 정책. band_unique는 압력 band당 1개(3~5개), distinct_driver는 이벤트 수 기반 개수와
+    # 같은 band 복수 Scenario를 허용한다. 롤백은 이 값을 band_unique로 되돌린다.
+    scenario_synthesis_policy: Literal["band_unique", "distinct_driver"] = "band_unique"
 
     @model_validator(mode="after")
     def validate_scenario_group_operation_timing(self) -> Settings:

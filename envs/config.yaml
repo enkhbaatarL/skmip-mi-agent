@@ -68,6 +68,7 @@ scenario_group_operation_reaper_interval_seconds: 30
 additional_dimension_stale_after_seconds: 240
 hide_price_pressure: true
 scenario_group_v4_impact_catalog_version: v4.1
+scenario_synthesis_policy: band_unique
 
 # Model parameter
 model_parameter_proposal_flow_release: v4.1.7

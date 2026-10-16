@@ -68,6 +68,7 @@ data:
     additional_dimension_stale_after_seconds: 240
     hide_price_pressure: true
     scenario_group_v4_impact_catalog_version: v4.1
+    scenario_synthesis_policy: band_unique
 
     agents:
       scenario_group_agent:
