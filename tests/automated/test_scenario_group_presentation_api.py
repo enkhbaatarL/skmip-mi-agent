@@ -389,6 +389,45 @@ def test_v4_markdown_is_deterministic_escaped_and_reports_missing_mixed() -> Non
     )
 
 
+def test_v4_event_markdown_visually_separates_events_and_links_interactions() -> None:
+    group = _group("v4", [_v4_definition()])
+    diagnostics = _v4_diagnostics()
+    diagnostics["interactionUncertainties"] = [
+        {
+            "uncertaintyId": "iu1",
+            "interactionId": "i1",
+            "subject": "상호작용 지속 기간",
+        }
+    ]
+    group["generation_diagnostics"] = diagnostics
+
+    result = build_scenario_group_presentation(
+        hide_price_pressure=False,
+        group=group,
+        scenarios=[_scenario(cell="d1_v1")],
+        signposts=[],
+        events=[_event(101, "첫 번째 테스트 Event"), _event(102, "두 번째 테스트 Event")],
+        operation=None,
+    )
+
+    markdown = result.sections.event_analysis.markdown
+    assert "### Event 1 · 첫 번째 테스트 Event" in markdown
+    assert "### Event 2 · 두 번째 테스트 Event" in markdown
+    assert "### 확인된 사실" in markdown
+    assert "### LNG·JKM 영향 경로" in markdown
+    assert "### 주요 불확실성" in markdown
+    assert "#### 확인된 사실" not in markdown
+    assert markdown.count("\n---\n") == 2
+    assert "### Interaction 1" in markdown
+    assert "#### 관련 Event" in markdown
+    assert "- **Event 1 · 첫 번째 테스트 Event**" in markdown
+    assert "- **Event 2 · 두 번째 테스트 Event**" in markdown
+    assert "#### 상호작용 내용" in markdown
+    assert "- 상호 증폭" in markdown
+    assert "#### 상호작용 불확실성" in markdown
+    assert "- 상호작용 지속 기간" in markdown
+
+
 def test_hidden_price_pressure_masks_role_section_and_scenario_row_fields() -> None:
     group = _group("v4", [_v4_definition()])
     group["generation_diagnostics"] = _v4_diagnostics()
@@ -803,7 +842,7 @@ def test_presentation_endpoint_selects_operation_and_returns_etag_304() -> None:
     assert changed_renderer.status_code == 200
     assert changed_renderer.headers["etag"] != old_etag
     assert first.status_code == 200
-    assert first.json()["rendererVersion"] == "v6"
+    assert first.json()["rendererVersion"] == "v7"
     assert first.json()["operation"]["operationId"] == operation.operation_id
     assert second.status_code == 304
     assert second.content == b""
