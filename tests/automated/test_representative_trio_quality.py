@@ -469,7 +469,6 @@ def _attempt(
             "trace_mi_base_resource": {
                 "source": "configured_fallback",
                 "case_id": 15,
-                "run_seq": 71,
                 "workbook_sha256": {
                     "demand": "demand-sha",
                     "supply": "supply-sha",

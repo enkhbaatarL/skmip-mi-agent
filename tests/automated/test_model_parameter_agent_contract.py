@@ -3065,7 +3065,7 @@ class ModelParameterAgentContractTest(unittest.TestCase):
                         {
                             "candidate_key": "selected",
                             "parameter_name": "PowerMix",
-                            "model_table": "Table2",
+                            "model_table": "Table1",
                         },
                         {
                             "candidate_key": "rejected",
@@ -3092,7 +3092,7 @@ class ModelParameterAgentContractTest(unittest.TestCase):
                                         "Year": 2026,
                                     },
                                     "basecase_value": 0.323,
-                                    "proposed_value": 0.35,
+                                    "proposed_value": 1.0,
                                     "unit": "%",
                                     "value_selection_rationale_ko": "Japan Gas 2026 row를 선택했습니다.",
                                     "proposed_value_rationale_ko": "석탄 발전 차질을 반영했습니다.",
@@ -3134,7 +3134,7 @@ class ModelParameterAgentContractTest(unittest.TestCase):
         assert proposal_parameter["modelTarget"] == {
             "modelFile": "Demand",
             "modelSheet": "PowerMixAdjustment",
-            "tableName": "Table2",
+            "tableName": "Table1",
             "valueFieldNames": ["PowerMix"],
             "slotAxesFieldNames": ["Country", "Energy Source", "Year"],
         }
@@ -3143,7 +3143,7 @@ class ModelParameterAgentContractTest(unittest.TestCase):
         assert proposal_parameter["values"][0]["Energy Source"] == "Gas"
         assert proposal_parameter["values"][0]["Year"] == 2026
         assert proposal_parameter["values"][0]["basecaseValue"] == 0.323
-        assert proposal_parameter["values"][0]["proposedValue"] == 0.35
+        assert proposal_parameter["values"][0]["proposedValue"] == 1.0
         assert "Japan Gas 2026 row" in proposal_parameter["values"][0]["rationale"]
         assert "slot" not in proposal_parameter["values"][0]
         assert "operation" not in proposal_parameter["values"][0]
@@ -3183,9 +3183,11 @@ class ModelParameterAgentContractTest(unittest.TestCase):
                             "parameter_name": "PowerMix",
                             "model_file": "Demand",
                             "model_sheet": "PowerMixAdjustment",
-                            "model_table": "Table2",
+                            "model_table": "Table1",
                             "basecase_read_mode": "fixed_columns",
-                            "basecase_column_roles": ("B:Year,C:Country,F:Scenario Metric"),
+                            "basecase_column_roles": (
+                                "B:Year,C:Country,D:Energy Source,F:Scenario Metric"
+                            ),
                         },
                     ],
                     "parameter_adjustments": [
@@ -3201,9 +3203,10 @@ class ModelParameterAgentContractTest(unittest.TestCase):
                                     "coordinates": {
                                         "Country": "Japan",
                                         "Year": 2026,
+                                        "Energy Source": "Gas",
                                     },
                                     "basecase_value": 0.323,
-                                    "proposed_value": 0.35,
+                                    "proposed_value": 1.0,
                                     "proposed_value_rationale_ko": "DB value 컬럼명을 사용합니다.",
                                 },
                             ],
@@ -3221,6 +3224,7 @@ class ModelParameterAgentContractTest(unittest.TestCase):
         assert proposal_parameter["modelTarget"]["slotAxesFieldNames"] == [
             "Country",
             "Year",
+            "Energy Source",
         ]
 
     def test_to_output_rejects_empty_mapping_candidates(self) -> None:
@@ -3683,15 +3687,15 @@ class ModelParameterAgentContractTest(unittest.TestCase):
                         "candidate_mappings": [
                             {
                                 "candidate_key": "selected",
-                                "parameter_name": "PowerMix",
+                                "parameter_name": "GDP",
                             },
                         ],
                         "parameter_adjustments": [
                             {
                                 "candidate_key": "selected",
                                 "model_file": "Demand",
-                                "model_sheet": "PowerMixAdjustment",
-                                "parameter_name": "PowerMix",
+                                "model_sheet": "GDPPopulationAdjustment",
+                                "parameter_name": "GDP",
                                 "selected": True,
                                 "slot_axes": [],
                                 "value_grid": [
@@ -4285,7 +4289,6 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
                     },
                 ),
                 case_id=15,
-                run_seq=71,
                 linked_file_counts={"SCNRCASE": 3},
                 fallback_reason="not exported",
             ),
@@ -4667,7 +4670,6 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
                     },
                 ),
                 case_id=15,
-                run_seq=71,
                 linked_file_counts={"SCNRCASE": 3},
                 fallback_reason="not exported",
             ),
@@ -4694,7 +4696,6 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
         assert trace["trace_mi_base_resource"] == {
             "source": "configured_fallback",
             "case_id": 15,
-            "run_seq": 71,
             "workbook_sha256": {
                 "demand": "demand-sha256",
                 "supply": "supply-sha256",

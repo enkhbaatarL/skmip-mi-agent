@@ -13,6 +13,7 @@ OperationStatus = Literal["queued", "running", "succeeded", "failed", "interrupt
 OperationHeartbeatState = Literal["queued", "running", "succeeded", "failed", "interrupted", "missing"]
 TERMINAL_OPERATION_STATUSES = frozenset({"succeeded", "failed", "interrupted"})
 TERMINAL_EVENT_TYPES = frozenset({"completed", "failed", "interrupted"})
+CallbackDeliveryStatus = Literal["SUCCEEDED", "FAILED", "SKIPPED"]
 
 
 class ScenarioGroupOperationPayload(ApiModel):

@@ -88,7 +88,7 @@ data:
     mlflow_tracking_password: "skgas2ndfloor!"
     mlflow_langchain_run_tracer_inline: false
 
-    callback_oauth2_token_url: https:///api/v1/oauth2/token
+    callback_oauth2_token_url: https://mi.homil.co.kr/api/v1/oauth2/token
     callback_oauth2_client_id: agent-skgas-client
     callback_oauth2_client_secret: ${CALLBACK_OAUTH2_CLIENT_SECRET}
 
@@ -122,8 +122,8 @@ data:
     model_parameter_variation_profile_enabled: true
     model_parameter_grounded_slot_recovery_enabled: true
     model_parameter_max_total_selected_slots: 300
-    model_parameter_max_step2_prompt_bytes: 262144
-    model_parameter_max_step3_prompt_bytes: 262144
+    model_parameter_max_step2_prompt_bytes: 327680
+    model_parameter_max_step3_prompt_bytes: 327680
     model_parameter_resource_storage:
       enabled: true
       endpoint_url: http://mip-minio:9000

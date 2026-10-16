@@ -8,6 +8,7 @@ from langchain_core.runnables import Runnable
 from langgraph.graph import StateGraph
 
 from apps.agents.scenario_group_agent.constants import AGENT_NAME, API_IDENTIFIER_CREATE_SIGNPOSTS
+from apps.agents.scenario_group_agent.flows.callback_delivery import deliver_operation_callback
 from apps.agents.scenario_group_agent.flows.create_signposts.nodes import (
     check_existing_signposts,
     generate_new_scenario_row_details_node,
@@ -36,7 +37,6 @@ from apps.common.tracing.context import (
 )
 from apps.common.values.error_codes import ErrorCode
 from apps.common.values.response import CallBackBody
-from apps.connectors.callback.callback_client import send_callback
 from apps.persistence.enums import (
     ScenarioGroupStage,
     ScenarioGroupStatus,
@@ -230,15 +230,15 @@ async def run_create_signposts_background(
 
     logger.info(f"[BG][create_signposts] START | group_id={scenario_group_id}")
     start = time.perf_counter()
+    callback_payload: CallBackBody
     try:
-        callback_payload: CallBackBody = await run_create_signposts_inline(
+        callback_payload = await run_create_signposts_inline(
             scenario_group_id=scenario_group_id,
             user_id=user_id,
             request_table=request_table,
             operation_id=operation_id,
             signpost_target_scenario_ids=signpost_target_scenario_ids,
         )
-        await send_callback(callback_url, callback_payload)
         elapsed_ms = int((time.perf_counter() - start) * 1000)
         logger.info(f"[BG][create_signposts] END | group_id={scenario_group_id} | elapsed={elapsed_ms}ms")
     except Exception as e:
@@ -246,8 +246,12 @@ async def run_create_signposts_background(
         logger.error(
             f"[BG][create_signposts] FAILED | group_id={scenario_group_id} | elapsed={elapsed_ms}ms | error={e!r}",
         )
-        error_payload = CallBackBody(result="failure", reason=str(e))
-        try:
-            await send_callback(callback_url, error_payload)
-        except Exception as cb_err:
-            logger.error(f"[BG][create_signposts] CALLBACK_FAILED | error={cb_err!r}")
+        callback_payload = CallBackBody(result="failure", reason=str(e))
+
+    await deliver_operation_callback(
+        log_tag="create_signposts",
+        callback_url=callback_url,
+        payload=callback_payload,
+        scenario_group_id=scenario_group_id,
+        operation_id=operation_id,
+    )

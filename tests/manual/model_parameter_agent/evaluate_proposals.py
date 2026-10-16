@@ -333,7 +333,7 @@ def _same_mi_base_content_identity(
     trace_identity: Mapping[str, Any],
 ) -> bool:
     """Allow source transport changes only when the selected workbook identity is exact."""
-    fields = ("case_id", "run_seq", "workbook_sha256")
+    fields = ("case_id", "workbook_sha256")
     return all(_normalize(graph_identity.get(field)) == _normalize(trace_identity.get(field)) for field in fields)
 
 

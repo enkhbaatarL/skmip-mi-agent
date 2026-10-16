@@ -12,6 +12,7 @@ from apps.agents.scenario_group_agent.constants import (
     AGENT_NAME,
     API_IDENTIFIER_CREATE_SCENARIOS,
 )
+from apps.agents.scenario_group_agent.flows.callback_delivery import deliver_operation_callback
 from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.api_schema import (
     V4MultiEventCreateScenariosIn,
     VersionedCreateScenariosData,
@@ -60,7 +61,6 @@ from apps.common.tracing.context import (
 )
 from apps.common.values.error_codes import ErrorCode
 from apps.common.values.response import CallBackBody
-from apps.connectors.callback.callback_client import send_callback
 from apps.persistence.scenario_group.schema import ScenarioGroupPayload
 
 
@@ -274,6 +274,7 @@ async def run_v4_multi_event_scenarios_background(
 
     logger.info("[BG][v4 create_scenarios] START | group_id={}", group_id)
     start = time.perf_counter()
+    callback_payload: CallBackBody
     try:
         with mlflow_trace_context(trace_context):
             output = await run_v4_multi_event_scenarios_inline(
@@ -281,13 +282,10 @@ async def run_v4_multi_event_scenarios_background(
                 trace_context=trace_context,
             )
         output_data = _require_output_data(output)
-        await send_callback(
-            callback_url,
-            CreateScenariosOut(
-                result="success",
-                scenario_group=output_data.scenario_group,
-                table=output_data.table,
-            ),
+        callback_payload = CreateScenariosOut(
+            result="success",
+            scenario_group=output_data.scenario_group,
+            table=output_data.table,
         )
         elapsed_ms = int((time.perf_counter() - start) * 1000)
         logger.info(
@@ -303,16 +301,15 @@ async def run_v4_multi_event_scenarios_background(
             elapsed_ms,
             exc,
         )
-        try:
-            await send_callback(
-                callback_url,
-                CallBackBody(result="failure", reason=str(exc)),
-            )
-        except Exception as callback_exc:
-            logger.error(
-                "[BG][v4 create_scenarios] CALLBACK_FAILED | error={!r}",
-                callback_exc,
-            )
+        callback_payload = CallBackBody(result="failure", reason=str(exc))
+
+    await deliver_operation_callback(
+        log_tag="v4 create_scenarios",
+        callback_url=callback_url,
+        payload=callback_payload,
+        scenario_group_id=group_id,
+        operation_id=prepared.get("operation_id"),
+    )
 
 
 __all__ = [

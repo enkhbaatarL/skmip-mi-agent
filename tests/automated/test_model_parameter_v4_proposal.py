@@ -17,12 +17,14 @@ from apps.agents.model_parameter_agent.flows.confirm_parameters.flow import (
 from apps.agents.model_parameter_agent.flows.confirm_parameters.nodes import (
     confirm_parameters,
 )
+from apps.agents.model_parameter_agent.flows.propose_parameters import nodes
 from apps.agents.model_parameter_agent.flows.propose_parameters.flow import (
     prepare_propose_parameters_callback,
 )
 from apps.agents.model_parameter_agent.flows.propose_parameters.nodes import (
     _build_candidate_validation_prompt_packet,
     _build_value_proposal_prompt_packet,
+    _compact_numeric_facts_md,
     _merge_candidates_by_parameter,
     _partition_candidate_validation_work,
     _routing_candidate_prompt_payload,
@@ -334,6 +336,12 @@ def _scenario(
         impact_ttf=None,
         impact_hh=None,
         baseline_yn="N",
+        global_pressure_band="bullish",
+        scenario_role="ceiling",
+        global_pressure_rationale="공급 감소가 가격 상방 압력을 만듭니다.",
+        related_markets=[
+            {"market": "JKM", "reason": "아시아 현물 조달 경쟁"},
+        ],
     )
 
 
@@ -505,6 +513,9 @@ def test_v4_context_uses_only_selected_value_lever_states_and_ordered_events() -
         "high",
     ]
     assert context["executable_binding_occurrences"] == 3
+    assert context["scenario"]["related_markets"] == [
+        {"market": "JKM", "reason": "아시아 현물 조달 경쟁"},
+    ]
     assert context["candidate_exclusion_reason_codes"] == [
         "INACTIVE_MODEL_PARAMETER",
     ]
@@ -518,9 +529,22 @@ def test_v4_event_brief_keeps_larger_detail_excerpt() -> None:
             "display_order": index,
             "event_title_ko": f"Event {index}",
             "one_line_summary": f"Summary {index}",
-            "key_bullets": [f"bullet-{item}" for item in range(7)],
-            "tags": [f"tag-{item}" for item in range(10)],
-            "detail_analysis": str(index) * 7_000,
+            "key_bullets": [f"bullet-{item}" for item in range(nodes.EVENT_KEY_BULLETS_MAX_ITEMS + 2)],
+            "tags": [f"tag-{item}" for item in range(nodes.EVENT_TAGS_MAX_ITEMS + 2)],
+            "numeric_facts_md": "\n".join(
+                [
+                    "| 중요도 | 지표 | 값 |",
+                    "|---|---|---|",
+                    *[
+                        f"| {4 if item >= 24 else 1} | {'high' if item >= 24 else 'low'}-{item} | {item} Mt |"
+                        for item in range(28)
+                    ],
+                ],
+            ),
+            "detail_analysis": str(index) * (nodes.V4_EVENT_DETAIL_MAX_CHARS + 1_000),
+            "occurred_at": f"2026-10-0{index}T00:00:00",
+            "oldest_record_first_created": f"2026-09-0{index}T00:00:00",
+            "latest_record_first_created": f"2026-10-0{index}T01:00:00",
         }
         for index in range(1, 6)
     ]
@@ -528,9 +552,31 @@ def test_v4_event_brief_keeps_larger_detail_excerpt() -> None:
     brief = _scenario_brief_for_value_prompt(context)
 
     assert [event["event_id"] for event in brief["events"]] == [101, 102, 103, 104, 105]
-    assert all(len(event["detail_excerpt"]) == 6_000 for event in brief["events"])
-    assert all(len(event["key_bullets"]) == 5 for event in brief["events"])
-    assert all(len(event["tags"]) == 8 for event in brief["events"])
+    assert all(len(event["detail_excerpt"]) == nodes.V4_EVENT_DETAIL_MAX_CHARS for event in brief["events"])
+    assert all(len(event["key_bullets"]) == nodes.EVENT_KEY_BULLETS_MAX_ITEMS for event in brief["events"])
+    assert all(len(event["tags"]) == nodes.EVENT_TAGS_MAX_ITEMS for event in brief["events"])
+    assert all("high-24" in event["numeric_facts_md"] for event in brief["events"])
+    assert all("high-27" in event["numeric_facts_md"] for event in brief["events"])
+    assert all("low-20" not in event["numeric_facts_md"] for event in brief["events"])
+    assert all("low-23" not in event["numeric_facts_md"] for event in brief["events"])
+    assert brief["events"][0]["occurred_at"] == "2026-10-01T00:00:00"
+    assert brief["events"][0]["evidence_window_start"] == "2026-09-01T00:00:00"
+    assert brief["events"][0]["evidence_window_end"] == "2026-10-01T01:00:00"
+    assert brief["scenario"]["baseline_yn"] == "N"
+    assert brief["scenario"]["global_pressure_band"] == "bullish"
+    assert brief["scenario"]["scenario_role"] == "ceiling"
+    assert brief["scenario"]["global_pressure_rationale"] == ("공급 감소가 가격 상방 압력을 만듭니다.")
+    assert brief["scenario"]["related_markets"] == [
+        {"market": "JKM", "reason": "아시아 현물 조달 경쟁"},
+    ]
+
+
+def test_numeric_facts_plain_text_is_bounded_without_becoming_empty() -> None:
+    compact = _compact_numeric_facts_md(
+        "수" * (nodes.EVENT_NUMERIC_FACTS_MAX_CHARS + 1_000),
+    )
+
+    assert len(compact) == nodes.EVENT_NUMERIC_FACTS_MAX_CHARS
 
 
 def test_v4_service_load_context_skips_legacy_mapping_repository_and_uses_active_catalog() -> None:

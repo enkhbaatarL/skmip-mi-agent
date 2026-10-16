@@ -1340,7 +1340,6 @@ def test_structured_semantic_empty_is_abstained_with_complete_trace(tmp_path: Pa
             "trace_mi_base_resource": {
                 "source": "configured_fallback",
                 "case_id": 15,
-                "run_seq": 71,
                 "workbook_sha256": {
                     "demand": "demand-sha256",
                     "supply": "supply-sha256",
@@ -1843,7 +1842,6 @@ def test_post_graph_trace_allows_only_mi_base_transport_source_change() -> None:
     graph_identity = {
         "source": "mi_base",
         "case_id": 15,
-        "run_seq": 71,
         "workbook_sha256": {"demand": "a", "supply": "b", "trade": "c"},
     }
     cache_identity = {

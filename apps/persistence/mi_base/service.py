@@ -77,19 +77,10 @@ class MiBaseService:
                 ErrorCode.ENTITY_NOT_FOUND,
                 detail=f"MI Base case not found: case_id={case_id}",
             )
-        raw_run_id = row.get("last_run_id")
-        last_run_id = str(raw_run_id).strip() if raw_run_id is not None else None
-        if not last_run_id:
-            last_run_id = None
-        run_seq = repository.fetch_run_seq(last_run_id) if last_run_id is not None else None
+        selected_case_id = int(row["case_id"])
         return MiBaseSnapshot(
-            case_id=int(row["case_id"]),
-            last_run_id=last_run_id,
-            run_seq=run_seq,
-            files=repository.fetch_linked_files(
-                case_id=int(row["case_id"]),
-                run_seq=run_seq,
-            ),
+            case_id=selected_case_id,
+            files=repository.fetch_linked_files(case_id=selected_case_id),
         )
 
 

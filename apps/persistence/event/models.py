@@ -79,6 +79,11 @@ class MiEventContentColumnsMixin:
         nullable=False,
         comment="이벤트 상세 분석 본문",
     )
+    numeric_facts_md: Mapped[str | None] = mapped_column(
+        mysql_types.LONGTEXT(collation="utf8mb4_bin"),
+        nullable=True,
+        comment="이벤트 정량 근거 Markdown",
+    )
     tags_json: Mapped[Any | None] = mapped_column(
         sqlalchemy.JSON,
         nullable=True,

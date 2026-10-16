@@ -119,18 +119,24 @@ key만 보충하며 target 밖 시설을 새로 열지 않는다.
 background는 이 값을 다시 읽어 활성 Base 변경에 영향받지 않는다. 활성 행이 복수이면
 무작위로 선택하지 않고 무결성 오류로 차단한다.
 
-`tcm_filel` 연결은 `SCNRCASE + case_id`와, `last_run_id`로 얻은 최신 `run_seq`의
-`SCNRCASEH/SCNRCASEHI/SCNRCASEHTF + run_seq`를 함께 조회한다. 그러나 제안값 계산에
-실제로 읽는 것은 `SCNRCASE` Demand·Supply·Trade `.xlsm` 3종뿐이다. 결과·중간·Trade Flow
-파일은 존재 건수를 서버 log에 남기는 metadata이며 계산 입력으로 다운로드하지 않는다.
+`tcm_filel`에서는 `SCNRCASE + case_id` 연결만 조회한다. 결과·중간·Trade Flow 파일을 찾는
+`run_seq`와 `SCNRCASEH/SCNRCASEHI/SCNRCASEHTF` 관계는 MI Base 입력 선택에 사용하지 않는다.
+제안값 계산에는 `SCNRCASE` Demand·Supply·Trade `.xlsm` 3종을 사용한다.
+각 입력 역할은 `org_file_nm`에 대소문자와 무관한 독립 영문 토큰 `Demand`, `Supply`, `Trade`가
+있는지로 판별하며 `Model_Input`, `플랫폼입력` 같은 추가 문구는 요구하지 않는다. 한 파일명에 서로 다른
+역할 토큰이 함께 있거나 같은 역할의 `.xlsm`이 둘 이상이면 임의로 선택하지 않고 실패한다.
 
 입력 3종은 기존 `model_parameter_resource_storage` endpoint·bucket·credential·timeout·local cache
 설정을 그대로 사용한다. 요청별 immutable cache에 받은 뒤 기존 v1/v3 경로와 v4
 `new-bc-v8` contract에 동일하게 연결한다. 활성 Base가 있지만 현재 Object Storage metadata를
-확인할 수 없는 경우에는 같은 `case_id`·`last_run_id`·`run_seq`·SCNRCASE 파일 식별자의 cache만 찾는다.
+확인할 수 없는 경우에는 같은 `case_id`·`SCNRCASE` 파일 식별자의 cache만 찾는다.
 cache의 workbook SHA-256과 contract를 다시 검증하고, 같은 identity에 서로 다른 내용이 둘 이상이면
 사용하지 않는다. 입력 3종 구성, 현재 remote identity, download 정합성 또는 workbook contract가 잘못됐거나
 검증 cache가 없으면 기본 정책에서는 기존 등록 Basecase로 바꾸지 않고 요청을 실패시킨다.
+
+Workbook contract가 요구하는 `SeasonalityLogic.csv` 같은 보조 source도 요청별 cache 안에 실제 파일로
+복사한 뒤 digest를 검증한다. 외부 resource root를 가리키는 symbolic link는 cache containment 검증을
+통과할 수 없으므로 사용하지 않는다.
 
 Object Storage를 사용할 수 없는 환경에서 운영자 또는 승인된 품질 campaign이
 `model_parameter_mi_base_fallback.active_case_unavailable_mode=configured_fallback`을 명시하면 예외적으로 등록
@@ -138,7 +144,7 @@ Basecase를 사용할 수 있다. 이 모드는 client 초기화·metadata head�
 못한 가용성 실패**에만 적용한다. SCNRCASE 3종 구성이 잘못됐거나, 현재 remote metadata를 확인한 뒤 download,
 hash 또는 workbook contract 검증이 실패한 경우에는 configured fallback으로 바꾸지 않고 fail-closed한다.
 공통 `Settings`와 로컬·Neuro 설정은 기본적으로 `verified_cache`를 사용한다. 이 cache는 현재 PK의
-case/run/linked-file identity와 workbook hash가 모두 같은 경우에만 허용되며, 다른 MI Base나 등록
+`case_id`·`SCNRCASE` linked-file identity와 workbook hash가 모두 같은 경우에만 허용되며, 다른 MI Base나 등록
 Basecase로 전환하는 fallback이 아니다. configured fallback은 명시적으로 설정한 환경에서만 실행 증적에
 정책과 `source=configured_fallback`을 남긴다.
 
@@ -152,7 +158,7 @@ workbook은 wrapper release가 아니라 digest를 검증한 repo-side `resource
 contract artifact를 사용한다.
 
 proposal-only 품질 runner의 post-graph trace 보강도 이 경계를 우회하지 않는다. graph가 남긴
-`case_id`·`run_seq`·role별 workbook SHA-256과 다시 확인한 선택 resource identity가 같아야 하며,
+`case_id`·role별 workbook SHA-256과 다시 확인한 선택 resource identity가 같아야 하며,
 remote 실행에서는 `mi_base`와 `verified_cache`의 source 표기만 달라질 수 있다. 명시적 configured fallback
 실행은 graph와 trace가 모두 같은 configured release와 workbook hash를 사용해야 한다. trace용 Basecase
 record에는 선택된 workbook root와 dynamic contract를 명시적으로 전달한다.
@@ -166,7 +172,7 @@ record에는 선택된 workbook root와 dynamic contract를 명시적으로 전�
 | tmm_mi_model_param_dimension_map | v1/v3 event type·dimension에서 허용되는 direct/routing 후보와 comment, indirect 보조정보 |
 | tmm_mi_model_impact_lever_m | v4 selected Lever state에서 허용되는 primary/alternative parameter binding과 applicability |
 | tmm_mi_model_param_m | parameter 이름·hint, 모델 target, Basecase Sheet·행·열 규칙 |
-| tmd_mdl_scnrcasem / tmd_mdl_scnrcaseh / tcm_filel | 요청별 활성 `case_id`, 최신 `run_seq`, 입력·실행 결과 파일 연결 |
+| tmd_mdl_scnrcasem / tcm_filel | 요청별 활성 `case_id`와 `SCNRCASE` 입력 파일 연결 |
 | proposal capability gate | raw source matching 뒤 실제 신규 proposal에 전달할 v1/v3 5종 또는 v4 extend16 16종 |
 | config.yaml > model_parameter_resources.basecase | workbook local path와 Object Storage key |
 | config.yaml > model_parameter_resources.workbook_contract | v4 `new-bc-v8` repo-side contract path |
@@ -188,7 +194,8 @@ schema `model-parameter-lut-adapters-v3`과 Impact Lever hydrated catalog checks
 
 기존 `model_parameter_proposed_value_max_decimal_places`와 `model_parameter_proposed_value_precision_mode`는 과거
 설정 입력을 깨지 않기 위한 호환 필드이므로 로컬·Neuro 설정에 그대로 선언한다. 다만 신규 proposal과
-confirmation의 `proposedValue`에는 적용하지 않는다. proposal Step3 값은 유한 숫자여야 한다. Confirmation은
+confirmation의 `proposedValue`에는 적용하지 않는다. proposal Step3 값은 유한 숫자여야 하며, PowerMix
+proposal 최종 출력만 별도 group-aware largest-remainder 규칙으로 0.01 단위·합계 1.00을 보장한다. Confirmation은
 `proposedValue` key를 요구하지만 값은 `null`일 수 있고, non-null 값만 persistence 경계에서 엄격한 유한
 숫자로 정규화한다. 두 경로 모두 설정 기반 소수 자릿수 round/trunc/ceil을 하지 않는다.
 
@@ -270,6 +277,10 @@ PowerMix는 authoritative materialization에서 월별 반복 annual row가 일�
 `Other`. Basecase 우선·동일 exact LUT fallback을 적용한 effective vector와 Step3의 10개 proposed value도
 완전성·중복·0~1 범위와 합이 절대오차 `1e-6` 이내에서 1인지 다시 검증한다. source·effective exact 검증·
 slot limit 또는 Step3 응답에서 하나라도 실패하면 vector 전체를 제외한다.
+검증을 통과한 proposal 출력은 `table1=(Year, Country)`, `table2=(Year, Month, Country)` 그룹별로 0.01 단위에
+맞추고 Decimal 합을 정확히 1.00으로 만든다. source와 effective reference는 이 출력 보정 대상이 아니며 원본
+정밀도를 유지한다. 현재 canonical v4 write target은 table1이고, table2 포맷 지원만으로 월별 target이
+활성화되지는 않는다.
 
 LiqUtilAdjustment는 하나의 같은 v4 Lever provenance에서 액화설비 운영 변화 방향, exact Plant와 exact
 Train 둘 모두, slot Year/Month와 일치하는 구체적 `time_window`, `source_event_ids`로 Group의 실제

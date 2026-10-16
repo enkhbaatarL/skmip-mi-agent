@@ -61,7 +61,6 @@ def _identity(trace: Mapping[str, Any]) -> dict[str, Any]:
     return {
         "source": trace.get("source"),
         "case_id": trace.get("case_id"),
-        "run_seq": trace.get("run_seq"),
         "workbook_sha256": trace.get("workbook_sha256"),
     }
 
@@ -164,11 +163,7 @@ def build_backfilled_evidence(
         observed_identity.get("source") == EXPECTED_FALLBACK_MODE,
         "direct MI Base trace source is not configured_fallback",
     )
-    _check(
-        isinstance(observed_identity.get("case_id"), int)
-        and isinstance(observed_identity.get("run_seq"), int),
-        "direct MI Base trace lacks case_id or run_seq",
-    )
+    _check(isinstance(observed_identity.get("case_id"), int), "direct MI Base trace lacks case_id")
     workbook_sha256 = observed_identity.get("workbook_sha256")
     _check(
         isinstance(workbook_sha256, Mapping)

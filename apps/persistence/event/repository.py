@@ -258,6 +258,7 @@ class EventRepository(BaseSyncSQLRepository):
                 if item
             ],
             "detail_analysis": event.detail_analysis or "",
+            "numeric_facts_md": event.numeric_facts_md or "",
             "source_mi_record_ids": source_record_ids,
             "created_at": event.crt_dtm.isoformat() if event.crt_dtm else "",
             "updated_at": event.mod_dtm.isoformat() if event.mod_dtm else "",
@@ -295,6 +296,7 @@ class EventRepository(BaseSyncSQLRepository):
                 if item
             ],
             "detail_analysis": event.detail_analysis or "",
+            "numeric_facts_md": event.numeric_facts_md or "",
             "source_mi_record_ids": source_record_ids,
             "created_at": event.crt_dtm.isoformat() if event.crt_dtm else "",
             "updated_at": event.mod_dtm.isoformat() if event.mod_dtm else "",
@@ -384,6 +386,7 @@ class EventRepository(BaseSyncSQLRepository):
                 if item
             ],
             "detail_analysis": snapshot.detail_analysis or "",
+            "numeric_facts_md": snapshot.numeric_facts_md or "",
             "source_mi_record_ids": self.fetch_source_record_ids(int(snapshot.mi_event_id)),
             "created_at": snapshot.event_crt_dtm.isoformat() if snapshot.event_crt_dtm else "",
             "updated_at": snapshot.event_mod_dtm.isoformat() if snapshot.event_mod_dtm else "",

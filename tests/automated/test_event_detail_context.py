@@ -37,6 +37,7 @@ def test_event_repository_builds_context_from_operational_wrapper_shape() -> Non
         search_text="중장기 수입능력 확대 요인",
         key_bullets_json={"bullets": ["조건부 최종투자결정을 발표함.", "인허가 취득을 전제로 함."]},
         detail_analysis="상세 분석은 prompt context에 사용하지 않음.",
+        numeric_facts_md="| 중요도 | 지표 | 값 |\n|---|---|---|\n| 4 | 증설 규모 | 4 MTPA |",
         tags_json={"tags": ["EemsEnergyTerminal", "Gasunie", "Vopak"]},
         occurred_at=None,
         record_maps=[],
@@ -65,6 +66,7 @@ def test_event_repository_builds_context_from_operational_wrapper_shape() -> Non
     payload = repository._event_to_pipeline_dict(event)
 
     assert payload["key_bullets"] == ["조건부 최종투자결정을 발표함.", "인허가 취득을 전제로 함."]
+    assert "증설 규모" in payload["numeric_facts_md"]
     assert payload["tags"] == ["EemsEnergyTerminal", "Gasunie", "Vopak"]
     assert payload["occurred_at"] == ""
 
@@ -82,6 +84,7 @@ def test_event_repository_serializes_unclassified_event_without_type_error() -> 
         search_text="분류 전 검색 문맥",
         key_bullets_json={"bullets": ["분류 전 근거"]},
         detail_analysis="분류 전 상세 분석",
+        numeric_facts_md=None,
         tags_json=None,
         occurred_at=None,
         record_maps=[],
@@ -96,11 +99,14 @@ def test_event_repository_serializes_unclassified_event_without_type_error() -> 
     assert payload["event_type_l2_id"] is None
     assert payload["event_title_ko"] == "분류 대기 이벤트"
     assert payload["one_line_summary"] == "분류 전 검색 문맥"
+    assert payload["numeric_facts_md"] == ""
 
 
 def test_event_models_match_nullable_v46_event_type_contract() -> None:
     assert MiEventModel.__table__.c.event_type_l2_id.nullable is True
     assert MiEventSnapshotModel.__table__.c.event_type_l2_id.nullable is True
+    assert MiEventModel.__table__.c.numeric_facts_md.nullable is True
+    assert MiEventSnapshotModel.__table__.c.numeric_facts_md.nullable is True
 
 
 def test_event_repository_serializes_unclassified_snapshot_without_catalog_lookup() -> None:
@@ -114,6 +120,7 @@ def test_event_repository_serializes_unclassified_snapshot_without_catalog_looku
         search_text="스냅샷 검색 문맥",
         key_bullets_json={"bullets": ["분류 전 근거"]},
         detail_analysis="스냅샷 상세 분석",
+        numeric_facts_md="| 중요도 | 지표 | 값 |\n|---|---|---|\n| 3 | 공급량 | 2 Mt |",
         tags_json=None,
         occurred_at=None,
         event_crt_dtm=None,
@@ -126,6 +133,7 @@ def test_event_repository_serializes_unclassified_snapshot_without_catalog_looku
 
     assert payload["event_type_l2_id"] is None
     assert payload["event_type"]["event_type_l2_id"] is None
+    assert "공급량" in payload["numeric_facts_md"]
     repository.fetch_event_type_by_l2_id.assert_not_called()
 
 

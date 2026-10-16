@@ -633,6 +633,32 @@ def _render_decision_basis(impact_analysis: dict[str, Any]) -> str:
     return "\n".join(f"- {item}" for item in basis) or "- 없음"
 
 
+# Group 238: 2032년 수요 수준(284 TWh)을 "수요 감소 폭" label 아래 두어 감소량으로 오독된 사례를 막는다.
+_NUMERIC_DIMENSION_LABEL_RULE = (
+    "- question과 숫자·시점 판단 근거에 있는 원문 관측값·전망치는 Choice 경계로 그대로 사용합니다\n"
+    "  (예: `5척 이하`, `2032년 284 TWh`, `112.2 bcfd 이상`). 그 수치로 Choice를 가를 수 있으면 수치 없는\n"
+    "  상태 표현만으로 Choice를 구분하지 않습니다. 단, 원문 수치끼리 빼거나 나눠 만든 차이·증가분·감소분·비율은\n"
+    "  입력 문장에 함께 적혀 있더라도 Choice label에 넣지 않고 why의 `파생`에만 씁니다.\n"
+    "- unit이 있는 수치 Dimension은 label·unit·Choice label이 같은 지표를 가리켜야 합니다. Choice 수치가\n"
+    "  특정 시점의 수준·전망치(예: `2032년 284 TWh`)이면 label도 `2032년 스페인 가스 수요 수준`처럼 수준으로\n"
+    "  씁니다. label에 `폭`·`변화량`·`감소분`·`증가분`을 쓰려고 Choice 값을 계산해 바꾸지 말고, label을 입력\n"
+    "  수치에 맞춰 `수준`으로 씁니다. 비교 기준값(예: 2026년 312 TWh)은 question에 남깁니다.\n"
+)
+
+# Group 259: `제한 구역 집행 지속`, `보험 강화·정시 통항`처럼 주체·관계가 빠진 압축 label이 즉시 이해되지 않았다.
+_READABLE_LABEL_RULE = (
+    "- Dimension label은 판단 대상(누가·무엇이)과 판단 축(규모·기간·시점·범위)을 함께 담습니다\n"
+    "  (예: `호르무즈 LNG선 운항 차질 규모`, `이란 통항 통제가 이어지는 기간`). Choice label은 그 축의 값으로\n"
+    "  읽혀야 하며, 기간·시점 Dimension이면 Choice도 기간·시점으로 구분합니다.\n"
+    "- Choice label은 대체로 15~30자의 서술형 구절로, 행위 주체나 대상과 그 상태 변화를 함께 씁니다.\n"
+    "  question을 보지 않고 표의 셀만 읽어도 무슨 일이 일어났는지 이해되어야 합니다.\n"
+    "- 두 상태를 `·`로 나열하지 않습니다. 두 상태의 관계가 핵심이면 `~지만`, `~로`, `~해도`처럼 연결어미로\n"
+    "  관계를 씁니다. `집행 지속`, `구축 완화`, `회복 가시`처럼 동작 명사를 이어 붙인 압축 표현도 쓰지 않습니다.\n"
+    "- 예: `제한 구역 집행 지속` → `이란이 제한 구역 통항 통제를 실제 집행`, `보험 강화·정시 통항` →\n"
+    "  `보험 부담은 커지나 LNG선은 정시 통항`, `폐쇄 예고가 통항 상쇄` → `이란 폐쇄 예고로 통항 증가세가 꺾임`\n"
+)
+
+
 def build_v4_dimension_design_user_prompt(
     *,
     impact_analysis: dict[str, Any],
@@ -685,6 +711,7 @@ def build_v4_dimension_design_user_prompt(
         "## 출력 규칙\n"
         "- from에는 위 U 번호만 사용합니다. Dimension ID와 Value ID는 서버가 부여합니다.\n"
         "- label은 핵심 대상과 변화 축을 담되 30자를 넘지 않습니다.\n"
+        f"{_NUMERIC_DIMENSION_LABEL_RULE}"
         "- question은 필요한 관측 정보와 판단 대상을 충분히 포함하며 글자 수 제한이 없습니다.\n"
         "- rationale은 최대 200자의 구체적인 한국어 한 문장입니다. question의 관측일·분석 기준일·수치·시장 "
         "신호·대상·영향 경로를 생략하지 않고, 질문 어미만 `...하는지에 따라` 형태로 바꿔 Scenario와 JKM "
@@ -693,6 +720,7 @@ def build_v4_dimension_design_user_prompt(
         "- 각 Dimension에는 같은 판단 축·단위를 사용하는 선택지 2~4개를 만듭니다.\n"
         "- Choice label은 비교 가능한 하나의 시장·운영 상태를 30자 이내로 작성합니다.\n"
         "  낮음·중간·높음, 단기·중기·장기, 거의 없음·일부 감소·큰 감소처럼 강도만 쓰지 않습니다.\n"
+        f"{_READABLE_LABEL_RULE}"
         "- 한 Dimension 안의 Choice끼리 pressure가 겹치지 않게 합니다. Choice 2개는 `bearish / bullish`, 3개는\n"
         "  `bearish / balanced / bullish`로 만들고, 같은 pressure의 Choice가 둘 이상 필요해 보이면 하나로 합칩니다.\n"
         "  4개는 세 방향을 모두 포함하되 추가한 같은 방향 Choice가 규모·시점에서 명확히 다를 때만 허용합니다.\n"
@@ -791,11 +819,13 @@ def build_v4_additional_dimension_user_prompt(
         "- dimensions에는 위 U 번호만 from으로 참조합니다. 하나의 U는 후보 간 중복 사용하지 않습니다.\n"
         "- 초기 Dimension과 의미가 겹치는 후보는 만들지 않습니다. 변환할 가치가 없으면 빈 dimensions를 반환합니다.\n"
         "- label은 핵심 대상과 변화 축을 담되 30자를 넘지 않습니다.\n"
+        f"{_NUMERIC_DIMENSION_LABEL_RULE}"
         "- question은 필요한 관측 정보와 판단 대상을 충분히 포함하며 글자 수 제한이 없습니다.\n"
         "- rationale은 최대 200자의 구체적인 한국어 한 문장입니다. question의 관측일·분석 기준일·수치·시장 "
         "신호·대상·영향 경로를 생략하지 않고, 질문 어미만 `...하는지에 따라` 형태로 바꿔 Scenario와 JKM "
         "결과가 구분되는 이유를 설명합니다. 최소 글자 수는 강제하지 않습니다.\n"
         "- Choice label은 비교 가능한 하나의 시장·운영 상태를 30자 이내로 작성합니다.\n"
+        f"{_READABLE_LABEL_RULE}"
         "- lever와 axis는 source 질문의 값을 그대로 사용하고 Choice는 2~4개를 만듭니다.\n"
         "- pressure coverage 예시: Choice 2개는 `bearish / bullish`, 3개는 `bearish / balanced / bullish`, "
         "4개는 `bearish / balanced / bullish / bullish`처럼 세 방향을 모두 포함하고 의미상 필요한 한 방향을 "

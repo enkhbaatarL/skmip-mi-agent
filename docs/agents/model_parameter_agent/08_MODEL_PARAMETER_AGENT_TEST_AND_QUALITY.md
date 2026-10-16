@@ -104,8 +104,9 @@ DB/canonical만 맞거나 LUT 테스트만 통과하거나 전체 파라미터 �
 - v4 authoritative 2026~2030 record 수는 GDP 815, PMI 5,040, PowerMix 4,200, Temperature 5,040,
   LiqUtilAdjustment 23,820, PipelineAdjustment 420, SupplyDisruption 4,908이어야 한다. legacy adjustment target 관찰치는
   authoritative count나 slot whitelist로 평가하지 않는다.
-- v4 ordered Event의 `detail_analysis`는 event당 앞 6,000자까지 Step2·Step3 brief에 포함되고,
-  5개 Event와 현재 extend16 catalog를 합친 compact Step2 packet이 byte guard 안인지 자동화로 확인한다.
+- v3/v4 ordered Event의 `detail_analysis`는 각각 event당 앞 4,000자·6,000자,
+  `numeric_facts_md`는 중요도순 최대 12행·4,000자까지 공통 brief에 포함되고, 5개 Event와 현재
+  extend16 catalog를 합친 compact Step2 packet이 기본 327,680-byte guard 안인지 자동화로 확인한다.
 - Step2 slot은 exact Basecase+LUT union 안에 있어야 한다.
 - v4 Step2 compact catalog는 값·reference 없이 terminal별 값이 있는 `Life Cycle Category`를 판단 전용
   `applicability_attributes`로 보존하며, v1/v3와 반환 `slot_axes`에는 이 속성이 없어야 한다.
@@ -117,7 +118,9 @@ DB/canonical만 맞거나 LUT 테스트만 통과하거나 전체 파라미터 �
   Country/Year별 승인된 10-member raw vector, Basecase/LUT 결합 effective vector와 Step3 proposed vector
   각각에서 완전성·중복·유한성·0~1 범위·합 1±`1e-6`을 atomic하게 통과해야 한다. partial group이
   Step3나 persistence에 남으면 `FAIL`이다. Step2 seed의 3축 중복·누락·추가, 비정수 Year 또는 미승인
-  Energy Source가 atomic expansion으로 가려져도 `FAIL`이다.
+  Energy Source가 atomic expansion으로 가려져도 `FAIL`이다. 최종 proposal의 모든 PowerMix 값은 0.01의
+  정수배여야 하고, table1은 Year+Country, table2는 Year+Month+Country별 Decimal 합이 정확히 1.00이어야 한다.
+  서로 다른 table이나 그룹을 합쳐서 1.00을 맞춘 경우도 `FAIL`이다.
 - LiqUtilAdjustment는 Lever·Scenario/Event scope와 applicability 필터 후 exact 후보가 하나면 시설·기간
   문구 일부가 생략돼도 unique-inferred로 허용한다. 동등 후보가 여러 개거나 명시 대상·기간과 모순되면
   Step3 전에 `ABSTAINED_INSUFFICIENT_EVIDENCE`로 제외하고, 1 초과 유효값은 보존한다. lifecycle
@@ -145,7 +148,7 @@ DB/canonical만 맞거나 LUT 테스트만 통과하거나 전체 파라미터 �
 - proposal-only runner는 이 결과를 일반 `FAIL`이 아닌 Scenario `ABSTAINED`, campaign `REVIEW`로 분류한다.
   구조화 증적이나 필수 step/token 관측이 빠지면 별도 `REVIEW`로 남긴다.
 - retry 후 성공해도 앞선 실패 attempt를 지우지 않고 `REVIEW`로 남긴다.
-- 활성 MI Base 실행은 graph와 post-graph trace의 `case_id`·`run_seq`·role별 workbook SHA-256이 같아야 한다.
+- 활성 MI Base 실행은 graph와 post-graph trace의 `case_id`·role별 workbook SHA-256이 같아야 한다.
   기본 정책에서 remote와 `verified_cache`의 source 전환은 같은 content identity에서만 허용한다. 승인된
   `active_case_unavailable_mode=configured_fallback` campaign은 remote identity가 관측되기 전의 가용성 실패에만
   등록 Basecase를 사용하고 graph/trace 모두 같은 configured hash를 증적한다. remote metadata 관측 뒤의

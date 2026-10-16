@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
+from apps.agents.scenario_group_agent.flows import callback_delivery
 from apps.agents.scenario_group_agent.flows.create_signposts import flow as signpost_flow
 from apps.agents.scenario_group_agent.flows.validate_scenarios import flow as validation_flow
 
@@ -21,6 +22,7 @@ def _settings() -> SimpleNamespace:
         callback_base_url="https://callback.test",
         callback_validate_scenarios_path="/scenario-groups/{scenario_group_id}/validation",
         callback_create_signposts_path="/scenario-groups/{scenario_group_id}/signposts",
+        skip_callback=False,
     )
 
 
@@ -172,7 +174,8 @@ def test_terminal_heartbeat_does_not_drop_validation_or_signpost_callback(
             patch.object(module, "build_langgraph_config", return_value={}),
             patch.object(module, "ScenarioGroupOperationService", return_value=service),
             patch.object(module, "get_scenario_group_operation_task_runner", return_value=runner),
-            patch.object(module, "send_callback", new=send_callback),
+            patch.object(callback_delivery, "send_callback", new=send_callback),
+            patch.object(callback_delivery, "ScenarioGroupOperationService", return_value=service),
         ):
             if flow_kind == "validation":
                 await module.run_validate_scenarios_background(
