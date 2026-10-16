@@ -60,6 +60,9 @@ SEARCH_TEXT_MAX_LENGTH = 500
 # one_line_summary 컬럼 길이(VARCHAR(300)).
 ONE_LINE_SUMMARY_MAX_LENGTH = 300
 
+# 생성 직후 바로 노출되도록 커스텀 이벤트의 publish_status 를 게시 상태로 저장한다.
+EVENT_PUBLISH_STATUS_PUBLISHED: Final = "PUBLISHED"
+
 # 요청에 user_id가 없을 때 쓰는 기본 사용자 ID.
 DEFAULT_ACTOR_ID = "user"
 # crt_usr_logn_id·mod_usr_logn_id 는 MCP 경유 생성임을 구분하도록 "mcp_{user_id}" 형식으로 저장한다.

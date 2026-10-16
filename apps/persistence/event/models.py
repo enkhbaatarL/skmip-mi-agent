@@ -227,6 +227,11 @@ class MiEventModel(MiEventContentColumnsMixin, AuditColumnsMixin, ORMBase):
         server_default=sqlalchemy.text("'Y'"),
         comment="신규생성 여부 (Y: 신규생성, N: 갱신)",
     )
+    publish_status: Mapped[str | None] = mapped_column(
+        sqlalchemy.String(20, collation="utf8mb4_bin"),
+        nullable=True,
+        comment="게시 상태",
+    )
 
     __table_args__ = (
         Index("idx_tmm_mi_mievent_m_01", "event_type_l2_id"),

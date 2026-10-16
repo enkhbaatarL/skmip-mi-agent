@@ -8,6 +8,7 @@ from typing import Any
 from apps.agents.event_generate_agent.constants import (
     DEFAULT_ACTOR_ID,
     EVENT_ACTOR_ID_PREFIX,
+    EVENT_PUBLISH_STATUS_PUBLISHED,
     ONE_LINE_SUMMARY_MAX_LENGTH,
     SEARCH_TEXT_MAX_LENGTH,
 )
@@ -73,6 +74,7 @@ class EventGenerationService:
                     "latest_record_first_created": created_at,
                     "oldest_record_first_created": created_at,
                     "new_yn": "Y",
+                    "publish_status": EVENT_PUBLISH_STATUS_PUBLISHED,
                     "crt_usr_logn_id": actor_id,
                     "mod_usr_logn_id": actor_id,
                 },
