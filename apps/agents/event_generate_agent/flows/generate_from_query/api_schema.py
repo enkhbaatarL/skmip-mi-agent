@@ -20,7 +20,6 @@ class GenerateFromQueryIn(ApiModel):
     user_query: str = Field(description="이벤트를 만들고 싶은 주제를 담은 사용자 입력 문장")
     date_from: str | None = Field(default=None, description="조회 시작일(YYYY-MM-DD)")
     date_to: str | None = Field(default=None, description="조회 종료일(YYYY-MM-DD)")
-    #user_id: int | None = None
 
 
 class GeneratedEventEvidenceOut(ApiModel):

@@ -27,11 +27,11 @@ router = APIRouter()
 async def create_event_generation(
     payload: GenerateFromQueryIn,
     user_id: Annotated[
-        int,
+        str,
         Header(
             alias="X-User-ID",
             description=(
-                "B.E가 인증한 요청 사용자의 ID입니다. "
+                "B.E가 인증한 요청 사용자의 문자열 ID입니다. 숫자와 텍스트를 모두 허용합니다. "
                 "이벤트 저장 시 생성자·수정자 ID로 사용합니다. "
                 "인증 토큰이 아닙니다."
             ),
