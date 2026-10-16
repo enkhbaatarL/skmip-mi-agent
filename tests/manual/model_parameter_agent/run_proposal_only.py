@@ -96,14 +96,13 @@ V4_STRATEGY = "multi_event_model_lever_dimensions"
 EVIDENCE_SCHEMA_VERSION = 6
 UNCOVERED_POLICY_VERSION = "uncovered-only-v1"
 RELEASE_REPLAY_POLICY_VERSION = "release-replay-v1"
-BASELINE_CAPABILITY_RELEASE = "extend17-v9"
-EXPECTED_V4_0_CATALOG_CHECKSUM = "b9d8c051872b39903cc3b4d2f19cd00570156eecd82295f0d2b02fd042c4000b"
+BASELINE_CAPABILITY_RELEASE = "extend17-v10"
 EXPECTED_V4_1_CATALOG_CHECKSUM = "467749ea59c3af7e875669be23da00c0fd8ef7c226256f9518a5945e36e4d7c4"
-EXPECTED_NEW_BC_V9_CONTRACT_SHA256 = "a7b425aa1075a729dc9d32deada46198e91054d6799b2117c32850e3d3c6cead"
-EXPECTED_EXTEND17_V9_CONTRACT_SHA256 = "cb0bf82a40937510ef35fd617ba2fb9b8030620d0d05742180f4d568539db8a3"
-EXPECTED_RESOURCE_SEMANTIC_SCHEMA_HASH = "082f04589b962c6a4544e9ec883d4964e057b238e46bf87f60e8cadf4bfd5246"
+EXPECTED_NEW_BC_V10_CONTRACT_SHA256 = "c7005dcbd20d7ae32f27c903c07b5a334552955d23280dfdde9d2737e7a0d778"
+EXPECTED_EXTEND17_V10_CONTRACT_SHA256 = "269fda833216a29fe52555e87be7f58d40ad514a97c6e0a78fa43dad170f78c4"
+EXPECTED_RESOURCE_SEMANTIC_SCHEMA_HASH = "3644a4c69d903a793bf7247b278eef678ec4945dcbeb53858ee0ee9dba52cd41"
 EXPECTED_PACKAGED_RESOURCE_FINGERPRINT = "b1686b6308e8ba094277417bb79bfd85bfe05bb8013c20ed20545b9b2f9c1a44"
-EXPECTED_V9_WORKBOOK_PARAMETER_NAMES = frozenset(
+EXPECTED_V10_WORKBOOK_PARAMETER_NAMES = frozenset(
     {
         "GDP",
         "PMI",
@@ -121,20 +120,14 @@ EXPECTED_V9_WORKBOOK_PARAMETER_NAMES = frozenset(
         "ShippingCost",
         "RegionalProductionAdjustment",
         "ShippingFuelCost",
-        "CanalToll",
         "Suez Canal Cost",
         "Panama Canal Cost",
     },
 )
-EXPECTED_V5_CAPABILITY_NAMES = frozenset(
-    EXPECTED_V9_WORKBOOK_PARAMETER_NAMES - {"User-Adjusted Gas Demand"},
+EXPECTED_V6_CAPABILITY_NAMES = frozenset(
+    EXPECTED_V10_WORKBOOK_PARAMETER_NAMES - {"User-Adjusted Gas Demand"},
 )
-EXPECTED_EXTEND17_ALLOWLIST = frozenset(
-    EXPECTED_V5_CAPABILITY_NAMES - {"CanalToll"},
-)
-EXPECTED_LEGACY_V4_ALLOWLIST = frozenset(
-    EXPECTED_V5_CAPABILITY_NAMES - {"Suez Canal Cost", "Panama Canal Cost"},
-)
+EXPECTED_EXTEND17_ALLOWLIST = EXPECTED_V6_CAPABILITY_NAMES
 _PROPOSAL_CAPABILITY_CONTRACT = load_proposal_capability_contract()
 RUNTIME_PROPOSAL_CAPABILITY_NAMES = frozenset(
     item.parameter_name
@@ -145,26 +138,12 @@ CAPABILITY_RELEASES: dict[str, dict[str, Any]] = {
         "catalog_version": "v4.1",
         "catalog_checksum": EXPECTED_V4_1_CATALOG_CHECKSUM,
         "runtime_allowlist": EXPECTED_EXTEND17_ALLOWLIST,
-        "proposal_capability_parameter_names": EXPECTED_V5_CAPABILITY_NAMES,
-        "proposal_capability_release_id": "extend17-v9",
-        "proposal_capability_sha256": EXPECTED_EXTEND17_V9_CONTRACT_SHA256,
-        "workbook_parameter_names": EXPECTED_V9_WORKBOOK_PARAMETER_NAMES,
-        "resource_release_id": "new-bc-v9",
-        "workbook_contract_sha256": EXPECTED_NEW_BC_V9_CONTRACT_SHA256,
-        "resource_semantic_schema_hash": EXPECTED_RESOURCE_SEMANTIC_SCHEMA_HASH,
-        "effective_resource_fingerprint": EXPECTED_PACKAGED_RESOURCE_FINGERPRINT,
-        "uncovered_policy_version": UNCOVERED_POLICY_VERSION,
-    },
-    "extend17-v9-v4.0-compat": {
-        "catalog_version": "v4.0",
-        "catalog_checksum": EXPECTED_V4_0_CATALOG_CHECKSUM,
-        "runtime_allowlist": EXPECTED_LEGACY_V4_ALLOWLIST,
-        "proposal_capability_parameter_names": EXPECTED_V5_CAPABILITY_NAMES,
-        "proposal_capability_release_id": "extend17-v9",
-        "proposal_capability_sha256": EXPECTED_EXTEND17_V9_CONTRACT_SHA256,
-        "workbook_parameter_names": EXPECTED_V9_WORKBOOK_PARAMETER_NAMES,
-        "resource_release_id": "new-bc-v9",
-        "workbook_contract_sha256": EXPECTED_NEW_BC_V9_CONTRACT_SHA256,
+        "proposal_capability_parameter_names": EXPECTED_V6_CAPABILITY_NAMES,
+        "proposal_capability_release_id": "extend17-v10",
+        "proposal_capability_sha256": EXPECTED_EXTEND17_V10_CONTRACT_SHA256,
+        "workbook_parameter_names": EXPECTED_V10_WORKBOOK_PARAMETER_NAMES,
+        "resource_release_id": "new-bc-v10",
+        "workbook_contract_sha256": EXPECTED_NEW_BC_V10_CONTRACT_SHA256,
         "resource_semantic_schema_hash": EXPECTED_RESOURCE_SEMANTIC_SCHEMA_HASH,
         "effective_resource_fingerprint": EXPECTED_PACKAGED_RESOURCE_FINGERPRINT,
         "uncovered_policy_version": UNCOVERED_POLICY_VERSION,

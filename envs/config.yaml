@@ -70,7 +70,7 @@ hide_price_pressure: true
 scenario_group_v4_impact_catalog_version: v4.1
 
 # Model parameter
-model_parameter_proposal_flow_release: v4.1.8
+model_parameter_proposal_flow_release: v4.1.9
 model_parameter_transient_retry_max_attempts: 2
 model_parameter_transient_retry_base_delay_seconds: 0.5
 model_parameter_transient_retry_max_jitter_seconds: 0.25
@@ -124,12 +124,12 @@ model_parameter_resources:
       object_storage_path: fundamental_model_artifact/input_template/복호화_(Base) Trade Model_Input.xlsm
 
   workbook_contract:
-    path: contracts/model-parameter-workbook-contract-v9.json
+    path: contracts/model-parameter-workbook-contract-v10.json
 
   proposal_capabilities:
-    path: contracts/model-parameter-proposal-capabilities-v5.json
-    release_id: extend17-v9
-    sha256: cb0bf82a40937510ef35fd617ba2fb9b8030620d0d05742180f4d568539db8a3
+    path: contracts/model-parameter-proposal-capabilities-v6.json
+    release_id: extend17-v10
+    sha256: 269fda833216a29fe52555e87be7f58d40ad514a97c6e0a78fa43dad170f78c4
 
   lut:
     Coal Futures Price:

@@ -81,14 +81,11 @@ EXPECTED_CURRENT_ACTIVE_PARAMETER_NAMES = frozenset(
         "ShippingCost",
         "RegionalProductionAdjustment",
         "ShippingFuelCost",
-        "CanalToll",
         "Suez Canal Cost",
         "Panama Canal Cost",
     },
 )
-EXPECTED_CURRENT_PROPOSAL_PARAMETER_NAMES = EXPECTED_CURRENT_ACTIVE_PARAMETER_NAMES - {
-    "CanalToll",
-}
+EXPECTED_CURRENT_PROPOSAL_PARAMETER_NAMES = EXPECTED_CURRENT_ACTIVE_PARAMETER_NAMES
 EXPECTED_LUT_BACKED_PARAMETER_NAMES = frozenset(
     {
         "GDP",
@@ -120,7 +117,6 @@ EXPECTED_CURRENT_BASECASE_ONLY_PARAMETER_NAMES = frozenset(
         "ShippingCost",
         "RegionalProductionAdjustment",
         "ShippingFuelCost",
-        "CanalToll",
         "Suez Canal Cost",
         "Panama Canal Cost",
     },
@@ -144,6 +140,7 @@ EXPECTED_CURRENT_INACTIVE_PARAMETER_NAMES = frozenset(
         "ElectrificationRate",
         "RemainingUnrestrictedAmount",
         "VolumeCancelled",
+        "CanalToll",
     },
 )
 DEFERRED_SPECS = {"Coal Futures Price", "Gas Futures Price"}
@@ -458,7 +455,7 @@ def test_configmap_and_local_resource_manifests_match_canonical() -> None:
         "### Basecase-only canonical",
     )
     document_basecase_by_name = {row["parameter"]: row for row in document_basecase_rows}
-    assert len(document_basecase_by_name) == len(document_basecase_rows) == 8
+    assert len(document_basecase_by_name) == len(document_basecase_rows) == 7
     assert set(document_basecase_by_name) == EXPECTED_CURRENT_BASECASE_ONLY_PARAMETER_NAMES
 
     for name in EXPECTED_LUT_BACKED_PARAMETER_NAMES:
@@ -512,7 +509,7 @@ def test_configmap_and_local_resource_manifests_match_canonical() -> None:
         )
 
     assert (
-        local["model_parameter_proposal_flow_release"] == embedded["model_parameter_proposal_flow_release"] == "v4.1.8"
+        local["model_parameter_proposal_flow_release"] == embedded["model_parameter_proposal_flow_release"] == "v4.1.9"
     )
     assert (
         local["scenario_group_v4_impact_catalog_version"]
@@ -596,7 +593,7 @@ def test_canonical_mapping_workbook_and_archive_match_fixture() -> None:
     assert Counter(row["mapping_method"] for row in dimension_rows) == EXPECTED_SHARED_METHOD_COUNTS
 
     overview = workbook["0. Canonical Overview"]
-    assert [overview[cell].value for cell in ("A12", "B12", "C12", "D12")] == [26, 18, 129, 10]
+    assert [overview[cell].value for cell in ("A12", "B12", "C12", "D12")] == [26, 17, 129, 10]
     lut_rows = _worksheet_dicts(workbook["LUT Resource Manifest"])
     assert {row["parameter_or_resource"] for row in lut_rows if row["classification"] == "active"} == (
         EXPECTED_LUT_BACKED_PARAMETER_NAMES
@@ -607,6 +604,7 @@ def test_canonical_mapping_workbook_and_archive_match_fixture() -> None:
     assert {row["parameter_or_resource"] for row in lut_rows if row["classification"] == "deferred"} == (DEFERRED_SPECS)
     assert {row["parameter_or_resource"] for row in lut_rows if row["classification"] == "deferred-no-lut"} == {
         "ElectrificationRate",
+        "CanalToll",
         "RemainingUnrestrictedAmount",
         "User-Adjusted Gas Demand",
         "VolumeCancelled",
@@ -659,7 +657,7 @@ def test_canonical_document_and_combined_apply_runner_are_versioned_and_complete
 
     assert "model-parameter-canonical-v4.1-0050" in document
     assert "model-impact-lever-canonical-v4.1-0050" in document
-    assert "master 26행, 활성 18개" in document
+    assert "master 26행, 활성 17개" in document
     assert "shared legacy dimension mapping 129행" in document
     assert "direct 35, routing 6, indirect 55, na 33" in document
     assert "LUT-backed 10개 + Basecase-only 7개" in document
@@ -733,7 +731,7 @@ def test_operator_docs_do_not_reintroduce_pre_v4_active_or_legacy_mapping_state(
         assert not any(phrase in content for phrase in stale_phrases)
 
     canonical_summary = CANONICAL_DOC_PATH.read_text(encoding="utf-8")
-    assert "master 26행, 활성 18개" in canonical_summary
+    assert "master 26행, 활성 17개" in canonical_summary
     assert all(
         parameter_name in canonical_summary
         for parameter_name in EXPECTED_CURRENT_BASECASE_ONLY_PARAMETER_NAMES

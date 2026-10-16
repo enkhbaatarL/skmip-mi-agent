@@ -21,11 +21,11 @@ v1/v3 mapping의 현재 method count는 direct 35, routing 6, indirect 55, na 33
 도달하는 raw capability는 LUT-backed 10개다. v4는 이 테이블을 조회하거나 fallback으로 사용하지
 않으며 현행 v4.1 active Lever의 effective executable Parameter 17개에 도달한다.
 실제 runtime proposal은 v1/v3에서 `GDP`, `PMI`, `PowerMix`, `Temperature`, `LiqUtilAdjustment` 5개를
-유지하고, v4.1에서는 LUT-backed 10개와 Basecase-only 7개를 합친 `extend17-v9` capability를 허용한다.
+유지하고, v4.1에서는 LUT-backed 10개와 Basecase-only 7개를 합친 `extend17-v10` capability를 허용한다.
 이 제한은 Model Parameter Agent가 source matching 후, 값 제안 LLM과 persistence 전에 적용한다.
-v0050은 기존 v4/v4.0 catalog와 legacy mapping을 보존하고 v4.1 Lever ID 56~76의 운하 관련 3개 binding을
+v0050은 기존 v4/v4.0 catalog 행은 이력으로, legacy mapping은 비변경 상태로 보존하고 v4.1 Lever ID 56~76의 운하 관련 3개 binding을
 제자리 갱신한다. 기존 v4.1 Scenario Group은 version을 유지하고 checksum pin을 새 v4.1 checksum으로
-같은 transaction에서 이관한다. Proposal Flow는 `v4.1.8`, workbook은 `new-bc-v9`를 사용한다.
+같은 transaction에서 이관한다. Proposal Flow는 `v4.1.9`, workbook은 `new-bc-v10`를 사용한다.
 
 ## 2. 결론: 어디를 정본으로 볼 것인가
 
@@ -381,7 +381,7 @@ v4 handoff 구현은 최소한 다음 회귀를 계속 만족해야 한다.
 - binding 없는 price-only, binding 없음, inactive parameter, catalog unsupported가 각각 후보에서
   제외되고 reason이 남으며 conditional price-only는 근거 판정으로 진행하는지
 - v4.1 executable 고유 Parameter 17개와 v1/v3 reachable 10개를 유지하면서 runtime proposal에는 v1/v3 5종과
-  v4.1 `extend17-v9` 17종이 각각 정확히 남는지
+  v4.1 `extend17-v10` 17종이 각각 정확히 남는지
 - allow-list 밖의 executable binding만 있는 요청은 Step1.5·값 제안 LLM과 persistence 전에
   종료되는지
 - 동일 parameter가 여러 lever에서 나올 때 parameter는 중복되지 않고 provenance는
@@ -400,7 +400,7 @@ public proposal/confirmation endpoint·payload와 저장
 JSON shape을 변경하지 않으며 provenance와 미지원 진단은 내부 state, trace,
 validation warning 또는 실패 detail에만 둔다. runtime allow-list 적용도 DB·canonical·Lever
 catalog와 workbook artifact를 변경하지 않으며, versioned resource config와 startup validation은
-`extend17-v9`/`new-bc-v9` 계약으로 갱신한다. `new-bc-v9`은 ID 13·14 matrix target을
+`extend17-v10`/`new-bc-v10` 계약으로 갱신한다. `new-bc-v10`은 ID 13·14 matrix target을
 최종 workbook과 동일한 `G:CL` 84개월 범위로 제한하고 mgmt v0044 master와 정합화한다. Scenario Group Agent를 포함한
 다른 Agent와 confirmation flow는 기존 동작을 유지한다.
 

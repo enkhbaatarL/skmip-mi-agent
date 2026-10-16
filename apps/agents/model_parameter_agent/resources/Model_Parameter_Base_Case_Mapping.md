@@ -1,8 +1,8 @@
 # Model Parameter Base Case Mapping
 
-> 현재 runtime 계약은 Scenario API `v4`, Impact Lever catalog `v4.1`, Proposal Flow `v4.1.8`,
-> proposal capability `extend17-v9`, workbook contract `new-bc-v9`다. v0050은 v4.1 Lever의
-> Canal binding과 기존 v4.1 Scenario checksum pin을 함께 갱신하며, 과거 v4/v4.0 catalog·pin은 보존한다.
+> 현재 runtime 계약은 Scenario API `v4`, Impact Lever catalog `v4.1`, Proposal Flow `v4.1.9`,
+> proposal capability `extend17-v10`, workbook contract `new-bc-v10`다. v0050은 v4.1 Lever의
+> Canal binding과 기존 v4.1 Scenario checksum pin을 함께 갱신하며, 과거 v4/v4.0 catalog·pin은 DB 이력으로 보존하되 runtime에서는 지원하지 않는다.
 
 ## 기준과 범위
 
@@ -12,15 +12,15 @@
 - Impact Lever: `scripts/model_parameter/model-impact-lever-canonical-v4.1-0050.json`
 - v1/v3 shared mapping: `scripts/model_parameter/model-parameter-canonical-v1.json`의
   `dimension_mappings`
-- workbook 구조: `resources/contracts/model-parameter-workbook-contract-v9.json`
-- proposal capability: `resources/contracts/model-parameter-proposal-capabilities-v5.json`
+- workbook 구조: `resources/contracts/model-parameter-workbook-contract-v10.json`
+- proposal capability: `resources/contracts/model-parameter-proposal-capabilities-v6.json`
 - 화면 논리 테이블: `resources/contracts/model-parameter-logical-table-catalog-v4.json`
 
 현재 계약의 수량은 다음과 같다.
 
-- master 26행, 활성 18개, 비활성 8개
+- master 26행, 활성 17개, 비활성 9개
 - 현행 v4.1 proposal Parameter 17개: LUT-backed 10개 + Basecase-only 7개
-- v4.0 catalog 호환 전용 활성 Parameter 1개: `CanalToll`
+- 비활성 이력 Parameter: `CanalToll` (현행 runtime 제외)
 - v4.1 Impact Lever 21행, binding occurrence 56개, conditional occurrence 41개,
   executable 고유 Parameter 17개
 - v1/v3 shared legacy dimension mapping 129행
@@ -28,11 +28,11 @@
 - v1/v3 proposal allow-list 5개: `GDP`, `PMI`, `PowerMix`, `Temperature`,
   `LiqUtilAdjustment`
 
-mgmt v0050은 master ID 1~24, 과거 `v4`·`v4.0` Lever catalog, legacy mapping을 보존한다. ID 25·26과 화면 catalog v4를
+mgmt v0050은 ID 24를 비활성화하고 과거 `v4`·`v4.0` Lever catalog 행과 legacy mapping은 이력으로 보존한다. ID 25·26과 화면 catalog v4를
 추가하고, 기존 v4.1 Lever ID 56~76 중 운하 관련 3행만 제자리 갱신한다. 기존 v4.1 Scenario Group의
 catalog version은 유지하면서 checksum pin을 새 v4.1 checksum으로 같은 transaction에서 이관한다.
 
-## v4.1 `new-bc-v9` read-only proposal overlay
+## v4.1 `new-bc-v10` read-only proposal overlay
 
 이 overlay는 정확히 `api_version=v4`,
 `generation_strategy=multi_event_model_lever_dimensions`인 proposal에 적용한다. `read_only`는
@@ -40,17 +40,17 @@ workbook/reference를 읽기 전용으로 사용한다는 의미이며 proposal 
 아니다.
 
 정상 운영 요청은 활성 MI Base에 연결된 Demand·Supply·Trade workbook을 Object Storage에서 받아
-v9 구조 계약과 실제 다운로드 hash로 검증한다. packaged baseline은
+v10 구조 계약과 실제 다운로드 hash로 검증한다. packaged baseline은
 `resources/basecase_v4/new-bc-v2/`에 유지되며 startup 검증·검증된 cache fallback에만 사용한다.
 
-v9는 v8의 17개 read 계약을 유지하면서 Trade `ShippingCostInput`의 운하 블록을 다음처럼 분리한다.
+v10은 v9에서 분리한 Trade `ShippingCostInput` 운하 블록을 유지하고 통합 `CanalToll` reference를 제거한다.
 
 | Parameter | model target | exact source | records |
 |---|---|---|---:|
 | `Suez Canal Cost` | Trade / `ShippingCostInput` / `table4` | 행 39~46 중 Suez, Year, C열 `$ / crossing` | 5 |
 | `Panama Canal Cost` | Trade / `ShippingCostInput` / `table5` | 행 50~57 중 Panama, Year, C열 `$ / crossing` | 5 |
 
-ID 24 `CanalToll`은 두 블록을 함께 읽는 v4.0 catalog 호환 계약에만 남는다. v4.1 후보 선정·slot
+ID 24 `CanalToll`은 비활성 DB 이력으로만 남고 workbook contract에는 없다. 후보 선정·slot
 설정·값 제안에서는 ID 25와 26만 사용하며, Suez 근거로 Panama slot을 만들거나 그 반대 방향으로
 복구하지 않는다.
 
@@ -85,7 +85,7 @@ PowerMix는 파라미터를 분리하지 않는다. 동일 `PowerMix` 아래에�
 | 21 | N | VolumeCancelled | From/To 국가·연도별 취소 계약 물량의 최종 절대값이다. value는 BCM 단위이며 0 이상이다. proposedValue는 증감폭이 아니라 해당 Year/From Country/To Country에 적용할 취소 물량이다. Basecase exact slot만 사용한다. |
 | 22 | Y | RegionalProductionAdjustment | 권역·연도별 upstream 가스 공급량의 최종 절대값이다. value는 Bcm 단위이며 0 이상이다. proposedValue는 증감폭이나 월별 차질량이 아니라 해당 Year/Province·Basin/Country에 적용할 연간 공급량 자체다. Volumes (Bcm)와 % change는 동시에 사용하지 않는다. |
 | 23 | Y | ShippingFuelCost | 연도별 LNG 선박 연료비(IFO380)의 최종 절대값이다. value는 $/tonne 단위이며 0 이상이다. proposedValue는 해당 Year에 적용할 연료비 자체이며 ShippingCost 용선료와 합산하지 않는다. ShippingCostInput의 입력 모드가 Absolute일 때만 적용한다. |
-| 24 | Y | CanalToll | 운하·연도별 통항료의 최종 절대값이다. value는 $/crossing 단위이며 0 이상이다. proposedValue는 해당 Canal(Suez/Panama)/Year에 적용할 통항료 자체다. ShippingCostInput의 입력 모드가 Absolute일 때만 적용한다. |
+| 24 | N | CanalToll | 운하·연도별 통항료의 최종 절대값이다. value는 $/crossing 단위이며 0 이상이다. proposedValue는 해당 Canal(Suez/Panama)/Year에 적용할 통항료 자체다. ShippingCostInput의 입력 모드가 Absolute일 때만 적용한다. |
 | 25 | Y | Suez Canal Cost | Suez 운하·연도별 통항료의 최종 절대값이다. value는 $/crossing 단위이며 0 이상이다. ShippingCostInput의 Suez 블록만 사용한다. |
 | 26 | Y | Panama Canal Cost | Panama 운하·연도별 통항료의 최종 절대값이다. value는 $/crossing 단위이며 0 이상이다. ShippingCostInput의 Panama 블록만 사용한다. |
 
@@ -96,7 +96,7 @@ current canonical JSON과 업무용 Excel의 `Parameter Excel Mapping` sheet가 
 
 | ID | parameter | model_file | model_sheet | model_table | semantic axes |
 |---:|---|---|---|---|---|
-| 24 | `CanalToll` | Trade | `ShippingCostInput` | `table4` | Canal(Suez/Panama), Year; v4.0 catalog 호환 전용 |
+| 24 | `CanalToll` | Trade | `ShippingCostInput` | `table4` | Canal(Suez/Panama), Year; 비활성 이력 |
 | 25 | `Suez Canal Cost` | Trade | `ShippingCostInput` | `table4` | Canal(Suez), Year; Suez block only |
 | 26 | `Panama Canal Cost` | Trade | `ShippingCostInput` | `table5` | Canal(Panama), Year; Panama block only |
 
@@ -130,9 +130,8 @@ catalog 생성을 모두 수행한다. adapter schema version은 `model-paramete
 
 ### Basecase-only canonical
 
-다음 활성 8개는 master의 `basecase_*`로 읽은 exact slot만 사용한다. 별도 LUT adapter나
-nearest/partial-key fallback을 만들지 않는다. `CanalToll`은 v4.0 catalog 호환 전용이므로 현행 v4.1
-proposal에는 나머지 7개만 진입한다.
+다음 활성 7개는 master의 `basecase_*`로 읽은 exact slot만 사용한다. 별도 LUT adapter나
+nearest/partial-key fallback을 만들지 않는다. `CanalToll`은 비활성 이력으로만 남고 runtime에는 진입하지 않는다.
 
 | parameter | exact Basecase 기준 |
 |---|---|
@@ -141,7 +140,6 @@ proposal에는 나머지 7개만 진입한다.
 | ShippingCost | Year |
 | RegionalProductionAdjustment | Year, Province/Basin/Country |
 | ShippingFuelCost | Year |
-| CanalToll | Canal(Suez/Panama), Year; v4.0 catalog compatibility only |
 | Suez Canal Cost | Canal(Suez), Year; table4 only |
 | Panama Canal Cost | Canal(Panama), Year; table5 only |
 
@@ -180,20 +178,20 @@ Suez/Panama가 직접 명시되고 물리적 운송 경로·적용 연도가 확
   `HurricaneIntensity`, `LiqProdAdjustment`, `LiqUtilAdjustment`, `PipelineAdjustment`,
   `SupplyDisruption` 10개다.
 - runtime allow-list는 이 중 `GDP`, `PMI`, `PowerMix`, `Temperature`, `LiqUtilAdjustment` 5개다.
-- Basecase-only 8개와 신규 운하 Parameter에는 legacy dimension mapping을 추가하지 않는다.
+- Basecase-only 7개와 신규 운하 Parameter에는 legacy dimension mapping을 추가하지 않는다.
 - v0050은 legacy mapping의 행·값·checksum을 변경하지 않는다.
 
 변경 전 2026-08-13 snapshot 128행과 v4 rollout 이력은
 `scripts/model_parameter/snapshots/external_dev_before_model_parameter_v4_20260813.json` 및 archive
 workbook으로 보존한다. 현재 DB 적용 입력으로 사용하지 않는다.
 
-## 충돌 해결과 호환 원칙
+## 충돌 해결과 버전 원칙
 
 | 항목 | 현재 결정 |
 |---|---|
 | Suez/Panama가 한 Parameter·한 table로 표현됨 | v0050의 v4.1 개정에서 ID 25/table4와 ID 26/table5로 분리 |
-| 기존 `CanalToll` 처리 | ID 24와 v4.0 binding은 보존하고 v4.0 catalog 호환 실행에만 사용 |
-| 기존 Scenario 처리 | v4는 그대로 보존; v4.1은 version 유지·checksum만 새 정본으로 transaction 이관 |
+| 기존 `CanalToll` 처리 | ID 24와 과거 binding은 DB 이력으로 보존하되 runtime에서는 사용하지 않음 |
+| 기존 Scenario 처리 | v4/v4.0 pin은 이력으로 보존하되 Agent 실행은 거절; v4.1은 version 유지·checksum만 새 정본으로 transaction 이관 |
 | PowerMix yearly/monthly | Parameter는 하나로 유지하고 table1/table2 출력 grain만 구분 |
 | Coal/Gas futures | `enabled=false`, `use_yn=N`; 2026년 이후 strip 부재 상태에서 이월 금지 |
 | 비활성 direct demand/trade override | metadata만 보존하고 proposal capability에서 제외 |
@@ -203,7 +201,7 @@ workbook으로 보존한다. 현재 DB 적용 입력으로 사용하지 않는�
 
 현재 업무용 Excel은
 `resources/mapping/261016_시나리오가정_MI수급모델_input_매핑_model-parameter-canonical-v4.1.xlsx`다.
-Parameter 26행, 활성 18개, v4.1 binding 56행, legacy mapping 129행을 포함한다.
+Parameter 26행, 활성 17개, v4.1 binding 56행, legacy mapping 129행을 포함한다.
 
 직전 `260813_...canonical-v4.xlsx`와 더 오래된 workbook은 `resources/mapping/archive/`에 역사
 자료로 보존한다. 동기화 검증은 다음 명령으로 수행한다.

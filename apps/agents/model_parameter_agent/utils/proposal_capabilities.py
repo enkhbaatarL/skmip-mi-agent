@@ -16,20 +16,16 @@ from apps.common.values.error_codes import ErrorCode
 
 PACKAGE_RESOURCE_DIR = Path(__file__).resolve().parents[1] / "resources"
 DEFAULT_PROPOSAL_CAPABILITY_CONTRACT_PATH = (
-    PACKAGE_RESOURCE_DIR / "contracts/model-parameter-proposal-capabilities-v5.json"
+    PACKAGE_RESOURCE_DIR / "contracts/model-parameter-proposal-capabilities-v6.json"
 )
 EXPECTED_EXTEND17_PARAMETER_IDS = frozenset(
     {4, 6, 7, 8, 11, 12, 13, 14, 15, 16, 17, 18, 20, 22, 23, 25, 26},
 )
-EXPECTED_COMPATIBILITY_PARAMETER_IDS = frozenset(
-    {*EXPECTED_EXTEND17_PARAMETER_IDS, 24},
-)
-EXPECTED_EXTEND17_RELEASE_ID = "extend17-v9"
+EXPECTED_EXTEND17_RELEASE_ID = "extend17-v10"
 EXPECTED_CATALOG_CHECKSUMS = {
-    "v4.0": "b9d8c051872b39903cc3b4d2f19cd00570156eecd82295f0d2b02fd042c4000b",
     "v4.1": "467749ea59c3af7e875669be23da00c0fd8ef7c226256f9518a5945e36e4d7c4",
 }
-CatalogVersion = Literal["v4.0", "v4.1"]
+CatalogVersion = Literal["v4.1"]
 
 
 class ProposalModelTarget(BaseModel):
@@ -66,8 +62,8 @@ class ProposalCapabilityEntry(BaseModel):
 class ProposalCapabilityContract(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    schema_version: Literal["model-parameter-proposal-capabilities-v5"]
-    release_id: Literal["extend17-v9"]
+    schema_version: Literal["model-parameter-proposal-capabilities-v6"]
+    release_id: Literal["extend17-v10"]
     current_catalog_version: Literal["v4.1"]
     catalog_checksums: dict[CatalogVersion, str]
     parameters: tuple[ProposalCapabilityEntry, ...] = Field(min_length=1)
@@ -82,31 +78,25 @@ class ProposalCapabilityContract(BaseModel):
         if len(names) != len(set(names)):
             msg = "duplicate parameterName in proposal capability contract"
             raise ValueError(msg)
-        if frozenset(ids) != EXPECTED_COMPATIBILITY_PARAMETER_IDS:
+        if frozenset(ids) != EXPECTED_EXTEND17_PARAMETER_IDS:
             msg = (
-                "extend17 compatibility capability IDs differ: "
-                f"expected={sorted(EXPECTED_COMPATIBILITY_PARAMETER_IDS)}, actual={sorted(ids)}"
+                "extend17 v4.1 capability IDs differ: "
+                f"expected={sorted(EXPECTED_EXTEND17_PARAMETER_IDS)}, actual={sorted(ids)}"
             )
             raise ValueError(msg)
         if self.catalog_checksums != EXPECTED_CATALOG_CHECKSUMS:
-            msg = "extend17 proposal capability catalog checksums differ from the reviewed v4/v4.1 contracts"
+            msg = "extend17 proposal capability checksum differs from the reviewed v4.1 contract"
             raise ValueError(msg)
-        ids_by_version = {
-            version: frozenset(
-                item.model_param_id
-                for item in self.parameters
-                if version in item.catalog_versions
-            )
-            for version in EXPECTED_CATALOG_CHECKSUMS
-        }
-        legacy_ids = frozenset(
-            {4, 6, 7, 8, 11, 12, 13, 14, 15, 16, 17, 18, 20, 22, 23, 24},
+        ids_by_version = frozenset(
+            item.model_param_id
+            for item in self.parameters
+            if self.current_catalog_version in item.catalog_versions
         )
-        if ids_by_version["v4.0"] != legacy_ids:
-            msg = "legacy v4.0 capability scope must remain pinned to the CanalToll contract"
-            raise ValueError(msg)
-        if ids_by_version["v4.1"] != EXPECTED_EXTEND17_PARAMETER_IDS:
+        if ids_by_version != EXPECTED_EXTEND17_PARAMETER_IDS:
             msg = "v4.1 capability scope must use the split Suez/Panama parameters"
+            raise ValueError(msg)
+        if any(item.catalog_versions != (self.current_catalog_version,) for item in self.parameters):
+            msg = "proposal capabilities must support only the current v4.1 catalog"
             raise ValueError(msg)
         return self
 
@@ -177,8 +167,15 @@ def validate_v4_candidate_capability(
             ErrorCode.INVALID_REQUEST,
             detail=f"v4 proposal candidate is missing impactCatalogVersion: parameter={parameter_name}",
         )
-    if catalog_version not in capability.catalog_versions:
-        return None
+    if catalog_version != active_contract.current_catalog_version:
+        raise MIBaseError(
+            ErrorCode.INVALID_REQUEST,
+            detail=(
+                "Model Parameter proposal supports only the current Impact Lever catalog: "
+                f"expected={active_contract.current_catalog_version}, actual={catalog_version}, "
+                f"parameter={parameter_name}"
+            ),
+        )
     expected_checksum = active_contract.catalog_checksums.get(catalog_version)
     candidate_checksum = str(candidate.get("impact_catalog_checksum") or "").strip()
     if candidate_checksum and candidate_checksum != expected_checksum:

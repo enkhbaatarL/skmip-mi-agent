@@ -252,7 +252,7 @@ def test_existing_pool_plan_gates_actual_preflight_release_identity() -> None:
                 "catalog_version": "v4.1",
                 "catalog_checksum": EXPECTED_CATALOG_CHECKSUM,
             },
-            "resource": {"proposal_flow_release": "v4.1.8"},
+            "resource": {"proposal_flow_release": "v4.1.9"},
         },
         "safety": {"confirmation_invoked": False, "callback_invoked": False},
         "selection": {"counts": {"discovered": 3, "preflight_fail": 0, "hard_stop": 0}},
@@ -365,8 +365,8 @@ def test_selection_plan_gates_actual_read_only_release_and_scope(tmp_path: Path)
                 "catalog_checksum": EXPECTED_CATALOG_CHECKSUM,
             },
             "resource": {
-                "proposal_flow_release": "v4.1.8",
-                "proposal_capability_release_id": "extend16-v8",
+                "proposal_flow_release": "v4.1.9",
+                "proposal_capability_release_id": "extend17-v10",
             },
         },
         "safety": {"confirmation_invoked": False, "callback_invoked": False},
@@ -526,7 +526,7 @@ def _full_plan_and_execution() -> tuple[dict[str, Any], dict[str, Any]]:
                 "catalog_version": "v4.1",
                 "catalog_checksum": EXPECTED_CATALOG_CHECKSUM,
             },
-            "resource": {"proposal_flow_release": "v4.1.8"},
+            "resource": {"proposal_flow_release": "v4.1.9"},
         },
         "safety": {
             "confirmation_invoked": False,
@@ -579,7 +579,7 @@ def test_evaluate_execution_distinguishes_type_and_exact_slot_value_variation() 
                 "catalog_version": "v4.1",
                 "catalog_checksum": EXPECTED_CATALOG_CHECKSUM,
             },
-            "resource": {"proposal_flow_release": "v4.1.8"},
+            "resource": {"proposal_flow_release": "v4.1.9"},
         },
         "safety": {
             "confirmation_invoked": False,
@@ -639,7 +639,7 @@ def test_value_differentiation_ignores_value_cell_order_only_changes() -> None:
                 "catalog_version": "v4.1",
                 "catalog_checksum": EXPECTED_CATALOG_CHECKSUM,
             },
-            "resource": {"proposal_flow_release": "v4.1.8"},
+            "resource": {"proposal_flow_release": "v4.1.9"},
         },
         "safety": {
             "confirmation_invoked": False,
@@ -689,7 +689,7 @@ def test_main_scenario_value_kpi_requires_all_three_signatures_to_differ() -> No
                 "catalog_version": "v4.1",
                 "catalog_checksum": EXPECTED_CATALOG_CHECKSUM,
             },
-            "resource": {"proposal_flow_release": "v4.1.8"},
+            "resource": {"proposal_flow_release": "v4.1.9"},
         },
         "safety": {
             "confirmation_invoked": False,
@@ -708,7 +708,7 @@ def test_main_scenario_value_kpi_requires_all_three_signatures_to_differ() -> No
 
 def test_merge_execution_evidence_combines_non_overlapping_release_matched_attempts() -> None:
     manifest = {
-        "capability_release": "extend16-v8",
+        "capability_release": "extend17-v10",
         "capability_contract": {
             "catalog_version": "v4.1",
             "catalog_checksum": EXPECTED_CATALOG_CHECKSUM,
@@ -717,7 +717,7 @@ def test_merge_execution_evidence_combines_non_overlapping_release_matched_attem
             "release_id": "new-bc-v8",
             "contract_sha256": "contract",
             "proposal_capability_sha256": "capability",
-            "proposal_flow_release": "v4.1.8",
+            "proposal_flow_release": "v4.1.9",
         },
     }
     left = {
@@ -750,12 +750,12 @@ def test_merge_execution_evidence_rejects_duplicate_scenario_attempt() -> None:
     execution = {
         "status": "PASS",
         "manifest": {
-            "capability_release": "extend16-v8",
+            "capability_release": "extend17-v10",
             "capability_contract": {
                 "catalog_version": "v4.1",
                 "catalog_checksum": EXPECTED_CATALOG_CHECKSUM,
             },
-            "resource": {"proposal_flow_release": "v4.1.8"},
+            "resource": {"proposal_flow_release": "v4.1.9"},
         },
         "attempts": [{"scenario_id": 1, "status": "PASS"}],
     }
@@ -766,7 +766,7 @@ def test_merge_execution_evidence_rejects_duplicate_scenario_attempt() -> None:
 
 def test_post_fix_evidence_explicitly_replaces_attempt_and_keeps_audit() -> None:
     manifest = {
-        "capability_release": "extend16-v8",
+        "capability_release": "extend17-v10",
         "capability_contract": {
             "catalog_version": "v4.1",
             "catalog_checksum": EXPECTED_CATALOG_CHECKSUM,
@@ -775,7 +775,7 @@ def test_post_fix_evidence_explicitly_replaces_attempt_and_keeps_audit() -> None
             "release_id": "new-bc-v8",
             "contract_sha256": "contract",
             "proposal_capability_sha256": "capability",
-            "proposal_flow_release": "v4.1.8",
+            "proposal_flow_release": "v4.1.9",
         },
     }
     baseline = {
@@ -856,12 +856,12 @@ def test_post_fix_evidence_requires_reason() -> None:
     execution = {
         "status": "REVIEW",
         "manifest": {
-            "capability_release": "extend16-v8",
+            "capability_release": "extend17-v10",
             "capability_contract": {
                 "catalog_version": "v4.1",
                 "catalog_checksum": EXPECTED_CATALOG_CHECKSUM,
             },
-            "resource": {"proposal_flow_release": "v4.1.8"},
+            "resource": {"proposal_flow_release": "v4.1.9"},
         },
         "attempts": [{"scenario_id": 1, "status": "ABSTAINED"}],
     }
@@ -977,7 +977,7 @@ def test_authorized_mi_base_trace_backfill_is_audited_and_not_reported_as_direct
                 "catalog_version": "v4.1",
                 "catalog_checksum": EXPECTED_CATALOG_CHECKSUM,
             },
-            "resource": {"proposal_flow_release": "v4.1.8"},
+            "resource": {"proposal_flow_release": "v4.1.9"},
             "required_mi_base_fallback_mode": "configured_fallback",
             "mi_base_fallback_policy": {
                 "active_case_unavailable_mode": "configured_fallback",
@@ -1174,7 +1174,7 @@ def test_regenerated_event_pool_testset_freezes_dynamic_40_group_identity() -> N
         sha256="sha",
     )
 
-    assert dataset["dataset_id"] == ("model-parameter-v4.1.8-existing-event-pool-regenerated-40-groups-20261007")
+    assert dataset["dataset_id"] == ("model-parameter-v4.1.9-existing-event-pool-regenerated-40-groups-20261007")
     assert dataset["cohort_identity"]["event_pool_reused_exactly"] is True
     assert result["pass"] is True
 
@@ -1208,7 +1208,7 @@ def test_semantic_empty_retry_prohibition_is_not_counted_as_integrity_error() ->
                 "catalog_version": "v4.1",
                 "catalog_checksum": EXPECTED_CATALOG_CHECKSUM,
             },
-            "resource": {"proposal_flow_release": "v4.1.8"},
+            "resource": {"proposal_flow_release": "v4.1.9"},
         },
         "safety": {
             "confirmation_invoked": False,
@@ -1606,7 +1606,7 @@ def _final_cohort_fixture_and_history() -> tuple[dict[str, Any], dict[str, Any]]
                 "catalog_version": "v4.1",
                 "catalog_checksum": EXPECTED_CATALOG_CHECKSUM,
             },
-            "resource": {"proposal_flow_release": "v4.1.8"},
+            "resource": {"proposal_flow_release": "v4.1.9"},
         },
         "selection": {
             "counts": {
@@ -1688,13 +1688,13 @@ def test_final_cohort_release_replay_uses_only_new_campaign_rows_and_renders_con
                 "neuro_config_path": "devops/k8s/configmap.yaml",
                 "neuro_config_sha256": "b" * 64,
                 "local_declared": {
-                    "model_parameter_proposal_flow_release": "v4.1.8",
+                    "model_parameter_proposal_flow_release": "v4.1.9",
                 },
                 "neuro_declared": {
-                    "model_parameter_proposal_flow_release": "v4.1.8",
+                    "model_parameter_proposal_flow_release": "v4.1.9",
                 },
                 "runtime_effective": {
-                    "model_parameter_proposal_flow_release": "v4.1.8",
+                    "model_parameter_proposal_flow_release": "v4.1.9",
                 },
                 "local_vs_neuro_differences": [],
                 "top_level_key_parity": True,
@@ -1720,7 +1720,7 @@ def test_final_cohort_release_replay_uses_only_new_campaign_rows_and_renders_con
     assert analysis["final_history"]["proposal_source"] == "campaign-only append readback"
     assert analysis["multiple_blocking_proposal_ids"] == {}
     assert "실행·배포 Model Parameter Config" in rendered
-    assert '"model_parameter_proposal_flow_release": "v4.1.8"' in rendered
+    assert '"model_parameter_proposal_flow_release": "v4.1.9"' in rendered
     assert analysis["kpis"]["proposal_success_count"] == 5
     assert analysis["kpis"]["scenario_count"] == 6
     assert analysis["kpis"]["triple_success_group_count"] == 1

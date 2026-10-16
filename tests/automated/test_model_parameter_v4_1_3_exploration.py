@@ -42,7 +42,7 @@ V4_CONTEXT = {
 }
 
 
-def test_bounded_expert_policy_covers_v4_1_and_legacy_canal_parameters() -> None:
+def test_bounded_expert_policy_covers_current_v4_1_parameters() -> None:
     assert VARIATION_POLICY_RELEASE == "bounded-expert-v3"
     assert set(PARAMETER_VARIATION_POLICIES) == {
         "GDP",
@@ -60,7 +60,6 @@ def test_bounded_expert_policy_covers_v4_1_and_legacy_canal_parameters() -> None
         "ShippingCost",
         "RegionalProductionAdjustment",
         "ShippingFuelCost",
-        "CanalToll",
         "Suez Canal Cost",
         "Panama Canal Cost",
     }
@@ -292,7 +291,7 @@ def test_route_routing_policy_recovers_only_shipping_cost_after_complete_all_na(
     candidates = [
         _route_disruption_candidate("ShippingCost"),
         _route_disruption_candidate("ShippingFuelCost"),
-        _route_disruption_candidate("CanalToll"),
+        _route_disruption_candidate("Suez Canal Cost"),
     ]
     task = {
         "dimension_key": "v4|d1|d1v3|routedisruption",
@@ -332,14 +331,12 @@ def test_route_routing_policy_keeps_hallucination_boundaries() -> None:
     assert set(CONDITIONAL_ROUTING_POLICIES) == {
         ("route_disruption", "ShippingCost"),
         ("route_disruption", "ShippingFuelCost"),
-        ("route_disruption", "CanalToll"),
         ("route_disruption", "Suez Canal Cost"),
         ("route_disruption", "Panama Canal Cost"),
         ("regional_price_spread", "ShippingCost"),
     }
     assert CONDITIONAL_ROUTING_POLICIES[("route_disruption", "ShippingCost")].allow_policy_recovery is True
     assert CONDITIONAL_ROUTING_POLICIES[("route_disruption", "ShippingFuelCost")].allow_policy_recovery is False
-    assert CONDITIONAL_ROUTING_POLICIES[("route_disruption", "CanalToll")].allow_policy_recovery is False
     assert CONDITIONAL_ROUTING_POLICIES[("route_disruption", "Suez Canal Cost")].allow_policy_recovery is False
     assert CONDITIONAL_ROUTING_POLICIES[("route_disruption", "Panama Canal Cost")].allow_policy_recovery is False
     assert CONDITIONAL_ROUTING_POLICIES[("regional_price_spread", "ShippingCost")].allow_policy_recovery is True
@@ -436,7 +433,7 @@ def test_step1_5_live_shape_all_na_is_recovered_before_semantic_abstention(
     candidates = [
         _route_disruption_candidate("ShippingCost"),
         _route_disruption_candidate("ShippingFuelCost"),
-        _route_disruption_candidate("CanalToll"),
+        _route_disruption_candidate("Panama Canal Cost"),
     ]
     task_key = "v4|d1|d1v3|routedisruption"
     response = SimpleNamespace(

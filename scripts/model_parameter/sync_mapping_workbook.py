@@ -351,7 +351,7 @@ def _build_overview(
         value_cell.alignment = Alignment(horizontal="center", vertical="center")
 
     worksheet.merge_cells("A16:D16")
-    worksheet["A16"] = "활성 master 18개 (v4.1 proposal 17개; CanalToll은 v4.0 catalog 호환용)"
+    worksheet["A16"] = "활성 master 17개 (현행 v4.1 proposal 17개; CanalToll은 비활성 이력)"
     worksheet["A16"].fill = SUBHEADER_FILL
     worksheet["A16"].font = Font(bold=True, color="17365D")
     worksheet["A16"].alignment = Alignment(horizontal="center")
@@ -588,13 +588,13 @@ def _build_conflict_sheet(workbook: Workbook, canonical: Mapping[str, Any]) -> N
     rows = (
         (
             "초안 Markdown/Excel의 활성 상태 차이",
-            "DB master 26행, 활성 18행; v4.1 proposal은 LUT 10종 + Basecase-only 7종",
+            "DB master 26행, 활성 17행; v4.1 proposal은 LUT 10종 + Basecase-only 7종",
             "외부개발 DB snapshot, 최종 허용 목록, LUT horizon",
             "canonical JSON/SQL/config/docs/current workbook",
         ),
         (
             "DB와 초안의 data start row·column role 차이",
-            "LUT 10개는 유지하고 활성 Basecase-only 8개는 검증된 exact slot만 사용; CanalToll은 v4.0 catalog 호환 전용",
+            "LUT 10개와 활성 Basecase-only 7개는 검증된 exact slot만 사용; CanalToll은 비활성 이력으로만 보존",
             "basecase workbook 구조 및 외부개발 DB read-back",
             "Parameter Excel Mapping 26행",
         ),

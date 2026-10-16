@@ -18,7 +18,7 @@ AUDIT_USER = "model-parameter-canal-split-v0050"
 EXPECTED_SOURCE_IDS = frozenset(range(1, 25))
 EXPECTED_FINAL_IDS = frozenset(range(1, 27))
 EXPECTED_ACTIVE_IDS = frozenset(
-    {4, 6, 7, 8, 11, 12, 13, 14, 15, 16, 17, 18, 20, 22, 23, 24, 25, 26},
+    {4, 6, 7, 8, 11, 12, 13, 14, 15, 16, 17, 18, 20, 22, 23, 25, 26},
 )
 
 NEW_MASTER_ROWS: tuple[dict[str, Any], ...] = (
@@ -130,6 +130,10 @@ def build_document() -> dict[str, Any]:
             row["basecase_value_end_col"] = "CL"
             row["mod_usr_logn_id"] = "model-parameter-master-v0044"
             row["mod_dtm"] = None
+        if int(row["model_param_id"]) == 24:
+            row["use_yn"] = "N"
+            row["mod_usr_logn_id"] = AUDIT_USER
+            row["mod_dtm"] = None
     master.extend(dict(row) for row in NEW_MASTER_ROWS)
     master.sort(key=lambda row: int(row["model_param_id"]))
 
@@ -164,6 +168,7 @@ def build_document() -> dict[str, Any]:
         "audit_user": AUDIT_USER,
         "runtime_scope": {
             "master": "0050 authority",
+            "impact_catalog": "v4.1 only; historical catalog rows are not a Model Parameter compatibility route",
             "dimension_mappings": "protected shared v1/v3 authority; unchanged by v0050",
             "dimension_mapping_authority": str(LEGACY_MAPPING_PATH.relative_to(ROOT_DIR)),
         },

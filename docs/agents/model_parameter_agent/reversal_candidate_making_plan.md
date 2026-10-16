@@ -1,11 +1,11 @@
 이 내용은 한마디로 말하면, **지금의 “Event → Scenario → Lever → Parameter” 흐름을 거꾸로 훑어서, 앞으로 모니터링할 만한 미래 Event 후보를 먼저 만들어보자는 아이디어**입니다.
 
-참고 자료상 현재 v4는 legacy dimension mapping이 아니라 **선택된 Dimension Value의 Lever state + active Impact Lever catalog binding**으로 raw Parameter capability를 결정합니다. 신규 그룹용 v4.1 catalog는 effective active Parameter 17개에 도달하고 v1/v3 mapping은 10개에 도달합니다. 실제 runtime proposal은 v1/v3의 기존 5개와 달리 v4.1에서 LUT-backed 10개와 Basecase-only 7개를 합친 `extend17-v9` 17개를 허용합니다. 이 gate를 통과한 뒤에도 conditional 근거와 exact slot이 있어야 합니다.
+참고 자료상 현재 v4는 legacy dimension mapping이 아니라 **선택된 Dimension Value의 Lever state + active Impact Lever catalog binding**으로 raw Parameter capability를 결정합니다. 신규 그룹용 v4.1 catalog는 effective active Parameter 17개에 도달하고 v1/v3 mapping은 10개에 도달합니다. 실제 runtime proposal은 v1/v3의 기존 5개와 달리 v4.1에서 LUT-backed 10개와 Basecase-only 7개를 합친 `extend17-v10` 17개를 허용합니다. 이 gate를 통과한 뒤에도 conditional 근거와 exact slot이 있어야 합니다.
 
 allow-list gate는 Model Parameter Agent의 source matching 뒤, exact slot·값 제안 LLM과 proposal
 persistence 전에만 적용됩니다. Scenario Group Agent를 비롯한 다른 Agent의 동작, confirmation,
 DB·canonical·catalog checksum과 workbook artifact는 바꾸지 않습니다. capability/workbook contract와 이를
-가리키는 config는 `extend17-v9`/`new-bc-v9`로 갱신됩니다.
+가리키는 config는 `extend17-v10`/`new-bc-v10`로 갱신됩니다.
 
 ## 1. “현재 체계를 거꾸로 사용한다”는 의미
 
@@ -213,7 +213,7 @@ Severe
 > 2027년 GoM 허리케인 시즌에 LNG 시설 영향이
 > Mild / Base / Severe 중 어느 수준일까?
 
-`HurricaneIntensity`는 `extend17-v9` runtime proposal allow-list에 포함됩니다. 다만 GoM Year/Month,
+`HurricaneIntensity`는 `extend17-v10` runtime proposal allow-list에 포함됩니다. 다만 GoM Year/Month,
 승인된 영향 시설, 직접 재해 근거와 0~4 정수 계약을 모두 충족해야 하므로, 일반적인 허리케인 전망만으로
 실행 가능 후보라고 평가하면 안 됩니다.
 
@@ -351,7 +351,7 @@ Future Event Candidate
 | 특정 국가 LNG 수입 규제 가능성     | trade restriction 계열 | RemainingUnrestrictedAmount 등 | 계약 조건                | 현재 proposal 차단       |
 
 여기서 마지막 컬럼이 중요합니다. 현재 **LUT-backed 활성 10개와 Basecase-only 활성 6개**는 raw resource
-capability이자 `extend17-v9` proposal 범위입니다. 그렇더라도 “Lever가 Parameter에 연결된다”거나 exact slot이 있다는 사실만으로
+capability이자 `extend17-v10` proposal 범위입니다. 그렇더라도 “Lever가 Parameter에 연결된다”거나 exact slot이 있다는 사실만으로
 현재 실행 가능하다고 판정하면 안 됩니다.
 
 ## 핵심 의미

@@ -64,12 +64,13 @@ def test_v4_1_v0050_master_is_reproducible_and_adds_only_split_parameters() -> N
     assert generated["master_count"] == 26
     assert generated["expected_counts"] == {
         "master": 26,
-        "active_parameters": 18,
-        "inactive_parameters": 8,
+        "active_parameters": 17,
+        "inactive_parameters": 9,
         "dimension_mappings": 129,
     }
     rows_by_id = {row["model_param_id"]: row for row in generated["master"]}
     assert rows_by_id[24]["parameter_name"] == "CanalToll"
+    assert rows_by_id[24]["use_yn"] == "N"
     assert rows_by_id[25]["parameter_name"] == "Suez Canal Cost"
     assert rows_by_id[25]["model_table"] == "table4"
     assert rows_by_id[26]["parameter_name"] == "Panama Canal Cost"

@@ -204,7 +204,7 @@ def test_prompt_and_request_limit_settings_have_safe_defaults() -> None:
     assert Settings.model_fields["model_parameter_max_total_selected_slots"].default == 300
     assert Settings.model_fields["model_parameter_max_step2_prompt_bytes"].default == 327_680
     assert Settings.model_fields["model_parameter_max_step3_prompt_bytes"].default == 327_680
-    assert Settings.model_fields["model_parameter_proposal_flow_release"].default == "v4.1.8"
+    assert Settings.model_fields["model_parameter_proposal_flow_release"].default == "v4.1.9"
     assert Settings.model_fields["model_parameter_max_routing_candidates_per_dimension"].default == 2
     assert Settings.model_fields["model_parameter_v4_max_routing_candidates_per_dimension"].default == 3
     assert Settings.model_fields["model_parameter_max_conditional_parameters_per_scenario"].default == 4

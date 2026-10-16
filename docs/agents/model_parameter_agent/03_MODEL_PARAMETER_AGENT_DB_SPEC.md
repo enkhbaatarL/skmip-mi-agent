@@ -9,7 +9,7 @@
 |---|---|
 | DB에는 무엇이 있나? | 파라미터 기준, legacy 연결 규칙, v3 event lineage, v4 Lever catalog와 제안·확정 결과가 있다. |
 | Agent는 어떻게 사용하나? | 파라미터·scenario lineage 기준은 읽고, 제안 결과표에는 처리 결과를 저장한다. |
-| 현재 외부개발 DB와 Agent 제안 범위는 몇 개인가? | v0050 적용 기준 master 26개 중 활성 18개다. 현행 v4.1 executable·`extend17-v9` proposal은 17개이며, 나머지 활성 `CanalToll`은 v4.0 catalog 호환용이다. v1/v3는 기존 5개다. |
+| 현재 외부개발 DB와 Agent 제안 범위는 몇 개인가? | v0050 적용 기준 master 26개 중 활성 17개다. 현행 v4.1 executable·`extend17-v10` proposal도 17개다. `CanalToll`은 비활성 이력이며 v1/v3는 기존 5개다. |
 | 이 문서의 범위는 무엇인가? | 기능 이해에 필요한 관계와 주요 데이터 모양을 설명한다. |
 
 > 이 문서의 개수는 체크인된 v4 master·Lever canonical과 v1/v3 canonical의 `dimension_mappings` 129행을 센 저장소 기준선이다. live DB 적용 상태를 뜻하지 않으며 운영 판정은 runner의 preflight와 DB read-back으로 확인한다. 2026-08-13 snapshot의 128행은 변경 전 증적이다.
@@ -18,7 +18,7 @@
 > 유지한다. 현행 v4.1은 ID `{4, 6, 7, 8, 11, 12, 13, 14, 15, 16, 17, 18, 20, 22, 23, 25, 26}`과
 > name/target이 capability contract와 일치해야 한다. mgmt v0050은 ID 25·26과 logical table catalog v4를
 > 추가하고 v4.1의 운하 관련 3개 Lever binding과 기존 v4.1 Scenario checksum pin을 함께 갱신한다.
-> 기존 ID 24, v4/v4.0 catalog·pin, legacy mapping은 보존한다.
+> ID 24와 v4/v4.0 catalog·pin은 DB 이력으로 보존하지만 Model Parameter Agent는 이를 실행하지 않는다. legacy mapping은 변경하지 않는다.
 
 ## 1. 핵심 테이블을 한 문장으로 이해하기
 
@@ -62,9 +62,8 @@ v3 context 테이블은 동적 composite dimension의 lineage를 기존 연결�
 
 `tmm_mi_model_param_m`에는 파라미터의 이름, 설명, 값을 넣을 모델 파일·시트·테이블, Basecase를 읽는 기준이 있다.
 Agent는 live DB에서 사용 중이며 삭제되지 않은 항목만 읽는다.
-현재 v0050 master는 26개 중 18개가 활성이다. 앞의 10개는 LUT-backed이고 나머지 활성 8개는
-Basecase-only다. 그중 `CanalToll`은 v4.0 catalog 호환용이므로 현행 v4.1 proposal은 Basecase-only 7개를
-사용한다. 아래 표는 현재 활성 정의와 workbook contract에 남은 비활성 호환 정의를 함께 설명하며, 실제 DB
+현재 v0050 master는 26개 중 17개가 활성이다. 앞의 10개는 LUT-backed이고 나머지 활성 7개는
+Basecase-only다. `CanalToll`은 비활성 이력이며 workbook contract와 runtime capability에서 제외된다. 아래 표는 현재 활성 정의와 비활성 이력을 함께 설명하며, 실제 DB
 적용 여부는 read-back으로 확인한다.
 
 | 파라미터 | 적용 대상 | 주요 좌표 | Basecase 읽기 방식 |
@@ -85,7 +84,7 @@ Basecase-only다. 그중 `CanalToll`은 v4.0 catalog 호환용이므로 현행 v
 | `ShippingCost` | Trade / ShippingCostInput | 연도 | Basecase exact slot만 사용 |
 | `RegionalProductionAdjustment` | Supply / ProductionAdjustment | Province·Basin·Country, 연도 | Basecase exact slot만 사용 |
 | `ShippingFuelCost` | Trade / ShippingCostInput / table3 | 연도 | IFO380 Basecase exact slot만 사용 |
-| `CanalToll` | Trade / ShippingCostInput / table4 | 운하, 연도 | v4.0 catalog 호환용 Basecase exact slot |
+| `CanalToll` | Trade / ShippingCostInput / table4 | 운하, 연도 | 비활성 이력; runtime reference 없음 |
 | `Suez Canal Cost` | Trade / ShippingCostInput / table4 | Suez, 연도 | 현행 v4.1 Basecase exact slot |
 | `Panama Canal Cost` | Trade / ShippingCostInput / table5 | Panama, 연도 | 현행 v4.1 Basecase exact slot |
 

@@ -97,17 +97,17 @@ raw active/executable candidate가 있어도 모두 runtime allow-list 밖인 �
 
 ### 정답 3
 
-- v0050 master 26행·활성 18개
+- v0050 master 26행·활성 17개
 - 체크인 legacy mapping 129행: direct 35, routing 6, indirect 55, na 33
 - active resource LUT-backed 10개
 - 현행 v4.1 Basecase-only proposal 7개: `RegasAdjustment`, `PNG Contract Volume`, `ShippingCost`,
   `RegionalProductionAdjustment`, `ShippingFuelCost`, `Suez Canal Cost`, `Panama Canal Cost`
-- 호환용 활성 master 1개: `CanalToll` (v4.0 catalog pin 전용)
-- inactive 3개: `User-Adjusted Gas Demand`, `RemainingUnrestrictedAmount`, `VolumeCancelled`
+- 비활성 이력 1개: `CanalToll` (현행 runtime 제외)
+- 그 밖의 inactive 8개 중 주요 참고: `User-Adjusted Gas Demand`, `RemainingUnrestrictedAmount`, `VolumeCancelled`
 - v1/v3 raw direct/routing reachability 10개
 - v4.1 active Lever 21개, binding occurrence 56개(conditional 41개), effective executable 고유 Parameter 17개
 - v1/v3 proposal 이름 allow-list 5개: `GDP`, `PMI`, `PowerMix`, `Temperature`, `LiqUtilAdjustment`
-- v4.1 `extend17-v9` ID capability 17개: LUT-backed 10개 + `RegasAdjustment`, `PNG Contract Volume`,
+- v4.1 `extend17-v10` ID capability 17개: LUT-backed 10개 + `RegasAdjustment`, `PNG Contract Volume`,
   `ShippingCost`, `RegionalProductionAdjustment`, `ShippingFuelCost`, `Suez Canal Cost`, `Panama Canal Cost`
 
 이 수는 live DB 조회 결과가 아니라 체크인 runtime fixture의 전역 합집합이다. v1/v3 raw reachability
@@ -115,7 +115,7 @@ raw active/executable candidate가 있어도 모두 runtime allow-list 밖인 �
 `LiqProdAdjustment`, `LiqUtilAdjustment`, `PipelineAdjustment`, `SupplyDisruption` 10개다. Basecase-only
 항목에는 legacy direct/routing row를 추가하지 않았다. v4.1 effective executable 17개는 Lever-native
 경로이며 shared mapping을 조회하지 않는다. 요청 하나에서는 관련 lineage·선택 value에 해당하는 하위 집합만
-후보가 된다. v4.1 executable 고유 17개와 `extend17-v9` capability는 ID/name/target set equality로
+후보가 된다. v4.1 executable 고유 17개와 `extend17-v10` capability는 ID/name/target set equality로
 일치해야 한다. 하나라도 capability에서 빠지면 release 실패이며 LLM·proposal 입력으로 진행하지 않는다.
 v1/v3는 raw 10개 중 5개만 허용한다.
 
@@ -159,7 +159,7 @@ Lever 방향은 시장·운영 문맥이지 각 모델 입력 필드의 수학�
 cross-table active binding, checksum/read-back과 함께 검증·적용한다. v0050은 v4/v4.0 catalog·pin과 legacy
 mapping을 보존하고, 같은 v4.1 Lever ID 56~76 중 운하 관련 3행의 CanalToll binding을 Suez/Panama로
 제자리 분리한다. 기존 v4.1 Scenario는 version을 유지하고 checksum pin을 같은 transaction에서 이관한다. versioned
-capability는 `extend17-v9`, workbook contract는 `new-bc-v9`이며 local/Kubernetes config의
+capability는 `extend17-v10`, workbook contract는 `new-bc-v10`이며 local/Kubernetes config의
 catalog version·capability release·hash를 함께 갱신한다. public API payload와 confirmation workflow도 변경하지 않는다.
 
 ### 정답 10

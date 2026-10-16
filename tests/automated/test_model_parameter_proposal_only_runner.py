@@ -304,7 +304,7 @@ def test_config_snapshot_captures_local_neuro_and_runtime_without_secrets() -> N
     assert snapshot["top_level_key_parity"] is True
     for section in ("local_declared", "neuro_declared", "runtime_effective"):
         values = snapshot[section]
-        assert values["model_parameter_proposal_flow_release"] == "v4.1.8"
+        assert values["model_parameter_proposal_flow_release"] == "v4.1.9"
         assert values["model_parameter_variation_profile_enabled"] is True
         assert values["model_parameter_grounded_slot_recovery_enabled"] is True
         storage = values["model_parameter_resource_storage"]
@@ -924,12 +924,7 @@ def test_approved_release_requires_exact_v4_1_catalog_pin(tmp_path: Path) -> Non
     assert any("approved capability release" in error for error in evidence["preflight"][0]["errors"])
 
 
-def test_v8_compat_release_accepts_existing_v4_0_catalog_pin(tmp_path: Path) -> None:
-    context = _context(
-        101,
-        catalog_version="v4.0",
-        catalog_checksum=runner.EXPECTED_V4_0_CATALOG_CHECKSUM,
-    )
+def test_v4_0_compat_release_is_not_accepted(tmp_path: Path) -> None:
     options = runner.ProposalOnlyOptions(
         execute=False,
         scenario_ids=(101,),
@@ -937,27 +932,9 @@ def test_v8_compat_release_accepts_existing_v4_0_catalog_pin(tmp_path: Path) -> 
         capability_release="extend17-v9-v4.0-compat",
         evidence_path=tmp_path / "v4-0-compat.json",
     )
-    dependencies = runner.RunnerDependencies(
-        load_context=lambda _scenario_id: context,
-        snapshot_proposal_rows=lambda _group_id, _scenario_ids: (),
-        evaluate_scenario=lambda _scenario_id: (_ for _ in ()).throw(
-            AssertionError("read-only campaign must not execute"),
-        ),
-        fetch_proposal=lambda _proposal_id: {},
-        failure_trace=lambda _exc: {},
-        build_quality_evidence=lambda _scenario_id, _context_value: _quality_evidence(
-            catalog_version="v4.0",
-            catalog_checksum=runner.EXPECTED_V4_0_CATALOG_CHECKSUM,
-        ),
-    )
 
-    evidence = asyncio.run(
-        runner.run_campaign(options, dependencies=dependencies),
-    )
-
-    assert evidence["status"] == "PASS"
-    assert evidence["preflight"][0]["stored_catalog_version"] == "v4.0"
-    assert evidence["preflight"][0]["active_catalog_version"] == "v4.0"
+    with pytest.raises(ValueError, match="unsupported --capability-release"):
+        runner._validate_options(options)  # noqa: SLF001
 
 
 def test_approved_release_blocks_runtime_allowlist_drift_before_database(

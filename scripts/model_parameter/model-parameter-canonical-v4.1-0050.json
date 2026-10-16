@@ -5,6 +5,7 @@
   "audit_user": "model-parameter-canal-split-v0050",
   "runtime_scope": {
     "master": "0050 authority",
+    "impact_catalog": "v4.1 only; historical catalog rows are not a Model Parameter compatibility route",
     "dimension_mappings": "protected shared v1/v3 authority; unchanged by v0050",
     "dimension_mapping_authority": "scripts/model_parameter/model-parameter-canonical-v1.json"
   },
@@ -24,7 +25,6 @@
     "ShippingCost",
     "RegionalProductionAdjustment",
     "ShippingFuelCost",
-    "CanalToll",
     "Suez Canal Cost",
     "Panama Canal Cost"
   ],
@@ -36,14 +36,15 @@
     "User-Adjusted Gas Demand",
     "ElectrificationRate",
     "RemainingUnrestrictedAmount",
-    "VolumeCancelled"
+    "VolumeCancelled",
+    "CanalToll"
   ],
   "master_count": 26,
   "mapping_count": 129,
   "expected_counts": {
     "master": 26,
-    "active_parameters": 18,
-    "inactive_parameters": 8,
+    "active_parameters": 17,
+    "inactive_parameters": 9,
     "dimension_mappings": 129
   },
   "legacy_dimension_mapping_sha256": "1c365c37184eb8a4141a996d2d298072bc8be58b22bc8d86c4116e0fc1f23dc4",
@@ -648,7 +649,7 @@
     },
     {
       "model_param_id": 24,
-      "use_yn": "Y",
+      "use_yn": "N",
       "parameter_name": "CanalToll",
       "parameter_hint": "운하·연도별 통항료의 최종 절대값이다. value는 $/crossing 단위이며 0 이상이다. proposedValue는 해당 Canal(Suez/Panama)/Year에 적용할 통항료 자체다. ShippingCostInput의 입력 모드가 Absolute일 때만 적용한다.",
       "model_file": "Trade",
@@ -668,8 +669,8 @@
       "basecase_stop_rule": "stop_when_all_key_columns_empty",
       "crt_usr_logn_id": "model-parameter-master-v0033",
       "crt_dtm": "2026-09-29T05:12:39.512489",
-      "mod_usr_logn_id": "model-parameter-master-v0033",
-      "mod_dtm": "2026-09-29T05:12:39.512489",
+      "mod_usr_logn_id": "model-parameter-canal-split-v0050",
+      "mod_dtm": null,
       "del_yn": "N"
     },
     {

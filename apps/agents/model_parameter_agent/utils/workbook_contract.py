@@ -19,7 +19,7 @@ from apps.common.values.error_codes import ErrorCode
 
 PACKAGE_DIR = Path(__file__).resolve().parents[1]
 PACKAGE_RESOURCE_DIR = PACKAGE_DIR / "resources"
-DEFAULT_WORKBOOK_CONTRACT_PATH = PACKAGE_RESOURCE_DIR / "contracts" / "model-parameter-workbook-contract-v9.json"
+DEFAULT_WORKBOOK_CONTRACT_PATH = PACKAGE_RESOURCE_DIR / "contracts" / "model-parameter-workbook-contract-v10.json"
 V1_PARAMETER_NAMES = frozenset({"GDP", "PMI", "PowerMix", "Temperature", "LiqUtilAdjustment"})
 EXTEND10_PARAMETER_NAMES = frozenset(
     {
@@ -55,6 +55,7 @@ CANAL_SPLIT_PARAMETER_NAMES = frozenset(
         "Panama Canal Cost",
     },
 )
+CURRENT_PARAMETER_NAMES = frozenset(CANAL_SPLIT_PARAMETER_NAMES - {"CanalToll"})
 EXPECTED_WORKBOOK_ROLES = frozenset({"demand", "supply", "trade"})
 APPROVED_POWER_MIX_VECTOR_MEMBERS = (
     "Liquids",
@@ -415,7 +416,7 @@ class WorkbookParameterContract(_FrozenModel):
 
 
 class ModelParameterWorkbookContract(_FrozenModel):
-    schema_version: Literal[1, 2, 3, 4, 5, 6, 7, 8, 9]
+    schema_version: Literal[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
     release_id: Literal[
         "new-bc-v1",
         "new-bc-v2",
@@ -426,6 +427,7 @@ class ModelParameterWorkbookContract(_FrozenModel):
         "new-bc-v7",
         "new-bc-v8",
         "new-bc-v9",
+        "new-bc-v10",
     ]
     capability: Literal["read_only_proposal"]
     api_version: Literal["v4"]
@@ -456,6 +458,8 @@ class ModelParameterWorkbookContract(_FrozenModel):
             if self.release_id == "new-bc-v5"
             else EXTEND14_PARAMETER_NAMES
             if self.release_id == "new-bc-v6"
+            else CURRENT_PARAMETER_NAMES
+            if self.release_id == "new-bc-v10"
             else CANAL_SPLIT_PARAMETER_NAMES
             if self.release_id == "new-bc-v9"
             else EXPECTED_PARAMETER_NAMES
@@ -470,6 +474,7 @@ class ModelParameterWorkbookContract(_FrozenModel):
             "new-bc-v7": 7,
             "new-bc-v8": 8,
             "new-bc-v9": 9,
+            "new-bc-v10": 10,
         }[self.release_id]
         if self.schema_version != expected_schema_version:
             raise ValueError("workbook contract schema version and release ID disagree")
@@ -506,6 +511,7 @@ class ModelParameterWorkbookContract(_FrozenModel):
             "new-bc-v7",
             "new-bc-v8",
             "new-bc-v9",
+            "new-bc-v10",
         }:
             if (
                 nameplate_transform is not None
@@ -531,6 +537,7 @@ class ModelParameterWorkbookContract(_FrozenModel):
             "new-bc-v7",
             "new-bc-v8",
             "new-bc-v9",
+            "new-bc-v10",
         }:
             pipeline = self.parameters["PipelineAdjustment"]
             supply = self.parameters["SupplyDisruption"]
@@ -563,7 +570,14 @@ class ModelParameterWorkbookContract(_FrozenModel):
                 or supply.write_target.value_field != "Volumes (Mt)"
             ):
                 raise ValueError("new-bc-v3+ must use the final workbook target sheets and Mt units")
-        if self.release_id in {"new-bc-v5", "new-bc-v6", "new-bc-v7", "new-bc-v8", "new-bc-v9"}:
+        if self.release_id in {
+            "new-bc-v5",
+            "new-bc-v6",
+            "new-bc-v7",
+            "new-bc-v8",
+            "new-bc-v9",
+            "new-bc-v10",
+        }:
             population = self.parameters["Population"]
             hurricane = self.parameters["HurricaneIntensity"]
             liq_prod = self.parameters["LiqProdAdjustment"]
@@ -590,7 +604,7 @@ class ModelParameterWorkbookContract(_FrozenModel):
                 or liq_prod.write_target.metadata_authority != "write_target"
             ):
                 raise ValueError("LiqProdAdjustment must retain its exact-slot production override contract")
-        if self.release_id in {"new-bc-v6", "new-bc-v7", "new-bc-v8", "new-bc-v9"}:
+        if self.release_id in {"new-bc-v6", "new-bc-v7", "new-bc-v8", "new-bc-v9", "new-bc-v10"}:
             basecase_only = {
                 "User-Adjusted Gas Demand": ("exact_rows", ("Country", "Year", "Month", "Demand Sub-Sector")),
                 "RegasAdjustment": (
@@ -626,7 +640,7 @@ class ModelParameterWorkbookContract(_FrozenModel):
                     raise ValueError(
                         f"{parameter_name} must retain its non-negative existing-exact Basecase-only contract",
                     )
-        if self.release_id in {"new-bc-v7", "new-bc-v8", "new-bc-v9"}:
+        if self.release_id in {"new-bc-v7", "new-bc-v8", "new-bc-v9", "new-bc-v10"}:
             new_parameters = {
                 "RegionalProductionAdjustment": (
                     "regional_production_annual",
@@ -634,8 +648,9 @@ class ModelParameterWorkbookContract(_FrozenModel):
                     "Bcm",
                 ),
                 "ShippingFuelCost": ("exact_rows", ("Year",), "$/tonne"),
-                "CanalToll": ("exact_rows", ("Canal", "Year"), "$/crossing"),
             }
+            if self.release_id != "new-bc-v10":
+                new_parameters["CanalToll"] = ("exact_rows", ("Canal", "Year"), "$/crossing")
             for parameter_name, (parser, exact_axes, unit) in new_parameters.items():
                 parameter = self.parameters[parameter_name]
                 if (
@@ -651,7 +666,7 @@ class ModelParameterWorkbookContract(_FrozenModel):
                     raise ValueError(
                         f"{parameter_name} must retain its non-negative direct-evidence v7+ contract",
                     )
-        if self.release_id in {"new-bc-v8", "new-bc-v9"}:
+        if self.release_id in {"new-bc-v8", "new-bc-v9", "new-bc-v10"}:
             for parameter_name in ("LiqProdAdjustment", "LiqUtilAdjustment"):
                 columns = self.parameters[parameter_name].write_target.columns
                 if (
@@ -664,7 +679,7 @@ class ModelParameterWorkbookContract(_FrozenModel):
                     raise ValueError(
                         f"{parameter_name} must retain the reviewed G:CL 84-month write-target boundary",
                     )
-        if self.release_id == "new-bc-v9":
+        if self.release_id in {"new-bc-v9", "new-bc-v10"}:
             split_canal_targets = {
                 "Suez Canal Cost": ("table4", ("Suez",), 5),
                 "Panama Canal Cost": ("table5", ("Panama",), 5),
@@ -692,7 +707,7 @@ class ModelParameterWorkbookContract(_FrozenModel):
                     or not parameter.constraints.direct_evidence_required
                 ):
                     raise ValueError(
-                        f"{parameter_name} must retain its dedicated canal/table v9 contract",
+                        f"{parameter_name} must retain its dedicated canal/table split contract",
                     )
         return self
 
@@ -733,8 +748,17 @@ def load_workbook_contract(
 ) -> ModelParameterWorkbookContract:
     try:
         document = json.loads(path.read_text(encoding="utf-8"))
-        if document.get("schema_version") in {2, 3, 4, 5, 6, 7, 8, 9} and "extends" in document:
+        if document.get("schema_version") in {2, 3, 4, 5, 6, 7, 8, 9, 10} and "extends" in document:
             extends = _extends_basename(document.pop("extends"))
+            remove_parameters = document.pop("remove_parameters", [])
+            if not isinstance(remove_parameters, list) or any(
+                not isinstance(item, str) or not item.strip() for item in remove_parameters
+            ):
+                raise ValueError("workbook contract remove_parameters must contain non-empty names")
+            if len(remove_parameters) != len(set(remove_parameters)):
+                raise ValueError("workbook contract remove_parameters must not contain duplicates")
+            if remove_parameters and document.get("schema_version") != 10:
+                raise ValueError("workbook contract parameter removal is supported only by schema version 10")
             base_path = path.parent / extends
             base_document = load_workbook_contract(base_path).model_dump(mode="json")
             base_document.update({key: value for key, value in document.items() if key != "parameters"})
@@ -742,6 +766,11 @@ def load_workbook_contract(
                 **base_document.get("parameters", {}),
                 **document.get("parameters", {}),
             }
+            unknown_removals = sorted(set(remove_parameters) - set(base_document["parameters"]))
+            if unknown_removals:
+                raise ValueError(f"workbook contract removes unknown parameters: {unknown_removals}")
+            for parameter_name in remove_parameters:
+                base_document["parameters"].pop(parameter_name)
             document = base_document
         return ModelParameterWorkbookContract.model_validate(document)
     except OSError as exc:
@@ -857,6 +886,7 @@ def validate_candidate_write_target(
 
 __all__ = [
     "APPROVED_POWER_MIX_VECTOR_MEMBERS",
+    "CURRENT_PARAMETER_NAMES",
     "DEFAULT_WORKBOOK_CONTRACT_PATH",
     "EXPECTED_PARAMETER_NAMES",
     "AxisTransform",
