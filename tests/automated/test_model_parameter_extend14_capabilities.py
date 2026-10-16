@@ -11,14 +11,20 @@ from apps.agents.model_parameter_agent.utils.parameter_mapping import (
     partition_proposal_parameter_candidates,
 )
 from apps.agents.model_parameter_agent.utils.proposal_capabilities import (
-    EXPECTED_EXTEND16_CATALOG_CHECKSUM,
-    EXPECTED_EXTEND16_PARAMETER_IDS,
+    EXPECTED_CATALOG_CHECKSUMS,
+    EXPECTED_COMPATIBILITY_PARAMETER_IDS,
+    EXPECTED_EXTEND17_PARAMETER_IDS,
+    EXPECTED_EXTEND17_RELEASE_ID,
     load_proposal_capability_contract,
 )
 from apps.common.exceptions.custom import MIBaseError
 
 
-def _candidate(entry: object) -> dict[str, object]:
+def _candidate(
+    entry: object,
+    *,
+    catalog_version: str = "v4.1",
+) -> dict[str, object]:
     target = entry.model_target  # type: ignore[attr-defined]
     return {
         "candidate_key": f"parameter|{entry.model_param_id}",  # type: ignore[attr-defined]
@@ -29,16 +35,18 @@ def _candidate(entry: object) -> dict[str, object]:
         "model_file": target.model_file,
         "model_sheet": target.model_sheet,
         "model_table": target.model_table,
+        "impact_catalog_version": catalog_version,
+        "impact_catalog_checksum": EXPECTED_CATALOG_CHECKSUMS[catalog_version],
     }
 
 
-def test_extend16_contract_has_exact_release_scope_and_reference_policies() -> None:
+def test_extend17_contract_has_exact_release_scope_and_reference_policies() -> None:
     contract = load_proposal_capability_contract()
 
-    assert contract.release_id == "extend16-v8"
-    assert contract.catalog_version == "v4.1"
-    assert contract.catalog_checksum == EXPECTED_EXTEND16_CATALOG_CHECKSUM
-    assert frozenset(contract.by_id) == EXPECTED_EXTEND16_PARAMETER_IDS
+    assert contract.release_id == EXPECTED_EXTEND17_RELEASE_ID
+    assert contract.current_catalog_version == "v4.1"
+    assert contract.catalog_checksums == EXPECTED_CATALOG_CHECKSUMS
+    assert frozenset(contract.by_id) == EXPECTED_COMPATIBILITY_PARAMETER_IDS
     assert 9 not in contract.by_id
     assert contract.by_id[11].parameter_name == "Population"
     assert contract.by_id[11].exact_axes == ("Country", "Year")
@@ -104,22 +112,35 @@ def test_extend16_contract_has_exact_release_scope_and_reference_policies() -> N
     assert contract.by_id[24].model_target.model_table == "table4"
     assert contract.by_id[24].constraints["unit"] == "$/crossing"
     assert contract.by_id[24].constraints["canal_toll_evidence_required"] is True
+    assert contract.by_id[24].catalog_versions == ("v4.0",)
+    assert contract.by_id[25].parameter_name == "Suez Canal Cost"
+    assert contract.by_id[25].exact_axes == ("Canal", "Year")
+    assert contract.by_id[25].model_target.model_table == "table4"
+    assert contract.by_id[25].constraints["canal"] == "Suez"
+    assert contract.by_id[25].catalog_versions == ("v4.1",)
+    assert contract.by_id[26].parameter_name == "Panama Canal Cost"
+    assert contract.by_id[26].exact_axes == ("Canal", "Year")
+    assert contract.by_id[26].model_target.model_table == "table5"
+    assert contract.by_id[26].constraints["canal"] == "Panama"
+    assert contract.by_id[26].catalog_versions == ("v4.1",)
     assert all(
         contract.by_id[model_param_id].constraints["basecase_only"]
-        for model_param_id in {16, 18, 20, 22, 23, 24}
+        for model_param_id in {16, 18, 20, 22, 23, 24, 25, 26}
     )
     assert {entry.reference_mode for entry in contract.parameters} == {"v4_workbook_then_lut"}
 
 
-def test_v4_scope_accepts_exactly_the_extend16_id_name_target_tuples() -> None:
+def test_v4_1_scope_accepts_exactly_the_extend17_id_name_target_tuples() -> None:
     contract = load_proposal_capability_contract()
     allowed, excluded = partition_proposal_parameter_candidates(
-        [_candidate(entry) for entry in contract.parameters],
+        [_candidate(entry) for entry in contract.parameters_for("v4.1")],
     )
 
-    assert {int(item["model_param_id"]) for item in allowed} == EXPECTED_EXTEND16_PARAMETER_IDS
+    assert {int(item["model_param_id"]) for item in allowed} == EXPECTED_EXTEND17_PARAMETER_IDS
     assert excluded == []
-    assert {item["proposal_capability_release_id"] for item in allowed} == {"extend16-v8"}
+    assert {item["proposal_capability_release_id"] for item in allowed} == {
+        EXPECTED_EXTEND17_RELEASE_ID,
+    }
     assert all(item["proposal_evidence_policy"] == "explicit_or_unique_inferred" for item in allowed)
 
 
@@ -147,6 +168,26 @@ def test_v4_scope_excludes_unknown_or_inactive_parameter() -> None:
 
     assert allowed == []
     assert excluded[0]["canonical_parameter_name"] == "RemainingUnrestrictedAmount"
+
+
+def test_v4_0_scope_keeps_legacy_canal_toll_and_rejects_split_parameters() -> None:
+    contract = load_proposal_capability_contract()
+    candidates = [
+        _candidate(entry, catalog_version="v4.0")
+        for entry in contract.parameters_for("v4.0")
+    ]
+    candidates.extend(
+        _candidate(contract.by_id[model_param_id], catalog_version="v4.0")
+        for model_param_id in (25, 26)
+    )
+
+    allowed, excluded = partition_proposal_parameter_candidates(candidates)
+
+    assert 24 in {int(item["model_param_id"]) for item in allowed}
+    assert {item["canonical_parameter_name"] for item in excluded} == {
+        "Suez Canal Cost",
+        "Panama Canal Cost",
+    }
 
 
 def test_legacy_scope_remains_the_existing_five_names() -> None:
@@ -178,4 +219,6 @@ def test_legacy_scope_remains_the_existing_five_names() -> None:
         "RegionalProductionAdjustment",
         "ShippingFuelCost",
         "CanalToll",
+        "Suez Canal Cost",
+        "Panama Canal Cost",
     }

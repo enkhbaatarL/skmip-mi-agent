@@ -102,7 +102,7 @@ data:
 
     llm_concurrency: 10
     llm_max_retries: 1
-    model_parameter_proposal_flow_release: v4.1.7
+    model_parameter_proposal_flow_release: v4.1.8
     model_parameter_transient_retry_max_attempts: 2
     model_parameter_transient_retry_base_delay_seconds: 0.5
     model_parameter_transient_retry_max_jitter_seconds: 0.25
@@ -154,12 +154,12 @@ data:
           object_storage_path: fundamental_model_artifact/input_template/복호화_(Base) Trade Model_Input.xlsm
 
       workbook_contract:
-        path: contracts/model-parameter-workbook-contract-v8.json
+        path: contracts/model-parameter-workbook-contract-v9.json
 
       proposal_capabilities:
-        path: contracts/model-parameter-proposal-capabilities-v4.json
-        release_id: extend16-v8
-        sha256: cfc4971841a290ccf87251630f9f5c2d2a99062464d5b1e16db41ce22317f0eb
+        path: contracts/model-parameter-proposal-capabilities-v5.json
+        release_id: extend17-v9
+        sha256: cb0bf82a40937510ef35fd617ba2fb9b8030620d0d05742180f4d568539db8a3
 
       lut:
         Coal Futures Price:

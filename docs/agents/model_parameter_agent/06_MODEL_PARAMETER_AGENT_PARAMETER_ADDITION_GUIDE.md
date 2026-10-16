@@ -2,29 +2,32 @@
 
 ## 1. 체크인 기준선
 
-현재 Agent runtime 판정 기준은 proposal capability `extend16-v8`, workbook contract `new-bc-v8`,
-신규 Scenario Group catalog `v4.1` full pin이다. 기존 v4.0 Scenario는 저장된 v4.0 pin을 그대로 읽는다.
+현재 Agent runtime 판정 기준은 Proposal Flow `v4.1.8`, proposal capability `extend17-v9`,
+workbook contract `new-bc-v9`, 신규 Scenario Group catalog `v4.1` full pin이다. 기존 v4 Scenario는
+저장된 pin을 그대로 읽고, v0050 적용 시 기존 v4.1 Scenario pin은 현행 checksum으로 이관된다.
 DB 적용 상태는 runner preflight와 read-back으로 확인한다.
 
-- 외부개발 DB master 24행, 활성 16개이며 Agent proposal capability도 같은 16개다. 10개는
-  LUT-backed이고 6개는 검증된 exact Basecase-only capability다.
-- 신규 Scenario Group용 v4.1 active Lever는 v4.0과 같은 Full Set 21개다. binding occurrence는 56개이며,
-  이 중 37개는 근거가 없으면 0개를 선택하는 `conditional` binding이다. executable 고유 Parameter는 16개로 같다.
+- v0050 DB master는 26행·활성 18개다. 현행 v4.1 proposal capability는 17개이며 10개는
+  LUT-backed, 7개는 검증된 exact Basecase-only capability다. 나머지 활성 `CanalToll`은 v4.0 catalog 호환용이다.
+- 신규 Scenario Group용 v4.1 active Lever는 Full Set 21개다. binding occurrence는 56개이며,
+  이 중 41개는 근거가 없으면 0개를 선택하는 `conditional` binding이다. executable 고유 Parameter는 17개다.
 - legacy dimension mapping 129행은 v4가 읽거나 변경하지 않는 보호 대상 invariant다.
 - v1/v3 신규 proposal 이름 allow-list 5개: GDP, PMI, PowerMix, Temperature, LiqUtilAdjustment
-- v4 extend16 capability 16개: 위 5개 + Population(ID 11),
+- v4.1 `extend17-v9` capability 17개: 위 5개 + Population(ID 11),
   HurricaneIntensity(ID 12), LiqProdAdjustment(ID 13), PipelineAdjustment(ID 15),
   RegasAdjustment(ID 16), SupplyDisruption(ID 17), PNG Contract Volume(ID 18), ShippingCost(ID 20),
-  RegionalProductionAdjustment(ID 22), ShippingFuelCost(ID 23), CanalToll(ID 24)
-- extend16의 v4 `multi_event_model_lever_dimensions` 기준값은 하나의 `read_only_proposal` contract
-  `model-parameter-workbook-contract-v8.json`을 사용한다. 이 workbook contract는 비활성 이력 호환용
-  User-Adjusted Gas Demand까지 17종 reference를 보존하지만 proposal capability에는 활성 16종만 둔다.
+  RegionalProductionAdjustment(ID 22), ShippingFuelCost(ID 23), Suez Canal Cost(ID 25),
+  Panama Canal Cost(ID 26)
+- `extend17-v9`의 v4 `multi_event_model_lever_dimensions` 기준값은 하나의 `read_only_proposal` contract
+  `model-parameter-workbook-contract-v9.json`을 사용한다. 이 workbook contract는 비활성
+  User-Adjusted Gas Demand와 v4.0 catalog 호환용 CanalToll까지 19종 reference를 보존하지만 v4.1 proposal
+  capability에는 17종만 둔다.
   ID 13·14 matrix write target은 최종 workbook의 84개월 범위 `G:CL`을 사용하며 mgmt v0044 master와
   동일해야 한다.
   packaged baseline Excel artifact는 `resources/basecase_v4/new-bc-v2/`의 digest를 사용한다. 활성 MI Base 경로는
   Object Storage의 연결 workbook을 같은 구조 계약으로 검증하며, v1/v3는 기존 `resources/basecase/` 호환 경계를 유지한다.
 - LUT-backed 10개는 contract reference→same-exact-key LUT fallback→slot/evidence/value 절차를 사용한다.
-  Basecase-only 6개도 같은 `v4_workbook_then_lut` mode를 쓰지만 등록 LUT가 없으므로 검증된 workbook
+  v4.1 Basecase-only 7개도 같은 `v4_workbook_then_lut` mode를 쓰지만 등록 LUT가 없으므로 검증된 workbook
   exact slot만 사용하며, v4에는 별도 legacy Basecase reference mode를 두지 않는다.
 - source matching 뒤 LLM과 proposal persistence 전에 version별 capability gate를 적용한다. v4의 단일
   `deterministic` binding은 결정적으로 통과시킨다. 복수 binding 또는 단일 `conditional` binding은 Step1.5에서
@@ -33,12 +36,11 @@ DB 적용 상태는 runner preflight와 read-back으로 확인한다.
   all-N/A는 별도 승인된 parameter별 conditional routing 정책과 물리 경로·방향·범위·기간을 모두 만족할 때만
   bounded assumption으로 제한 복구한다.
 - 공개 proposal/confirmation API와 payload, confirmation 동작은 변경하지 않는다.
-- DB migration 정본은 sibling mgmt repository다. v4.1은 기존 master·legacy mapping·v4.0 행을 수정하지 않고
-  `tmm_mi_model_impact_lever_m`에 21행을 side-by-side로 추가하며 mgmt migration 0036과 동일해야 한다.
-- 후속 mgmt v0044는 schema·binding·활성 집합을 바꾸지 않고 master ID 13·14의
-  `basecase_value_end_col`만 최종 workbook과 같은 `CL`로 정합화한다.
-- 260813 workbook과 `resources/Model_Parameter_Base_Case_Mapping.md`는 0032의 최종 target·unit 정합성을
-  사람이 검토하기 위한 자료다. DB 적용과 runtime 판정은 versioned canonical·contract·mgmt DML을 기준으로 한다.
+- DB migration 정본은 sibling mgmt repository다. v0050은 기존 master ID 1~24, v4/v4.0 catalog·pin과
+  legacy mapping을 보존하면서 ID 25·26, v4.1 운하 binding 개정, v4.1 Scenario checksum pin 이관,
+  logical catalog v4를 한 transaction에서 수행한다.
+- 현재 mapping workbook은 `261016_시나리오가정_MI수급모델_input_매핑_model-parameter-canonical-v4.1.xlsx`다.
+  DB 적용과 runtime 판정은 versioned canonical·contract·mgmt DML을 기준으로 한다.
 
 새 파라미터의 DB/canonical/resource capability 활성화는 이름이나 `use_yn` 하나만 바꾸는 작업이 아니다. master, v4 Lever binding, Basecase/LUT capability, resource manifest, prompt 크기, proposal/confirmation 검증을 한 단위로 다룬다. legacy mapping은 신규 v4 rollout의 입력이나 fallback으로 사용하지 않는다. capability를 활성화해도 runtime proposal allow-list에 자동으로 추가되지 않으며, 신규 proposal 허용은 별도 정책 변경과 검증이 필요하다.
 
@@ -47,8 +49,8 @@ DB 적용 상태는 runner preflight와 read-back으로 확인한다.
 `$model-parameter-multi-event-quality`를 사용한다. 핵심 Skill은 v4
 `multi_event_model_lever_dimensions` 경로만 지원한다.
 
-v4.1 conditional binding의 전체 매트릭스, runtime 선택 규칙, 좌표 추론, 적용 순서는
-`09_MODEL_PARAMETER_V4_1_CONDITIONAL_BINDING.md`를 따른다.
+현재 운하 분리 규칙은 `10_MODEL_PARAMETER_V4_1_CANAL_SPLIT.md`를 따른다. v4.1 conditional binding의
+역사 계약은 `09_MODEL_PARAMETER_V4_1_CONDITIONAL_BINDING.md`에 보존한다.
 
 ## 2. 변경 전 확인
 
@@ -168,7 +170,9 @@ Scenario/Event/Lever 원문을 비교하고, 원문에서 그대로 복사한 Pl
 7. Scenario narrative를 evidence corpus에 포함할 수 있지만 연결된 source Event와 coherent Lever lineage 요건은
    그대로 유지한다. Scenario text만으로 source provenance를 새로 만들지 않는다.
 
-### 2.4 v4.1 extend16 신규 3개 정합성 매트릭스
+### 2.4 역사 v4.1 extend16 신규 3개 정합성 매트릭스
+
+> 이 절은 v4.1 호환 계약을 설명하는 역사 자료다. 현행 v4.1 운하 파라미터 정본은 다음 절을 사용한다.
 
 `extend16-v8`에서 proposal scope에 들어오는 세 Parameter는 mgmt 0033 master와 0034 v4.0 catalog의 직접
 binding을 그대로 보존하고, v4.1 conditional binding에서도 재사용하는 Basecase-only capability다. 아래 tuple을
@@ -193,7 +197,19 @@ Suez·Panama 운하별 `$/crossing` 통항료 금액 변화에만 적용하며, 
 논의나 봉쇄·우회·지연은 `route_disruption`이다. 이 적용성 증적이 없어 abstain한 것은
 capability 누락이 아니므로 release 실패와 분리해 보고한다.
 
-### 2.5 이번 누락의 원인과 재발 방지 게이트
+### 2.5 v4.1 Suez/Panama 분리 정합성 매트릭스
+
+| Parameter | DB master/current canonical | v4.1 Lever | authoritative source → final write target | exact axes·단위 | runtime 계약 |
+|---|---|---|---|---|---|
+| `Suez Canal Cost` | ID 25, active; Trade / `ShippingCostInput` / `table4` | v4.1 `canal_toll` primary 및 `route_disruption`·`regional_price_spread` conditional | Trade `ShippingCostInput` A:C Suez rows 39~46 → 동일 sheet A/B/F `table4` | Canal=Suez, Year; $/crossing absolute, 5 records | `exact_rows`, existing exact, `C3=Absolute`, minimum 0 |
+| `Panama Canal Cost` | ID 26, active; Trade / `ShippingCostInput` / `table5` | v4.1 `canal_toll` primary 및 `route_disruption`·`regional_price_spread` conditional | Trade `ShippingCostInput` A:C Panama rows 50~57 → 동일 sheet A/B/F `table5` | Canal=Panama, Year; $/crossing absolute, 5 records | `exact_rows`, existing exact, `C3=Absolute`, minimum 0 |
+
+두 Parameter는 같은 sheet를 사용하지만 `parameterName`, `modelTable`, source block과 exact Canal 축이 모두
+다르다. Suez 근거로 Panama를, Panama 근거로 Suez를 선택하지 않는다. ID 24 `CanalToll`과 v4
+binding은 기존 v4 Scenario 호환을 위해 보존하지만 v4.1 capability에는 포함하지 않는다. PowerMix의 연간/월간
+표는 이번처럼 `parameterName`을 분리하지 않고 하나의 Parameter 안에서 table별 atomic formatting을 유지한다.
+
+### 2.6 이번 누락의 원인과 재발 방지 게이트
 
 기존 누락은 DB master와 v4.0 Lever catalog에는 ID 22·23·24가 있었지만 Agent의 proposal capability와 workbook
 contract가 이전 `extend14-v6/new-bc-v6`에 머물러 발생했다. Lever가 executable이라는 사실만으로 runtime
@@ -263,15 +279,15 @@ adapter는 필수 header, horizon, 숫자 형식, 빈 값, exact-key 충돌, joi
 
 runtime proposal 범위를 제한하기 위해 DB, canonical JSON/SQL, config, LUT, Basecase workbook을 축소하지 않는다.
 v4 runtime은 active parameter definition과 catalog binding에 필요한 resource를 사용한다. 기존 v1/v3 Basecase
-preload의 누락·파싱 오류·0건은 warning으로 남기며, 활성 16개 capability 전체는 자동화·release
-acceptance에서 별도로 검증한다. v4 `new-bc-v8` startup은 contract schema/path와 contract에 고정된
+preload의 누락·파싱 오류·0건은 warning으로 남기며, 현행 v4.1 17개 capability 전체는 자동화·release
+acceptance에서 별도로 검증한다. v4 `new-bc-v9` startup은 contract schema/path와 contract에 고정된
 Workbook path/digest만 경량 검증한다. sheet·header·range·변환·고정 record count는 최초 exact v4 materialization에서
 fail closed하고 성공 결과를 process cache한다.
 
 ### versioned workbook 계약을 변경하거나 확장할 때
 
-현재 extend16의 v4-only reference는 `resources/contracts/model-parameter-workbook-contract-v8.json`이 소유한다.
-각 release는 검증용 불변 packaged artifact 디렉터리와 digest를 고정하며, 현재 v8은 `resources/basecase_v4/new-bc-v2/`를 사용한다.
+현재 `extend17-v9`의 v4-only reference는 `resources/contracts/model-parameter-workbook-contract-v9.json`이 소유한다.
+각 release는 검증용 불변 packaged artifact 디렉터리와 digest를 고정하며, 현재 v9은 `resources/basecase_v4/new-bc-v2/`를 사용한다.
 활성 MI Base의 Object Storage workbook은 이 계약의 구조를 적용하되 요청별 실제 digest로 별도 고정한다.
 계약 coverage·parser·hash 또는 workbook digest가 바뀌면 새 release ID와 새 contract 파일·artifact 디렉터리를 만든다. 기존 `resources/basecase/` 파일을 덮어쓰거나
 `new_resources/`를 runtime path로 연결하지 않는다.
@@ -314,7 +330,7 @@ invalid key를 임의 보간하거나 nearest/fuzzy fallback하지 않는다.
 
 ## 5. LiqProdAdjustment 적용 사례
 
-LiqProdAdjustment는 체크인 canonical/resource capability와 v4 extend16 proposal allow-list에서 활성이다.
+LiqProdAdjustment는 체크인 canonical/resource capability와 v4.1 `extend17-v9` proposal allow-list에서 활성이다.
 
 - master ID 13, use_yn=Y
 - adapter liq_prod
@@ -328,15 +344,15 @@ v4에서는 `liquefaction_utilization`과 `liquefaction_production_override`를 
 LiqUtilAdjustment, 생산량 직접 override·대폭/영구 손실·신규 Train ramp-up은 LiqProdAdjustment를 사용한다.
 legacy mapping은 후보 source나 fallback으로 사용하지 않는다.
 
-## 6. v4.1 raw Lever binding과 extend16 proposal 범위의 핵심 규칙
+## 6. v4.1 raw Lever binding과 extend17 proposal 범위의 핵심 규칙
 
 | Lever | Parameter binding |
 |---|---|
-| `weather_demand` | Temperature primary; HDD/CDD alternative(비활성 진단) |
+| `weather_demand` | Temperature primary |
 | `power_generation_mix` | PowerMix primary |
 | `population_demographics` | Population primary |
 | `economic_activity` | GDP primary; PMI alternative |
-| `direct_gas_demand` | User-Adjusted Gas Demand 비활성 이력 binding; proposal 제외 |
+| `direct_gas_demand` | binding 없음; proposal 제외 |
 | `upstream_production` | SupplyDisruption primary |
 | `liquefaction_utilization` | LiqUtilAdjustment primary |
 | `liquefaction_production_override` | LiqProdAdjustment primary |
@@ -347,23 +363,23 @@ legacy mapping은 후보 source나 fallback으로 사용하지 않는다.
 | `png_contract_volume` | PNG Contract Volume primary |
 | `regional_upstream_production` | RegionalProductionAdjustment primary |
 | `lng_vessel_fuel_cost` | ShippingFuelCost primary |
-| `canal_toll` | CanalToll primary |
-| `route_disruption` | ShippingCost, ShippingFuelCost, CanalToll conditional |
+| `canal_toll` | Suez Canal Cost, Panama Canal Cost primary |
+| `route_disruption` | ShippingCost, ShippingFuelCost, Suez Canal Cost, Panama Canal Cost conditional |
 | `trade_restriction` | 공급·시설 6종과 PNG Contract Volume conditional |
 | `inventory_condition` | 수요 4종·공급 6종·PNG Contract Volume conditional |
-| `regional_price_spread` | 수요 4종·공급 6종·PNG 1종·운송 3종 conditional |
+| `regional_price_spread` | 수요·공급·PNG와 ShippingCost, ShippingFuelCost, Suez Canal Cost, Panama Canal Cost conditional |
 | `financial_market_sentiment` | GDP, PMI conditional |
 
 `price_only` Lever도 상태의 명시된 원인·직접 영향이 실제 model input과 연결되면 conditional 후보가 된다.
-가격·재고·심리 방향 자체를 model input 방향으로 바꾸지 않으며, 근거가 없으면 0건을 유지한다. CDD/HDD binding은
-capability로 보존하지만 master가 비활성이므로 executable candidate가 아니다.
+가격·재고·심리 방향 자체를 model input 방향으로 바꾸지 않으며, 근거가 없으면 0건을 유지한다. CDD/HDD와
+User-Adjusted Gas Demand의 역사 binding은 v4.1 catalog에 복제하지 않는다.
 
 현재 v4 신규 proposal에서는 capability gate를 통과한 GDP, PMI, PowerMix, Temperature, Population,
 HurricaneIntensity, LiqProdAdjustment, LiqUtilAdjustment, PipelineAdjustment, SupplyDisruption,
 RegasAdjustment, PNG Contract Volume, ShippingCost, RegionalProductionAdjustment, ShippingFuelCost,
-CanalToll만 이후 단계로 전달한다. v4.1 executable 활성 Parameter가 capability에서 빠지면 release 오류다.
+Suez Canal Cost, Panama Canal Cost만 이후 단계로 전달한다. v4.1 executable Parameter가 capability에서 빠지면 release 오류다.
 
-### Basecase-only 활성 6개
+### 현행 v4.1 Basecase-only 7개
 
 | Parameter | 기준값 | v4 Lever binding |
 |---|---|---|
@@ -372,17 +388,18 @@ CanalToll만 이후 단계로 전달한다. v4.1 executable 활성 Parameter가 
 | ShippingCost | 검증된 Basecase exact slot | `lng_charter_rate` primary |
 | RegionalProductionAdjustment | 검증된 Basecase aggregate/appendable slot | `regional_upstream_production` primary |
 | ShippingFuelCost | 검증된 Basecase exact slot | `lng_vessel_fuel_cost` primary |
-| CanalToll | 검증된 Basecase exact slot | `canal_toll` primary |
+| Suez Canal Cost | 검증된 Suez Basecase exact slot / `table4` | `canal_toll` primary |
+| Panama Canal Cost | 검증된 Panama Basecase exact slot / `table5` | `canal_toll` primary |
 
-별도 LUT fallback을 추가하지 않는다. 검증된 Basecase exact slot이 없는 좌표는 제외한다. 이 6개는
-`extend16-v8` runtime proposal allow-list 안에 있으며, direct evidence와 exact 좌표가 없으면 abstain한다.
+별도 LUT fallback을 추가하지 않는다. 검증된 Basecase exact slot이 없는 좌표는 제외한다. 이 7개는
+`extend17-v9` runtime proposal allow-list 안에 있으며, direct evidence와 exact 좌표가 없으면 abstain한다.
 `RemainingUnrestrictedAmount`와 `VolumeCancelled`는 0032 canonical에서 inactive/unbound이므로 새 contract와
 forward canonical release 없이 후보화하지 않는다.
 
 ## 7. prompt·token 보호
 
 resource release에서 준비된 LUT record는 서버 cache/index에 보관한다. v4 runtime은 지정 version의 active catalog
-binding으로 도달 가능한 definition을 사용하며, 활성 16개 capability 전체 검증은 자동화·release acceptance의
+binding으로 도달 가능한 definition을 사용하며, 현행 v4.1 17개 capability 전체 검증은 자동화·release acceptance의
 책임이다. runtime allow-list gate는 source matching 직후, 조건부 Step1.5·Step2·Step3 LLM과 proposal
 persistence 전에 적용한다. v4 Step1.5는 동일 Lever state의 복수 binding과 모든 conditional binding에 적용한다.
 각 applicability가 독립적으로 근거 있으면 설정 상한까지 복수 Parameter를 유지한다.
@@ -396,7 +413,7 @@ applicability는 보존한다. 대표 worst-case prompt를 직렬화해 설정 b
 - 파라미터별 반환 상한: model_parameter_max_parameter_slots=100
 - 요청 전체 선택 slot 상한: model_parameter_max_total_selected_slots
 - 직렬화 상한: model_parameter_max_step2_prompt_bytes, model_parameter_max_step3_prompt_bytes
-- proposal Flow release: model_parameter_proposal_flow_release=v4.1.7
+- proposal Flow release: model_parameter_proposal_flow_release=v4.1.8
 - transient LLM 호출: model_parameter_transient_retry_max_attempts=2,
   base delay 0.5초, max jitter 0.25초; timeout·transport·retryable HTTP와
   `EOF while parsing`으로 확인된 불완전 JSON만 retry하고 완결 JSON의 schema·semantic/좌표/DB 오류는 retry 금지
@@ -412,15 +429,14 @@ floating-point noise에만 `1e-12` 절대·상대 허용오차를 적용한다. 
 
 1. canonical consistency와 resource release·LUT adapter 자동화 테스트가 통과한다.
 2. config.yaml과 ConfigMap manifest가 같다.
-3. 외부개발 DB의 master 24행·활성 16개, v4.0 active Lever 21개·binding occurrence 19개와 v4.1 active
-   Lever 21개·binding occurrence 56개를 확인한다. v4.0 checksum
-   `416017351f2b9539370963a3ca413914876da55a1db3f41e3dacd34bd466c763`과 v4.1 checksum
-   `7f4ef0b7aa60efb550b9175654fd82350f0c293debf880a9180e7e935db54d69`을 모두 read-back한다.
-4. v4 canonical JSON·SQL, LUT manifest, workbook/archive와 legacy mapping 비변경 digest를 확인한다.
-5. resource capability 기준으로 LUT-backed 활성 10개의 selectable LUT slot과 Basecase-only 활성 6개의
-   Basecase slot을 확인한다. v4 신규 proposal capability가 v4.1 executable 활성 16개와 정확히 일치하는지 검증한다.
-6. v4 `new-bc-v8` contract의 세 workbook·auxiliary digest/header와
-   815/5,040/4,200/5,040/845/60/23,820/23,820/420/4,908/12/22,320/684/5/2,187/5/10 record를 확인하고,
+3. 적용 대상 DB의 master 26행·활성 18개와 v4.1 active Lever 21개·binding occurrence 56개를 확인한다.
+   v4.1 checksum `467749ea59c3af7e875669be23da00c0fd8ef7c226256f9518a5945e36e4d7c4`를 read-back하고,
+   기존 v4/v4.0 catalog·pin이 보존되고 기존 v4.1 Scenario pin은 같은 version의 위 checksum으로 이관됐는지 확인한다.
+4. v4.1 canonical JSON·mgmt SQL, LUT manifest, workbook/archive와 legacy mapping 비변경 digest를 확인한다.
+5. resource capability 기준으로 LUT-backed 활성 10개의 selectable LUT slot과 현행 v4.1 Basecase-only 7개의
+   Basecase slot을 확인한다. v4.1 proposal capability가 executable 17개와 정확히 일치하는지 검증한다.
+6. v4 `new-bc-v9` contract의 세 workbook·auxiliary digest/header와
+   815/5,040/4,200/5,040/845/60/23,820/23,820/420/4,908/12/22,320/684/5/2,187/5/10/5/5 record를 확인하고,
    invalid exact-key LUT 차단, PowerMix atomic vector, HurricaneIntensity 0~4 정수,
    LiqProd/LiqUtil target·evidence 회귀를 통과한다.
 7. v4 multi-event quality runner로 실제 선택 value에서 도달한 allow-list parameter를 proposal하고, 빈 confirmation rollback, 정상 confirmation, reconfirmation, DB read-back을 수행한다.
@@ -430,7 +446,7 @@ floating-point noise에만 `1e-12` 절대·상대 허용오차를 적용한다. 
 
 DB seed의 Git 작성자와 audit principal은 분리한다. Git author는 작업자 계정을 사용하더라도
 `crt_usr_logn_id`/`mod_usr_logn_id`에는 개인명을 넣지 말고 release 식별자(예:
-`model-impact-lever-v4.1-v0036`)를 사용한다. 또한 dry-run INSERT를 AUTO_INCREMENT에 맡기면 MySQL은
+`model-impact-lever-v4.1-v0050`)를 사용한다. 또한 dry-run INSERT를 AUTO_INCREMENT에 맡기면 MySQL은
 rollback 뒤에도 번호를 소비한다. release canonical과 migration/seed에는 검증된 ID를 명시하고,
 dry-run에서 우연히 할당된 ID를 기준값으로 채택하지 않는다.
 

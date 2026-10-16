@@ -9,17 +9,16 @@
 |---|---|
 | DB에는 무엇이 있나? | 파라미터 기준, legacy 연결 규칙, v3 event lineage, v4 Lever catalog와 제안·확정 결과가 있다. |
 | Agent는 어떻게 사용하나? | 파라미터·scenario lineage 기준은 읽고, 제안 결과표에는 처리 결과를 저장한다. |
-| 현재 외부개발 DB와 Agent 제안 범위는 몇 개인가? | master 24개 중 활성 16개이고, v4.1 executable 고유 Parameter와 Agent v4 extend16 신규 proposal 허용은 모두 16개다. v1/v3는 기존 5개다. |
+| 현재 외부개발 DB와 Agent 제안 범위는 몇 개인가? | v0050 적용 기준 master 26개 중 활성 18개다. 현행 v4.1 executable·`extend17-v9` proposal은 17개이며, 나머지 활성 `CanalToll`은 v4.0 catalog 호환용이다. v1/v3는 기존 5개다. |
 | 이 문서의 범위는 무엇인가? | 기능 이해에 필요한 관계와 주요 데이터 모양을 설명한다. |
 
 > 이 문서의 개수는 체크인된 v4 master·Lever canonical과 v1/v3 canonical의 `dimension_mappings` 129행을 센 저장소 기준선이다. live DB 적용 상태를 뜻하지 않으며 운영 판정은 runner의 preflight와 DB read-back으로 확인한다. 2026-08-13 snapshot의 128행은 변경 전 증적이다.
 
 > v1/v3 신규 proposal은 `GDP`, `PMI`, `PowerMix`, `Temperature`, `LiqUtilAdjustment` 이름 allow-list를
-> 유지한다. v4는 ID `{4, 6, 7, 8, 11, 12, 13, 14, 15, 16, 17, 18, 20, 22, 23, 24}`과 name/target이
-> capability contract와 일치해야 한다.
-> 정상 0032 canonical DB에서는 이 응용 계층 확장으로 master·mapping, Lever catalog/checksum을 변경하지 않는다.
-> 후속 mgmt v0044는 schema·활성 집합·binding을 건드리지 않고 ID 13·14의
-> `basecase_value_end_col`만 최종 workbook과 같은 `CL`로 정합화한다.
+> 유지한다. 현행 v4.1은 ID `{4, 6, 7, 8, 11, 12, 13, 14, 15, 16, 17, 18, 20, 22, 23, 25, 26}`과
+> name/target이 capability contract와 일치해야 한다. mgmt v0050은 ID 25·26과 logical table catalog v4를
+> 추가하고 v4.1의 운하 관련 3개 Lever binding과 기존 v4.1 Scenario checksum pin을 함께 갱신한다.
+> 기존 ID 24, v4/v4.0 catalog·pin, legacy mapping은 보존한다.
 
 ## 1. 핵심 테이블을 한 문장으로 이해하기
 
@@ -48,7 +47,7 @@ flowchart LR
     V -->|v4| L[선택 value의 Lever states와\nactive catalog binding 검증]
     C --> D[파라미터 사전에서\n모델 위치와 읽기 기준 확인]
     L --> D
-    D --> P[version별 proposal scope\nv1/v3 5개 · v4 16개]
+    D --> P[version별 proposal scope\nv1/v3 5개 · 현행 v4.1 17개]
     P --> E[Basecase와 LUT를 참고해\n값 제안]
     E --> F[제안 결과 저장]
     F --> G[사용자 검토·수정]
@@ -63,8 +62,10 @@ v3 context 테이블은 동적 composite dimension의 lineage를 기존 연결�
 
 `tmm_mi_model_param_m`에는 파라미터의 이름, 설명, 값을 넣을 모델 파일·시트·테이블, Basecase를 읽는 기준이 있다.
 Agent는 live DB에서 사용 중이며 삭제되지 않은 항목만 읽는다.
-0032 canonical fixture 21개 중 활성 기준선은 다음 14개다. 앞의 10개는 LUT-backed이고 뒤의 4개는 Basecase-only다.
-아래 표는 canonical과 resource capability 기준선을 설명한다. 표의 활성 상태와 별개로 신규 proposal 허용 여부는 위 runtime allow-list를 따르며, 실제 DB 적용 여부는 read-back으로 확인한다.
+현재 v0050 master는 26개 중 18개가 활성이다. 앞의 10개는 LUT-backed이고 나머지 활성 8개는
+Basecase-only다. 그중 `CanalToll`은 v4.0 catalog 호환용이므로 현행 v4.1 proposal은 Basecase-only 7개를
+사용한다. 아래 표는 현재 활성 정의와 workbook contract에 남은 비활성 호환 정의를 함께 설명하며, 실제 DB
+적용 여부는 read-back으로 확인한다.
 
 | 파라미터 | 적용 대상 | 주요 좌표 | Basecase 읽기 방식 |
 |---|---|---|---|
@@ -78,10 +79,15 @@ Agent는 live DB에서 사용 중이며 삭제되지 않은 항목만 읽는다.
 | `LiqUtilAdjustment` | Supply / LiqUtilAdjustment | 국가, LNG 플랜트·트레인, 연도, 월 | `G:CL`의 84개 월 열을 읽음 |
 | `PipelineAdjustment` | Supply / PipelineAdjustment | 파이프라인, From·To 국가, 연도, 월 | 행마다 정해진 열을 읽음 |
 | `SupplyDisruption` | Supply / ProductionAdjustment | 국가, 연도, 월 | 행마다 정해진 열을 읽음 |
-| `User-Adjusted Gas Demand` | Demand / DemandOutputOverwrite | 국가, 연도, 월, 수요 하위부문 | Basecase exact slot만 사용 |
+| `User-Adjusted Gas Demand` | Demand / DemandOutputOverwrite | 국가, 연도, 월, 수요 하위부문 | 비활성 호환 정의; Basecase exact slot |
 | `RegasAdjustment` | Supply / RegasAdjustment | 지역 계층, 재기화 Plant, 연도, 월 | Basecase exact slot만 사용 |
 | `PNG Contract Volume` | Trade / MidstreamContractInput | 연도, From·To 국가 | Basecase exact slot만 사용 |
 | `ShippingCost` | Trade / ShippingCostInput | 연도 | Basecase exact slot만 사용 |
+| `RegionalProductionAdjustment` | Supply / ProductionAdjustment | Province·Basin·Country, 연도 | Basecase exact slot만 사용 |
+| `ShippingFuelCost` | Trade / ShippingCostInput / table3 | 연도 | IFO380 Basecase exact slot만 사용 |
+| `CanalToll` | Trade / ShippingCostInput / table4 | 운하, 연도 | v4.0 catalog 호환용 Basecase exact slot |
+| `Suez Canal Cost` | Trade / ShippingCostInput / table4 | Suez, 연도 | 현행 v4.1 Basecase exact slot |
+| `Panama Canal Cost` | Trade / ShippingCostInput / table5 | Panama, 연도 | 현행 v4.1 Basecase exact slot |
 
 `RemainingUnrestrictedAmount`와 `VolumeCancelled`는 0030에서 master 비활성이고 active v4 binding도 없다.
 과거 Basecase 좌표가 있더라도 future restriction/취소 입력 계약과 forward canonical release 전에는 executable
@@ -139,11 +145,12 @@ ID 13·14는 `matrix_time_columns` target이며 `basecase_year_row=7`, `basecase
 | `indirect` | 55 | 값을 직접 바꾸지는 않지만 판단에 참고할 배경 정보 | 아니요 |
 | `na` | 33 | 모델 입력 파라미터와 직접 연결되지 않는 항목 | 아니요 |
 
-DB migration 정본은 sibling `skmip-mi-agent-mgmt`다. 외부개발 DB의 신규 Scenario Group용 active catalog는
-`v4.1`, checksum은 `7f4ef0b7aa60efb550b9175654fd82350f0c293debf880a9180e7e935db54d69`이다.
-v4.1 Lever rollout은 master를 변경하지 않고 기존 v4.0 옆에 같은 Lever Full Set 21행과 conditional binding을
-추가하므로 mgmt 0036 migration과 exact match해야 한다. 별도 mgmt v0044는 master ID 13·14의 종료 열을
-`DA`에서 `CL`로 바꾸며 나머지 master·mapping·Lever 행은 보존한다.
+DB migration 정본은 sibling `skmip-mi-agent-mgmt`다. 신규 Scenario Group용 active catalog는
+`v4.1`, checksum은 `467749ea59c3af7e875669be23da00c0fd8ef7c226256f9518a5945e36e4d7c4`이다.
+mgmt v0050은 v4.1의 기존 21개 Lever ID 56~76을 유지하면서 운하 관련 3행의 `CanalToll` binding만
+`Suez Canal Cost`와 `Panama Canal Cost`로 제자리 분리한다. v4.1 Group의 catalog version은 유지하고
+checksum을 `467749...`로 transaction 이관한다. v0044의 ID 13·14 `G:CL` 경계와 기존 v4/v4.0 catalog·pin,
+legacy mapping은 보존한다.
 기존 이름의 두 canonical과 `apply_model_parameter_v4.py`/정적 SQL은 0029 역사 릴리스 증적으로 보존하며 0030
 적용에 재사용하지 않는다. v1/v3 mapping은 `scripts/model_parameter/model-parameter-canonical-v1.json` 중
 `dimension_mappings`만 정본으로 사용한다. parameter 0030 successor에 상속된 128행 mapping payload는 0029
@@ -188,12 +195,12 @@ v4 loader는 Scenario, Group, `display_order`로 정렬한 Group–Event 관계,
 4. `source_event_ids`가 group event 집합의 부분집합인지 여부
 5. 각 Lever code/ID가 catalog와 일치하는지 여부
 
-외부개발 DB v4.1 active catalog는 Lever 21개, parameter binding occurrence 56개를 가지며, 37개가
-conditional이다. 비활성 이력 binding을 제외한 executable occurrence는 53개, 고유 활성 Parameter는 16개다.
+현재 v4.1 active catalog는 Lever 21개, parameter binding occurrence 56개를 가지며, 41개가
+conditional이다. 모든 occurrence가 executable이고 고유 신규 proposal Parameter는 17개다.
 요청 하나에서는 선택 value와 변화 state에 해당하는 하위 집합만 raw 후보가 된다. binding 없는 `price_only`,
 binding 없음, 비활성 또는 catalog unsupported는 raw 후보에서 제외하지만 conditional binding이 있는
 `price_only`는 Step1.5 근거 판정으로 진행한다. 그 뒤 v4 capability contract의 ID/name/target을 검증해 신규
-proposal 후보를 활성 16개 범위로 제한한다. `direction=unchanged`는 supporting context일 뿐 변화 후보가 아니다.
+proposal 후보를 v4.1 17개 범위로 제한한다. `direction=unchanged`는 supporting context일 뿐 변화 후보가 아니다.
 version/checksum/code/ID 불일치나 primary 누락은 proposal을 차단한다.
 
 ## 4. 결과표: 제안부터 확정까지 남기는 표

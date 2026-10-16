@@ -250,7 +250,7 @@ VALUE_PROPOSAL_SYSTEM = """\
 - slots[].reference_value는 해당 exact 좌표의 단일 기준값입니다.
 - 실제 Basecase 값이 있으면 그 값을, Basecase가 없고 LUT만 있으면 LUT 값을 reference_value로 제공합니다.
 - 두 source 값이나 provenance를 동시에 제공하지 않습니다.
-- variation_mode와 variation_policy는 v4.1.7의 정성 근거 수치화 경계입니다. policy는 예측값이 아니라
+- variation_mode와 variation_policy는 v4.1.8의 정성 근거 수치화 경계입니다. policy는 예측값이 아니라
   사용자 검토용 초기값 guardrail이며, parameter별 단위와 weak/medium/strong 변화폭이 다릅니다.
 
 값 산정 규칙:

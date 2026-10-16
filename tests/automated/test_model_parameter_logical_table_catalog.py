@@ -78,7 +78,7 @@ def test_ui_hierarchy_uses_formal_names_and_retains_machine_keys() -> None:
 
     assert data.hierarchy == ["modelFile", "parameterName", "tables.displayName"]
     assert [item.model_file for item in data.files] == ["Demand", "Supply", "Trade"]
-    assert [len(item.parameters) for item in data.files] == [11, 7, 4]
+    assert [len(item.parameters) for item in data.files] == [11, 7, 5]
     assert [sum(len(parameter.tables) for parameter in item.parameters) for item in data.files] == [28, 20, 6]
 
     parameters = {
@@ -90,10 +90,11 @@ def test_ui_hierarchy_uses_formal_names_and_retains_machine_keys() -> None:
         ("Monthly Power Mix Adjustment", None),
         ("Power Generation Data", None),
     ]
-    canal_toll = parameters["CanalToll"]
-    assert [(table.display_name, table.model_table_key) for table in canal_toll.tables] == [
+    assert [(table.display_name, table.model_table_key) for table in parameters["Suez Canal Cost"].tables] == [
         ("Suez Canal Cost", "table4"),
-        ("Panama Canal Cost", "table4"),
+    ]
+    assert [(table.display_name, table.model_table_key) for table in parameters["Panama Canal Cost"].tables] == [
+        ("Panama Canal Cost", "table5"),
     ]
 
 
@@ -125,7 +126,7 @@ def test_proposal_machine_targets_are_covered_by_catalog_write_targets() -> None
         if entry.table_role == "WRITE_TARGET"
     }
 
-    for parameter in capability.parameters:
+    for parameter in capability.parameters_for("v4.1"):
         target = parameter.model_target
         assert (
             parameter.model_param_id,

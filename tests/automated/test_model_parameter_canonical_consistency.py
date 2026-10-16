@@ -25,14 +25,14 @@ ROOT_DIR = Path(__file__).resolve().parents[2]
 CANONICAL_PATH = ROOT_DIR / "scripts/model_parameter/model-parameter-canonical-v4.json"
 LEGACY_MAPPING_CANONICAL_PATH = ROOT_DIR / "scripts/model_parameter/model-parameter-canonical-v1.json"
 IMPACT_CANONICAL_PATH = ROOT_DIR / "scripts/model_parameter/model-impact-lever-canonical-v4.json"
-CURRENT_CANONICAL_PATH = ROOT_DIR / "scripts/model_parameter/model-parameter-canonical-v4-0032.json"
-CURRENT_IMPACT_CANONICAL_PATH = ROOT_DIR / "scripts/model_parameter/model-impact-lever-canonical-v4-0032.json"
+CURRENT_CANONICAL_PATH = ROOT_DIR / "scripts/model_parameter/model-parameter-canonical-v4.1-0050.json"
+CURRENT_IMPACT_CANONICAL_PATH = ROOT_DIR / "scripts/model_parameter/model-impact-lever-canonical-v4.1-0050.json"
 SNAPSHOT_PATH = ROOT_DIR / "scripts/model_parameter/snapshots/external_dev_before_model_parameter_v4_20260813.json"
 CANONICAL_DOC_PATH = ROOT_DIR / "apps/agents/model_parameter_agent/resources/Model_Parameter_Base_Case_Mapping.md"
 LUT_ROOT = ROOT_DIR / "apps/agents/model_parameter_agent/resources/lut"
 MAPPING_ROOT = ROOT_DIR / "apps/agents/model_parameter_agent/resources/mapping"
 CURRENT_MAPPING_WORKBOOK_PATH = (
-    MAPPING_ROOT / "260813_시나리오가정_MI수급모델_input_매핑_model-parameter-canonical-v4.xlsx"
+    MAPPING_ROOT / "261016_시나리오가정_MI수급모델_input_매핑_model-parameter-canonical-v4.1.xlsx"
 )
 ARCHIVED_V1_WORKBOOK_PATH = (
     MAPPING_ROOT / "archive/260807_시나리오가정_MI수급모델_input_매핑_model-parameter-canonical-v1.xlsx"
@@ -41,6 +41,7 @@ ARCHIVED_MAPPING_WORKBOOK_NAMES = {
     "260625_시나리오가정_MI수급모델_input_매핑_vfShare_agent.xlsx",
     "260702_시나리오가정_MI수급모델_input_매핑_모델파트수정_v0.4.xlsx",
     "260807_시나리오가정_MI수급모델_input_매핑_model-parameter-canonical-v1.xlsx",
+    "260813_시나리오가정_MI수급모델_input_매핑_model-parameter-canonical-v4.xlsx",
 }
 
 EXPECTED_ACTIVE_PARAMETER_NAMES = frozenset(
@@ -63,9 +64,30 @@ EXPECTED_ACTIVE_PARAMETER_NAMES = frozenset(
         "VolumeCancelled",
     },
 )
-EXPECTED_CURRENT_ACTIVE_PARAMETER_NAMES = EXPECTED_ACTIVE_PARAMETER_NAMES - {
-    "RemainingUnrestrictedAmount",
-    "VolumeCancelled",
+EXPECTED_CURRENT_ACTIVE_PARAMETER_NAMES = frozenset(
+    {
+        "GDP",
+        "PMI",
+        "PowerMix",
+        "Temperature",
+        "Population",
+        "HurricaneIntensity",
+        "LiqProdAdjustment",
+        "LiqUtilAdjustment",
+        "PipelineAdjustment",
+        "RegasAdjustment",
+        "SupplyDisruption",
+        "PNG Contract Volume",
+        "ShippingCost",
+        "RegionalProductionAdjustment",
+        "ShippingFuelCost",
+        "CanalToll",
+        "Suez Canal Cost",
+        "Panama Canal Cost",
+    },
+)
+EXPECTED_CURRENT_PROPOSAL_PARAMETER_NAMES = EXPECTED_CURRENT_ACTIVE_PARAMETER_NAMES - {
+    "CanalToll",
 }
 EXPECTED_LUT_BACKED_PARAMETER_NAMES = frozenset(
     {
@@ -91,6 +113,18 @@ EXPECTED_BASECASE_ONLY_PARAMETER_NAMES = frozenset(
         "VolumeCancelled",
     },
 )
+EXPECTED_CURRENT_BASECASE_ONLY_PARAMETER_NAMES = frozenset(
+    {
+        "RegasAdjustment",
+        "PNG Contract Volume",
+        "ShippingCost",
+        "RegionalProductionAdjustment",
+        "ShippingFuelCost",
+        "CanalToll",
+        "Suez Canal Cost",
+        "Panama Canal Cost",
+    },
+)
 EXPECTED_INACTIVE_PARAMETER_NAMES = frozenset(
     {
         "CDD",
@@ -98,6 +132,18 @@ EXPECTED_INACTIVE_PARAMETER_NAMES = frozenset(
         "Gas Futures Price",
         "HDD",
         "ElectrificationRate",
+    },
+)
+EXPECTED_CURRENT_INACTIVE_PARAMETER_NAMES = frozenset(
+    {
+        "CDD",
+        "Coal Futures Price",
+        "Gas Futures Price",
+        "HDD",
+        "User-Adjusted Gas Demand",
+        "ElectrificationRate",
+        "RemainingUnrestrictedAmount",
+        "VolumeCancelled",
     },
 )
 DEFERRED_SPECS = {"Coal Futures Price", "Gas Futures Price"}
@@ -385,12 +431,17 @@ def test_configmap_and_local_resource_manifests_match_canonical() -> None:
     enabled_names = {name for name, spec in lut.items() if spec.get("enabled", True)}
     disabled_names = {name for name, spec in lut.items() if not spec.get("enabled", True)}
     assert active_names == EXPECTED_CURRENT_ACTIVE_PARAMETER_NAMES
+    assert {
+        name
+        for name, row in master_by_name.items()
+        if row["use_yn"] == "N" and row["del_yn"] == "N"
+    } == EXPECTED_CURRENT_INACTIVE_PARAMETER_NAMES
     assert enabled_names == EXPECTED_LUT_BACKED_PARAMETER_NAMES
-    assert active_names >= EXPECTED_BASECASE_ONLY_PARAMETER_NAMES - {
-        "RemainingUnrestrictedAmount",
-        "VolumeCancelled",
-    }
-    assert not (EXPECTED_BASECASE_ONLY_PARAMETER_NAMES & set(lut))
+    assert active_names == (
+        EXPECTED_LUT_BACKED_PARAMETER_NAMES
+        | EXPECTED_CURRENT_BASECASE_ONLY_PARAMETER_NAMES
+    )
+    assert not (EXPECTED_CURRENT_BASECASE_ONLY_PARAMETER_NAMES & set(lut))
     assert disabled_names == DEFERRED_SPECS
     assert {"CDD", "HDD", "ElectrificationRate"}.isdisjoint(lut)
     assert set(lut) <= set(master_by_name)
@@ -407,8 +458,8 @@ def test_configmap_and_local_resource_manifests_match_canonical() -> None:
         "### Basecase-only canonical",
     )
     document_basecase_by_name = {row["parameter"]: row for row in document_basecase_rows}
-    assert len(document_basecase_by_name) == len(document_basecase_rows) == 6
-    assert set(document_basecase_by_name) == EXPECTED_BASECASE_ONLY_PARAMETER_NAMES
+    assert len(document_basecase_by_name) == len(document_basecase_rows) == 8
+    assert set(document_basecase_by_name) == EXPECTED_CURRENT_BASECASE_ONLY_PARAMETER_NAMES
 
     for name in EXPECTED_LUT_BACKED_PARAMETER_NAMES:
         parameter_spec = lut[name]
@@ -461,7 +512,7 @@ def test_configmap_and_local_resource_manifests_match_canonical() -> None:
         )
 
     assert (
-        local["model_parameter_proposal_flow_release"] == embedded["model_parameter_proposal_flow_release"] == "v4.1.7"
+        local["model_parameter_proposal_flow_release"] == embedded["model_parameter_proposal_flow_release"] == "v4.1.8"
     )
     assert (
         local["scenario_group_v4_impact_catalog_version"]
@@ -512,7 +563,7 @@ def test_canonical_mapping_workbook_and_archive_match_fixture() -> None:
 
     parameter_sheet = workbook["Parameter Excel Mapping"]
     parameter_rows = _worksheet_dicts(parameter_sheet)
-    assert parameter_sheet.max_row == 22
+    assert parameter_sheet.max_row == 27
     assert len(parameter_sheet.tables) == 1
     assert parameter_rows == canonical["master"]
     assert {row["parameter_name"] for row in parameter_rows if row["use_yn"] == "Y"} == (
@@ -545,31 +596,34 @@ def test_canonical_mapping_workbook_and_archive_match_fixture() -> None:
     assert Counter(row["mapping_method"] for row in dimension_rows) == EXPECTED_SHARED_METHOD_COUNTS
 
     overview = workbook["0. Canonical Overview"]
-    assert [overview[cell].value for cell in ("A12", "B12", "C12", "D12")] == [21, 14, 129, 10]
+    assert [overview[cell].value for cell in ("A12", "B12", "C12", "D12")] == [26, 18, 129, 10]
     lut_rows = _worksheet_dicts(workbook["LUT Resource Manifest"])
     assert {row["parameter_or_resource"] for row in lut_rows if row["classification"] == "active"} == (
         EXPECTED_LUT_BACKED_PARAMETER_NAMES
     )
     assert {row["parameter_or_resource"] for row in lut_rows if row["classification"] == "basecase-only"} == (
-        EXPECTED_BASECASE_ONLY_PARAMETER_NAMES
+        EXPECTED_CURRENT_BASECASE_ONLY_PARAMETER_NAMES
     )
     assert {row["parameter_or_resource"] for row in lut_rows if row["classification"] == "deferred"} == (DEFERRED_SPECS)
     assert {row["parameter_or_resource"] for row in lut_rows if row["classification"] == "deferred-no-lut"} == {
         "ElectrificationRate",
+        "RemainingUnrestrictedAmount",
+        "User-Adjusted Gas Demand",
+        "VolumeCancelled",
     }
 
     lever_rows = _worksheet_dicts(workbook["Impact Lever Bindings"])
-    assert len(lever_rows) == impact_canonical["expected_counts"]["binding_occurrences"] == 16
+    assert len(lever_rows) == impact_canonical["binding_occurrence_count"] == 56
     assert Counter(row["effective_support_status"] for row in lever_rows) == {
-        "executable": 14,
-        "known_unsupported:INACTIVE_MODEL_PARAMETER": 2,
+        "executable": 56,
     }
     assert {
         row["parameter_name"] for row in lever_rows if row["effective_support_status"] == "executable"
-    } == EXPECTED_CURRENT_ACTIVE_PARAMETER_NAMES
-    assert {row["parameter_name"] for row in lever_rows if row["effective_support_status"] != "executable"} == {
-        "CDD",
-        "HDD",
+    } == EXPECTED_CURRENT_PROPOSAL_PARAMETER_NAMES
+    assert not {
+        row["parameter_name"]
+        for row in lever_rows
+        if row["effective_support_status"] != "executable"
     }
     assert len(workbook["Impact Lever Bindings"].tables) == 1
 
@@ -603,13 +657,13 @@ def test_canonical_document_and_combined_apply_runner_are_versioned_and_complete
     runner_path = ROOT_DIR / "scripts/model_parameter/apply_model_parameter_v4.py"
     runner = runner_path.read_text(encoding="utf-8")
 
-    assert "model-parameter-canonical-v4" in document
-    assert "model-impact-lever-canonical-v4" in document
-    assert "master 21행·활성 14개" in document
-    assert "shared legacy dimension mapping: 129행" in document
+    assert "model-parameter-canonical-v4.1-0050" in document
+    assert "model-impact-lever-canonical-v4.1-0050" in document
+    assert "master 26행, 활성 18개" in document
+    assert "shared legacy dimension mapping 129행" in document
     assert "direct 35, routing 6, indirect 55, na 33" in document
-    assert "LUT-backed 10개, Basecase-only 4개 활성" in document
-    assert "binding occurrence 16개" in document
+    assert "LUT-backed 10개 + Basecase-only 7개" in document
+    assert "binding occurrence 56개" in document
     document_master_rows = _parse_markdown_table(document, "## 최종 master")
     document_master_by_id = {int(row["ID"]): row for row in document_master_rows}
     assert len(document_master_by_id) == len(document_master_rows) == canonical["master_count"]
@@ -679,8 +733,11 @@ def test_operator_docs_do_not_reintroduce_pre_v4_active_or_legacy_mapping_state(
         assert not any(phrase in content for phrase in stale_phrases)
 
     canonical_summary = CANONICAL_DOC_PATH.read_text(encoding="utf-8")
-    assert "master 21행·활성 14개" in canonical_summary
-    assert all(parameter_name in canonical_summary for parameter_name in EXPECTED_BASECASE_ONLY_PARAMETER_NAMES)
+    assert "master 26행, 활성 18개" in canonical_summary
+    assert all(
+        parameter_name in canonical_summary
+        for parameter_name in EXPECTED_CURRENT_BASECASE_ONLY_PARAMETER_NAMES
+    )
     for path in canonical_docs:
         content = path.read_text(encoding="utf-8")
         assert all(parameter_name in content for parameter_name in EXPECTED_CURRENT_ACTIVE_PARAMETER_NAMES)

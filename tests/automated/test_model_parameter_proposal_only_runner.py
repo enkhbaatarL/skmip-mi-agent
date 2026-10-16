@@ -304,7 +304,7 @@ def test_config_snapshot_captures_local_neuro_and_runtime_without_secrets() -> N
     assert snapshot["top_level_key_parity"] is True
     for section in ("local_declared", "neuro_declared", "runtime_effective"):
         values = snapshot[section]
-        assert values["model_parameter_proposal_flow_release"] == "v4.1.7"
+        assert values["model_parameter_proposal_flow_release"] == "v4.1.8"
         assert values["model_parameter_variation_profile_enabled"] is True
         assert values["model_parameter_grounded_slot_recovery_enabled"] is True
         storage = values["model_parameter_resource_storage"]
@@ -934,7 +934,7 @@ def test_v8_compat_release_accepts_existing_v4_0_catalog_pin(tmp_path: Path) -> 
         execute=False,
         scenario_ids=(101,),
         scenario_group_id=None,
-        capability_release="extend16-v8-v4.0-compat",
+        capability_release="extend17-v9-v4.0-compat",
         evidence_path=tmp_path / "v4-0-compat.json",
     )
     dependencies = runner.RunnerDependencies(
@@ -967,7 +967,7 @@ def test_approved_release_blocks_runtime_allowlist_drift_before_database(
     monkeypatch.setattr(
         runner,
         "RUNTIME_PROPOSAL_CAPABILITY_NAMES",
-        frozenset({*runner.EXPECTED_EXTEND16_ALLOWLIST, "RemainingUnrestrictedAmount"}),
+        frozenset({*runner.EXPECTED_EXTEND17_ALLOWLIST, "RemainingUnrestrictedAmount"}),
     )
 
     dependencies = runner.RunnerDependencies(

@@ -97,24 +97,25 @@ raw active/executable candidate가 있어도 모두 runtime allow-list 밖인 �
 
 ### 정답 3
 
-- 외부개발 v4.1 master 24행·활성 16개
+- v0050 master 26행·활성 18개
 - 체크인 legacy mapping 129행: direct 35, routing 6, indirect 55, na 33
 - active resource LUT-backed 10개
-- Basecase-only 활성 6개: `RegasAdjustment`, `PNG Contract Volume`, `ShippingCost`,
-  `RegionalProductionAdjustment`, `ShippingFuelCost`, `CanalToll`
+- 현행 v4.1 Basecase-only proposal 7개: `RegasAdjustment`, `PNG Contract Volume`, `ShippingCost`,
+  `RegionalProductionAdjustment`, `ShippingFuelCost`, `Suez Canal Cost`, `Panama Canal Cost`
+- 호환용 활성 master 1개: `CanalToll` (v4.0 catalog pin 전용)
 - inactive 3개: `User-Adjusted Gas Demand`, `RemainingUnrestrictedAmount`, `VolumeCancelled`
 - v1/v3 raw direct/routing reachability 10개
-- v4.1 active Lever 21개, binding occurrence 56개(conditional 37개), effective executable 고유 Parameter 16개
+- v4.1 active Lever 21개, binding occurrence 56개(conditional 41개), effective executable 고유 Parameter 17개
 - v1/v3 proposal 이름 allow-list 5개: `GDP`, `PMI`, `PowerMix`, `Temperature`, `LiqUtilAdjustment`
-- v4 extend16 ID capability 16개: LUT-backed 10개 + `RegasAdjustment`, `PNG Contract Volume`,
-  `ShippingCost`, `RegionalProductionAdjustment`, `ShippingFuelCost`, `CanalToll`
+- v4.1 `extend17-v9` ID capability 17개: LUT-backed 10개 + `RegasAdjustment`, `PNG Contract Volume`,
+  `ShippingCost`, `RegionalProductionAdjustment`, `ShippingFuelCost`, `Suez Canal Cost`, `Panama Canal Cost`
 
 이 수는 live DB 조회 결과가 아니라 체크인 runtime fixture의 전역 합집합이다. v1/v3 raw reachability
 합집합은 `GDP`, `PMI`, `PowerMix`, `Temperature`, `Population`, `HurricaneIntensity`,
 `LiqProdAdjustment`, `LiqUtilAdjustment`, `PipelineAdjustment`, `SupplyDisruption` 10개다. Basecase-only
-활성 6개에는 legacy direct/routing row를 추가하지 않았다. v4의 effective executable 16개는 Lever-native
+항목에는 legacy direct/routing row를 추가하지 않았다. v4.1 effective executable 17개는 Lever-native
 경로이며 shared mapping을 조회하지 않는다. 요청 하나에서는 관련 lineage·선택 value에 해당하는 하위 집합만
-후보가 된다. 외부개발 DB의 v4.1 executable 고유 16개와 extend16 capability는 ID/name/target set equality로
+후보가 된다. v4.1 executable 고유 17개와 `extend17-v9` capability는 ID/name/target set equality로
 일치해야 한다. 하나라도 capability에서 빠지면 release 실패이며 LLM·proposal 입력으로 진행하지 않는다.
 v1/v3는 raw 10개 중 5개만 허용한다.
 
@@ -155,10 +156,10 @@ Lever 방향은 시장·운영 문맥이지 각 모델 입력 필드의 수학�
 ### 정답 9
 
 일반 v4 master·Lever rollout은 mgmt migration을 정본으로 하나의 transaction에서 precondition,
-cross-table active binding, checksum/read-back과 함께 검증·적용한다. checksum이 바뀌면 기존 v4 Scenario를
-새 catalog로 재해석하지 않고 신규 Scenario를 생성한다. v4.1은 master와 legacy mapping을 바꾸지 않고 기존
-v4.0 옆에 같은 Lever Full Set 21행과 conditional binding을 추가한다. versioned capability는 `extend16-v8`,
-workbook contract는 model input이 같아 `new-bc-v8`을 유지하며 local/Kubernetes config의
+cross-table active binding, checksum/read-back과 함께 검증·적용한다. v0050은 v4/v4.0 catalog·pin과 legacy
+mapping을 보존하고, 같은 v4.1 Lever ID 56~76 중 운하 관련 3행의 CanalToll binding을 Suez/Panama로
+제자리 분리한다. 기존 v4.1 Scenario는 version을 유지하고 checksum pin을 같은 transaction에서 이관한다. versioned
+capability는 `extend17-v9`, workbook contract는 `new-bc-v9`이며 local/Kubernetes config의
 catalog version·capability release·hash를 함께 갱신한다. public API payload와 confirmation workflow도 변경하지 않는다.
 
 ### 정답 10

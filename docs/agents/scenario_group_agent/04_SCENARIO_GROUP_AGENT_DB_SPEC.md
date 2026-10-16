@@ -74,8 +74,10 @@ v4는 `lever_code`, domain, 설명, 적용 기준, `parameter_bindings`, catalog
 `(catalog_version, lever_code)`이며 domain index와 parent self-FK도 catalog version을 함께 사용한다. v4 create는
 설정의 `scenario_group_v4_impact_catalog_version`(현재 신규 Group은 `v4.1`), `use_yn='Y'`, `del_yn='N'`을
 명시적으로 조회하고 그 checksum을 Group에 pin한다. v4.1의 `route_disruption`, `trade_restriction`과
-`price_only` Lever는 conditional binding이 있어 Model Parameter 근거 판정 후보가 될 수 있다. unknown Parameter
-binding이나 version 혼합은 계약 오류로 fail-close한다.
+`price_only` Lever는 conditional binding이 있어 Model Parameter 근거 판정 후보가 될 수 있다. v0050의
+v4.1 개정은 기존 Lever ID 56~76을 유지하면서 Suez/Panama Canal Cost binding을 분리한다. 이때 기존
+v4.1 Group은 version을 유지하고 checksum pin만 새 v4.1 checksum으로 transaction 이관하며, v4 row와 pin은
+수정하지 않는다. unknown Parameter binding이나 version 혼합은 계약 오류로 fail-close한다.
 Additional Dimension 생성과 Presentation label enrichment도 Group의 `impact_catalog_version`과
 `impact_catalog_checksum`을 한 쌍으로 검증한다. 같은 version 문자열이라도 checksum이 다르면 현재 catalog 의미를
 과거 Group에 소급하지 않는다.

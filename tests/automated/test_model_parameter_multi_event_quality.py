@@ -28,8 +28,8 @@ from tests.manual.model_parameter_agent import evaluate_multi_event_quality as r
 
 pytestmark = pytest.mark.model_parameter_core
 
-CATALOG_VERSION = "v4-test"
-CATALOG_CHECKSUM = "a" * 64
+CATALOG_VERSION = "v4.1"
+CATALOG_CHECKSUM = "467749ea59c3af7e875669be23da00c0fd8ef7c226256f9518a5945e36e4d7c4"
 
 
 def _binding(parameter_name: str) -> dict[str, Any]:

@@ -42,7 +42,7 @@ V4_CONTEXT = {
 }
 
 
-def test_bounded_expert_policy_covers_exactly_the_active_v4_1_parameters() -> None:
+def test_bounded_expert_policy_covers_v4_1_and_legacy_canal_parameters() -> None:
     assert VARIATION_POLICY_RELEASE == "bounded-expert-v3"
     assert set(PARAMETER_VARIATION_POLICIES) == {
         "GDP",
@@ -61,6 +61,8 @@ def test_bounded_expert_policy_covers_exactly_the_active_v4_1_parameters() -> No
         "RegionalProductionAdjustment",
         "ShippingFuelCost",
         "CanalToll",
+        "Suez Canal Cost",
+        "Panama Canal Cost",
     }
 
 
@@ -331,11 +333,15 @@ def test_route_routing_policy_keeps_hallucination_boundaries() -> None:
         ("route_disruption", "ShippingCost"),
         ("route_disruption", "ShippingFuelCost"),
         ("route_disruption", "CanalToll"),
+        ("route_disruption", "Suez Canal Cost"),
+        ("route_disruption", "Panama Canal Cost"),
         ("regional_price_spread", "ShippingCost"),
     }
     assert CONDITIONAL_ROUTING_POLICIES[("route_disruption", "ShippingCost")].allow_policy_recovery is True
     assert CONDITIONAL_ROUTING_POLICIES[("route_disruption", "ShippingFuelCost")].allow_policy_recovery is False
     assert CONDITIONAL_ROUTING_POLICIES[("route_disruption", "CanalToll")].allow_policy_recovery is False
+    assert CONDITIONAL_ROUTING_POLICIES[("route_disruption", "Suez Canal Cost")].allow_policy_recovery is False
+    assert CONDITIONAL_ROUTING_POLICIES[("route_disruption", "Panama Canal Cost")].allow_policy_recovery is False
     assert CONDITIONAL_ROUTING_POLICIES[("regional_price_spread", "ShippingCost")].allow_policy_recovery is True
 
     candidate = _route_disruption_candidate("ShippingCost", time_window="")

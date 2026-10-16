@@ -15,15 +15,15 @@ from apps.common.values.error_codes import ErrorCode
 
 
 PACKAGE_DIR = Path(__file__).resolve().parents[1]
-DEFAULT_LOGICAL_TABLE_CATALOG_PATH = PACKAGE_DIR / "resources/contracts/model-parameter-logical-table-catalog-v3.json"
-EXPECTED_CATALOG_VERSION = "20261010-v3-final"
+DEFAULT_LOGICAL_TABLE_CATALOG_PATH = PACKAGE_DIR / "resources/contracts/model-parameter-logical-table-catalog-v4.json"
+EXPECTED_CATALOG_VERSION = "20261016-v4-canal-split"
 EXPECTED_SOURCE_WORKBOOK_SHA256 = "5fce745227c6eeada73c63070b3044776224b5e08d74af7725b019e5c712bc24"
-EXPECTED_ENTRIES_SHA256 = "606debf69f51c11f4b75bb86d7b48b2e8f7060769edd47938b68543d8d96849b"
+EXPECTED_ENTRIES_SHA256 = "3bedbc3292cfc70fcc609017987d2d0f5813a4cacfb19abbcb9572966dc25383"
 EXPECTED_COUNTS = {
     "entry_count": 199,
     "logical_table_count": 193,
     "mapped_entry_count": 54,
-    "mapped_parameter_count": 22,
+    "mapped_parameter_count": 23,
     "write_target_count": 23,
     "related_count": 9,
     "reference_count": 22,
@@ -139,7 +139,7 @@ class LogicalTableCatalog(_FrozenModel):
                 f"catalog_version must be {EXPECTED_CATALOG_VERSION!r}; got {self.catalog_version!r}",
             )
         if self.source.workbook_sha256 != EXPECTED_SOURCE_WORKBOOK_SHA256:
-            raise ValueError("logical-table source workbook checksum differs from the reviewed v3 input")
+            raise ValueError("logical-table source workbook checksum differs from the reviewed v4 source input")
         if self.ui_hierarchy != ("model_file", "parameter_display_name", "display_name"):
             raise ValueError("UI hierarchy must be model file -> parameter name -> logical table display name")
 
@@ -159,7 +159,7 @@ class LogicalTableCatalog(_FrozenModel):
         declared_counts = self.expected_counts.model_dump()
         if declared_counts != EXPECTED_COUNTS or actual_counts != EXPECTED_COUNTS:
             raise ValueError(
-                "logical-table catalog counts differ from the reviewed v3 release: "
+                "logical-table catalog counts differ from the reviewed v4 release: "
                 f"declared={declared_counts}, actual={actual_counts}",
             )
 

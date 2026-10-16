@@ -1,0 +1,191 @@
+{
+  "schema_version": "model-parameter-proposal-capabilities-v5",
+  "release_id": "extend17-v9",
+  "current_catalog_version": "v4.1",
+  "catalog_checksums": {
+    "v4.0": "b9d8c051872b39903cc3b4d2f19cd00570156eecd82295f0d2b02fd042c4000b",
+    "v4.1": "467749ea59c3af7e875669be23da00c0fd8ef7c226256f9518a5945e36e4d7c4"
+  },
+  "parameters": [
+    {
+      "model_param_id": 4,
+      "parameter_name": "GDP",
+      "catalog_versions": ["v4.0", "v4.1"],
+      "model_target": {"model_file": "Demand", "model_sheet": "GDPPopulationAdjustment", "model_table": "table1"},
+      "reference_mode": "v4_workbook_then_lut",
+      "exact_axes": ["Country", "Year"],
+      "evidence_policy": "explicit_or_unique_inferred",
+      "constraints": {"value_semantics": "absolute", "unit": "fractional_yoy_growth"}
+    },
+    {
+      "model_param_id": 6,
+      "parameter_name": "PMI",
+      "catalog_versions": ["v4.0", "v4.1"],
+      "model_target": {"model_file": "Demand", "model_sheet": "PMIAdjustment", "model_table": "table1"},
+      "reference_mode": "v4_workbook_then_lut",
+      "exact_axes": ["Country", "Year", "Month"],
+      "evidence_policy": "explicit_or_unique_inferred",
+      "constraints": {"value_semantics": "absolute", "unit": "index"}
+    },
+    {
+      "model_param_id": 7,
+      "parameter_name": "PowerMix",
+      "catalog_versions": ["v4.0", "v4.1"],
+      "model_target": {"model_file": "Demand", "model_sheet": "PowerMixAdjustment", "model_table": "table1"},
+      "reference_mode": "v4_workbook_then_lut",
+      "exact_axes": ["Country", "Year", "Energy Source"],
+      "evidence_policy": "explicit_or_unique_inferred",
+      "constraints": {"value_semantics": "absolute", "unit": "fraction", "atomic_vector": true}
+    },
+    {
+      "model_param_id": 8,
+      "parameter_name": "Temperature",
+      "catalog_versions": ["v4.0", "v4.1"],
+      "model_target": {"model_file": "Demand", "model_sheet": "WeatherAdjustment", "model_table": "table2"},
+      "reference_mode": "v4_workbook_then_lut",
+      "exact_axes": ["Country", "Year", "Month"],
+      "evidence_policy": "explicit_or_unique_inferred",
+      "constraints": {"value_semantics": "absolute", "unit": "celsius"}
+    },
+    {
+      "model_param_id": 11,
+      "parameter_name": "Population",
+      "catalog_versions": ["v4.0", "v4.1"],
+      "model_target": {"model_file": "Demand", "model_sheet": "GDPPopulationAdjustment", "model_table": "table2"},
+      "reference_mode": "v4_workbook_then_lut",
+      "exact_axes": ["Country", "Year"],
+      "evidence_policy": "explicit_or_unique_inferred",
+      "constraints": {"value_semantics": "absolute", "unit": "thousand_people", "minimum": 0, "population_evidence_required": true}
+    },
+    {
+      "model_param_id": 12,
+      "parameter_name": "HurricaneIntensity",
+      "catalog_versions": ["v4.0", "v4.1"],
+      "model_target": {"model_file": "Supply", "model_sheet": "{USA}Hurricanes", "model_table": "table1"},
+      "reference_mode": "v4_workbook_then_lut",
+      "exact_axes": ["Year", "Month"],
+      "evidence_policy": "explicit_or_unique_inferred",
+      "constraints": {"value_semantics": "absolute", "unit": "integer_intensity", "minimum": 0, "maximum": 4, "integer_only": true, "gom_hurricane_evidence_required": true, "approved_facility_evidence_required": true}
+    },
+    {
+      "model_param_id": 13,
+      "parameter_name": "LiqProdAdjustment",
+      "catalog_versions": ["v4.0", "v4.1"],
+      "model_target": {"model_file": "Supply", "model_sheet": "LiqProdAdjustment", "model_table": "table1"},
+      "reference_mode": "v4_workbook_then_lut",
+      "exact_axes": ["Country", "LNG Plant", "LNG Plant Train", "Year", "Month"],
+      "evidence_policy": "explicit_or_unique_inferred",
+      "constraints": {"value_semantics": "absolute", "unit": "Mt LNG/month", "minimum": 0, "direct_production_override_evidence_required": true}
+    },
+    {
+      "model_param_id": 14,
+      "parameter_name": "LiqUtilAdjustment",
+      "catalog_versions": ["v4.0", "v4.1"],
+      "model_target": {"model_file": "Supply", "model_sheet": "LiqUtilAdjustment", "model_table": "table1"},
+      "reference_mode": "v4_workbook_then_lut",
+      "exact_axes": ["Country", "LNG Plant", "LNG Plant Train", "Year", "Month"],
+      "evidence_policy": "explicit_or_unique_inferred",
+      "constraints": {"value_semantics": "absolute", "unit": "utilization_fraction", "minimum": 0}
+    },
+    {
+      "model_param_id": 15,
+      "parameter_name": "PipelineAdjustment",
+      "catalog_versions": ["v4.0", "v4.1"],
+      "model_target": {"model_file": "Supply", "model_sheet": "PipelineAdjustment", "model_table": "table1"},
+      "reference_mode": "v4_workbook_then_lut",
+      "exact_axes": ["Pipeline Name", "From Country", "To Country", "Year", "Month"],
+      "evidence_policy": "explicit_or_unique_inferred",
+      "constraints": {"value_semantics": "absolute", "unit": "Mt/y", "minimum": 0}
+    },
+    {
+      "model_param_id": 16,
+      "parameter_name": "RegasAdjustment",
+      "catalog_versions": ["v4.0", "v4.1"],
+      "model_target": {"model_file": "Supply", "model_sheet": "RegasAdjustment", "model_table": "table1"},
+      "reference_mode": "v4_workbook_then_lut",
+      "exact_axes": ["Continent", "Region", "Country", "Regasification plant", "Life Cycle Category", "Nameplate capacity (MTPA)", "Year", "Month"],
+      "evidence_policy": "explicit_or_unique_inferred",
+      "constraints": {"value_semantics": "absolute", "unit": "Mt LNG/month", "minimum": 0, "basecase_only": true}
+    },
+    {
+      "model_param_id": 17,
+      "parameter_name": "SupplyDisruption",
+      "catalog_versions": ["v4.0", "v4.1"],
+      "model_target": {"model_file": "Supply", "model_sheet": "ProductionAdjustment", "model_table": "table2"},
+      "reference_mode": "v4_workbook_then_lut",
+      "exact_axes": ["Country", "Year", "Month"],
+      "evidence_policy": "explicit_or_unique_inferred",
+      "constraints": {"value_semantics": "absolute", "unit": "Mt", "minimum": 0}
+    },
+    {
+      "model_param_id": 18,
+      "parameter_name": "PNG Contract Volume",
+      "catalog_versions": ["v4.0", "v4.1"],
+      "model_target": {"model_file": "Trade", "model_sheet": "MidstreamContractInput", "model_table": "table1"},
+      "reference_mode": "v4_workbook_then_lut",
+      "exact_axes": ["Year", "From Country", "To Country"],
+      "evidence_policy": "explicit_or_unique_inferred",
+      "constraints": {"value_semantics": "absolute", "unit": "Mt LNG", "minimum": 0, "basecase_only": true}
+    },
+    {
+      "model_param_id": 20,
+      "parameter_name": "ShippingCost",
+      "catalog_versions": ["v4.0", "v4.1"],
+      "model_target": {"model_file": "Trade", "model_sheet": "ShippingCostInput", "model_table": "table1"},
+      "reference_mode": "v4_workbook_then_lut",
+      "exact_axes": ["Year"],
+      "evidence_policy": "explicit_or_unique_inferred",
+      "constraints": {"value_semantics": "absolute", "unit": "$/d", "minimum": 0, "basecase_only": true}
+    },
+    {
+      "model_param_id": 22,
+      "parameter_name": "RegionalProductionAdjustment",
+      "catalog_versions": ["v4.0", "v4.1"],
+      "model_target": {"model_file": "Supply", "model_sheet": "ProductionAdjustment", "model_table": "table1"},
+      "reference_mode": "v4_workbook_then_lut",
+      "exact_axes": ["Year", "Province/Country"],
+      "evidence_policy": "explicit_or_unique_inferred",
+      "constraints": {"value_semantics": "absolute", "unit": "Bcm", "minimum": 0, "basecase_only": true, "annual_regional_production_evidence_required": true}
+    },
+    {
+      "model_param_id": 23,
+      "parameter_name": "ShippingFuelCost",
+      "catalog_versions": ["v4.0", "v4.1"],
+      "model_target": {"model_file": "Trade", "model_sheet": "ShippingCostInput", "model_table": "table3"},
+      "reference_mode": "v4_workbook_then_lut",
+      "exact_axes": ["Year"],
+      "evidence_policy": "explicit_or_unique_inferred",
+      "constraints": {"value_semantics": "absolute", "unit": "$/tonne", "minimum": 0, "basecase_only": true, "shipping_fuel_evidence_required": true}
+    },
+    {
+      "model_param_id": 24,
+      "parameter_name": "CanalToll",
+      "catalog_versions": ["v4.0"],
+      "model_target": {"model_file": "Trade", "model_sheet": "ShippingCostInput", "model_table": "table4"},
+      "reference_mode": "v4_workbook_then_lut",
+      "exact_axes": ["Canal", "Year"],
+      "evidence_policy": "explicit_or_unique_inferred",
+      "constraints": {"value_semantics": "absolute", "unit": "$/crossing", "minimum": 0, "basecase_only": true, "canal_toll_evidence_required": true, "legacy_only": true}
+    },
+    {
+      "model_param_id": 25,
+      "parameter_name": "Suez Canal Cost",
+      "catalog_versions": ["v4.1"],
+      "model_target": {"model_file": "Trade", "model_sheet": "ShippingCostInput", "model_table": "table4"},
+      "reference_mode": "v4_workbook_then_lut",
+      "exact_axes": ["Canal", "Year"],
+      "evidence_policy": "explicit_or_unique_inferred",
+      "constraints": {"value_semantics": "absolute", "unit": "$/crossing", "minimum": 0, "basecase_only": true, "canal_toll_evidence_required": true, "canal": "Suez"}
+    },
+    {
+      "model_param_id": 26,
+      "parameter_name": "Panama Canal Cost",
+      "catalog_versions": ["v4.1"],
+      "model_target": {"model_file": "Trade", "model_sheet": "ShippingCostInput", "model_table": "table5"},
+      "reference_mode": "v4_workbook_then_lut",
+      "exact_axes": ["Canal", "Year"],
+      "evidence_policy": "explicit_or_unique_inferred",
+      "constraints": {"value_semantics": "absolute", "unit": "$/crossing", "minimum": 0, "basecase_only": true, "canal_toll_evidence_required": true, "canal": "Panama"}
+    }
+  ]
+}

@@ -26,7 +26,7 @@ from apps.agents.model_parameter_agent.utils.resource_runtime import (
     get_model_parameter_resource_paths,
 )
 from apps.agents.model_parameter_agent.utils.workbook_contract import (
-    EXPECTED_PARAMETER_NAMES,
+    CANAL_SPLIT_PARAMETER_NAMES,
     ModelParameterWorkbookContract,
     WorkbookArtifact,
     load_workbook_contract,
@@ -48,7 +48,7 @@ from apps.common.exceptions.custom import MIBaseError
 
 ROOT_DIR = Path(__file__).resolve().parents[2]
 CONTRACT_PATH = (
-    ROOT_DIR / "apps/agents/model_parameter_agent/resources/contracts/model-parameter-workbook-contract-v8.json"
+    ROOT_DIR / "apps/agents/model_parameter_agent/resources/contracts/model-parameter-workbook-contract-v9.json"
 )
 V1_CONTRACT_PATH = (
     ROOT_DIR / "apps/agents/model_parameter_agent/resources/contracts/model-parameter-workbook-contract-v1.json"
@@ -71,6 +71,8 @@ EXPECTED_SOURCE_COUNTS = {
     "RegionalProductionAdjustment": 2_187,
     "ShippingFuelCost": 5,
     "CanalToll": 10,
+    "Suez Canal Cost": 5,
+    "Panama Canal Cost": 5,
 }
 OBSERVED_LEGACY_TARGET_COUNTS = {
     "GDP": 93,
@@ -90,6 +92,8 @@ OBSERVED_LEGACY_TARGET_COUNTS = {
     "RegionalProductionAdjustment": 0,
     "ShippingFuelCost": 5,
     "CanalToll": 10,
+    "Suez Canal Cost": 5,
+    "Panama Canal Cost": 5,
 }
 
 
@@ -161,6 +165,20 @@ def _record_for(
             ("trade", "ShippingCostInput", "table4"),
             "$/crossing",
         ),
+        (
+            "Suez Canal Cost",
+            5,
+            ("Canal", "Year"),
+            ("trade", "ShippingCostInput", "table4"),
+            "$/crossing",
+        ),
+        (
+            "Panama Canal Cost",
+            5,
+            ("Canal", "Year"),
+            ("trade", "ShippingCostInput", "table5"),
+            "$/crossing",
+        ),
     ],
 )
 def test_existing_exact_basecase_only_source_to_output_alignment(
@@ -211,11 +229,11 @@ def test_regional_production_appendable_source_to_output_alignment(
     assert all(record.value >= 0 for record in records)
 
 
-def test_contract_locks_v8_read_only_scope_targets_and_policies() -> None:
+def test_contract_locks_v9_read_only_scope_targets_and_policies() -> None:
     contract = load_workbook_contract()
 
-    assert contract.schema_version == 8
-    assert contract.release_id == "new-bc-v8"
+    assert contract.schema_version == 9
+    assert contract.release_id == "new-bc-v9"
     assert contract.resource_directory == "basecase_v4/new-bc-v2"
     assert {
         role: (artifact.filename, artifact.sha256)
@@ -238,7 +256,7 @@ def test_contract_locks_v8_read_only_scope_targets_and_policies() -> None:
     assert contract.api_version == "v4"
     assert contract.generation_strategy == "multi_event_model_lever_dimensions"
     assert contract.public_api_unchanged is True
-    assert set(contract.parameters) == EXPECTED_PARAMETER_NAMES
+    assert set(contract.parameters) == CANAL_SPLIT_PARAMETER_NAMES
     assert contract.horizon.years == (2026, 2027, 2028, 2029, 2030)
     assert {
         name: parameter.reference_source.expected_record_count for name, parameter in contract.parameters.items()
@@ -373,6 +391,14 @@ def test_contract_locks_v8_read_only_scope_targets_and_policies() -> None:
     assert canal.reference_source.required_cells["C49"] == "RE Base Case ($/Crossing"
     assert canal.write_target.table == "table4"
 
+    suez_canal = contract.parameters["Suez Canal Cost"]
+    assert suez_canal.reference_source.axis_transforms["Canal"].allowed_values == ("Suez",)
+    assert suez_canal.write_target.table == "table4"
+    panama_canal = contract.parameters["Panama Canal Cost"]
+    assert panama_canal.reference_source.axis_transforms["Canal"].allowed_values == ("Panama",)
+    assert panama_canal.reference_source.required_cells["C49"] == "RE Base Case ($/Crossing"
+    assert panama_canal.write_target.table == "table5"
+
     weakened_document = contract.model_dump(mode="json")
     weakened_document["parameters"]["LiqUtilAdjustment"]["constraints"]["minimum"] = None
     with pytest.raises(ValueError, match="zero minimum"):
@@ -488,6 +514,8 @@ def test_authoritative_sources_extract_expected_horizon_records(
         "ShippingCost": 5,
         "ShippingFuelCost": 5,
         "CanalToll": 10,
+        "Suez Canal Cost": 5,
+        "Panama Canal Cost": 5,
         "User-Adjusted Gas Demand": 12,
     }
 
@@ -500,7 +528,7 @@ def test_authoritative_sources_preserve_representative_values_and_power_vector(
 ) -> None:
     gdp = _record_for(reference_bundle, "GDP", ("United States", 2026))
     assert gdp.value == pytest.approx(0.020638022790823538)
-    assert gdp.reference_id.startswith("new-bc-v8:demand:BCInput:U")
+    assert gdp.reference_id.startswith("new-bc-v9:demand:BCInput:U")
     assert gdp.diagnostics == ("value_transform=gdp_year_over_year_growth",)
 
     pmi = _record_for(reference_bundle, "PMI", ("China", 2026, 1))
@@ -614,6 +642,12 @@ def test_authoritative_sources_preserve_representative_values_and_power_vector(
     assert panama.value == 717_000
     assert "write_target_exact_slot_verified" in suez.diagnostics
 
+    split_suez = _record_for(reference_bundle, "Suez Canal Cost", ("Suez", 2026))
+    split_panama = _record_for(reference_bundle, "Panama Canal Cost", ("Panama", 2026))
+    assert split_suez.value == pytest.approx(408_415.55)
+    assert split_panama.value == 717_000
+    assert "write_target_exact_slot_verified" in split_suez.diagnostics
+
 
 def test_gdp_invalid_source_keys_are_projected_to_the_matching_v4_candidate(
     reference_bundle: WorkbookReferenceBundle,
@@ -677,6 +711,8 @@ def test_v4_runtime_adapter_preserves_counts_and_blocked_keys(
         "RegionalProductionAdjustment": ("Supply", "ProductionAdjustment", "table1"),
         "ShippingFuelCost": ("Trade", "ShippingCostInput", "table3"),
         "CanalToll": ("Trade", "ShippingCostInput", "table4"),
+        "Suez Canal Cost": ("Trade", "ShippingCostInput", "table4"),
+        "Panama Canal Cost": ("Trade", "ShippingCostInput", "table5"),
     }
     candidates = [
         {

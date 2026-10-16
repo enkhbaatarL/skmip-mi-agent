@@ -10,8 +10,12 @@ proposal capability가 요구하는 대상·기간·수치 근거를 잃지 않�
 - Scenario API `v4`
 - `generation_strategy=multi_event_model_lever_dimensions`
 - Impact Lever catalog `v4.1`
-- Model Parameter proposal capability `extend16-v8`
-- 현재 신규 proposal 대상 16종: LUT-backed 10종과 Basecase-only 6종
+- Model Parameter proposal capability `extend17-v9`
+- 현재 proposal 대상 17종: LUT-backed 10종과 Basecase-only 7종
+
+Scenario API와 v4 graph 소스 계약은 그대로다. 신규 Group은 설정에서 v4.1을 pin한다. mgmt v0050 적용 시
+기존 v4.1 Group은 version을 유지하고 checksum을 현행 v4.1 값으로 transaction 이관하며, v4 Group의
+version/checksum은 그대로 유지한다.
 
 이 문서는 Event 구조화 단계가 Model Parameter를 직접 선택하도록 요구하지 않는다. Event 구조화의 책임은
 원문에서 확인할 수 있는 확정·관측 사실과 미래 주장을 구분하고, 각각의 `대상`, `기간`, `측정값`, `변화`,
