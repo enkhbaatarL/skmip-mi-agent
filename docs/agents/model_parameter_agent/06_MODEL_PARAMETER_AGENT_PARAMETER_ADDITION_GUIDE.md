@@ -296,7 +296,8 @@ fail closed하고 성공 결과를 process cache한다.
   duplicate key는 명시적으로 차단해 LUT로 복구하지 않는다.
 - PowerMix는 authoritative raw source fraction의 원본 정밀도를 보존하고 재정규화하지 않는다. Country/Year별
   승인된 10-member 완전성·중복·유한성·0~1·합 1로 atomic 검증하며, Basecase/LUT 결합 effective vector와
-  Step3 proposed vector에도 합 1과 `1e-6` 허용오차를 다시 적용한다.
+  Step3 proposed vector에도 합 1과 `1e-6` 허용오차를 다시 적용한다. 검증 뒤 proposal 출력은 table1의
+  Year+Country 또는 table2의 Year+Month+Country별로 largest-remainder 보정해 0.01 단위·합계 1.00으로 만든다.
 - LiqUtilAdjustment는 한 Lever provenance 안에서 Plant와 Train 둘 모두, slot과 일치하는 Year/Month,
   Group에 실제로 연결된 source Event와 직접 운영 근거가 있어야 한다. 승인된 한국어/영문·Stage·Train
   표기 정규화는 허용하지만 출력은 exact catalog 좌표를 사용한다. 단일 후보라는 이유로 Plant·Train·기간
@@ -401,7 +402,7 @@ applicability는 보존한다. 대표 worst-case prompt를 직렬화해 설정 b
   `EOF while parsing`으로 확인된 불완전 JSON만 retry하고 완결 JSON의 schema·semantic/좌표/DB 오류는 retry 금지
 - 상한 초과: LLM 호출 전 actual/limit과 parameter별 크기를 포함해 실패
 
-proposal Step3의 `proposedValue`는 유한 숫자여야 한다. Confirmation은 `proposedValue` key가 필수지만 값은 `null`일 수 있고, non-null 값만 persistence 경계에서 엄격한 유한 숫자로 정규화한다. 원래 proposal과 같아야 한다는 비교는 없다. 두 경로 모두 설정 기반 소수 자릿수 round/trunc/ceil을 적용하지 않는다. Basecase/LUT 기준값의 adapter 정밀도 정책은 이와 별개로 유지하되 v4 PowerMix source fraction은 atomic sum을 보존하도록 정밀도 변환에서 제외한다. 기존 proposed precision 설정 키는 배포 설정 호환용이며 runtime 제안값을 변환하지 않는다.
+proposal Step3의 `proposedValue`는 유한 숫자여야 한다. Confirmation은 `proposedValue` key가 필수지만 값은 `null`일 수 있고, non-null 값만 persistence 경계에서 엄격한 유한 숫자로 정규화한다. 원래 proposal과 같아야 한다는 비교는 없다. 설정 기반 소수 자릿수 round/trunc/ceil은 적용하지 않되 PowerMix proposal 최종 출력만 그룹별 0.01 단위·합계 1.00으로 보정하며 Confirmation 수정값에는 재적용하지 않는다. Basecase/LUT 기준값의 adapter 정밀도 정책은 이와 별개로 유지하되 v4 PowerMix source fraction은 atomic sum을 보존하도록 정밀도 변환에서 제외한다. 기존 proposed precision 설정 키는 배포 설정 호환용이며 runtime 제안값을 변환하지 않는다.
 
 proposal-only evidence runner가 API 응답과 DB JSON을 비교할 때는 JSON/DB 왕복으로 생기는 최하위
 floating-point noise에만 `1e-12` 절대·상대 허용오차를 적용한다. Parameter명, slot 좌표, payload 구조 또는

@@ -236,7 +236,7 @@ POST /model-parameters/proposals/42/confirmation
 
 확정할 항목은 최소 1개가 필요하다. 이미 `CONFIRMED`인 제안을 다시 확정하면 이전 확정 내용을 새 요청으로 바꾼다.
 
-기존 confirmation 호환성도 유지한다. runtime allow-list는 신규 proposal 생성에만 적용하며 기존 `PROPOSED`/`CONFIRMED` 행이나 confirmation payload를 새로 제한하지 않는다. Confirmation은 원래 proposal과 항목·값이 같은지 비교하지 않으므로 사용자가 항목을 수정·추가·삭제할 수 있고, canonical master에 없는 custom parameter도 공통 payload 구조 검증을 통과하면 확정할 수 있다. 각 value 객체에는 `basecaseValue`, `proposedValue`, `rationale` key가 모두 필요하지만 `proposedValue` 값은 `null`일 수 있다. `null`이 아닌 값만 persistence 경계에서 엄격한 유한 숫자로 정규화한다. proposal Step3에서 생성하는 `proposedValue`는 유한 숫자여야 한다. 두 경로 모두 설정 기반 소수 자릿수 round/trunc/ceil을 적용하지 않으며, Basecase/LUT 기준값의 기존 정밀도 정책은 유지한다. public confirmation 필드나 parameter별 min/max·정수·단위 validator가 새로 추가되지는 않는다.
+기존 confirmation 호환성도 유지한다. runtime allow-list는 신규 proposal 생성에만 적용하며 기존 `PROPOSED`/`CONFIRMED` 행이나 confirmation payload를 새로 제한하지 않는다. Confirmation은 원래 proposal과 항목·값이 같은지 비교하지 않으므로 사용자가 항목을 수정·추가·삭제할 수 있고, canonical master에 없는 custom parameter도 공통 payload 구조 검증을 통과하면 확정할 수 있다. 각 value 객체에는 `basecaseValue`, `proposedValue`, `rationale` key가 모두 필요하지만 `proposedValue` 값은 `null`일 수 있다. `null`이 아닌 값만 persistence 경계에서 엄격한 유한 숫자로 정규화한다. proposal Step3에서 생성하는 `proposedValue`는 유한 숫자여야 한다. 설정 기반 소수 자릿수 round/trunc/ceil은 적용하지 않되 PowerMix proposal 응답·저장값만 table1의 Year+Country 또는 table2의 Year+Month+Country 그룹별로 0.01 단위·합계 1.00을 보장한다. Confirmation 수정값에는 이 보정을 재적용하지 않으며 Basecase/LUT 기준값의 기존 정밀도 정책도 유지한다. public confirmation 필드나 parameter별 min/max·정수·단위 validator가 새로 추가되지는 않는다.
 
 ## 4. 오류를 받았을 때 확인할 것
 

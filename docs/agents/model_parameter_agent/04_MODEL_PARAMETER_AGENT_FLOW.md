@@ -496,10 +496,16 @@ prompt는 파라미터 근거에 개별 slot 값을 나열하지 말고, slot �
 
 - 입력에 없거나 중복된 `candidate_key`와 `slot_key`를 제외한다.
 - 요청한 slot 누락, `null`, 무한대, 숫자가 아닌 제안값을 검사한다.
-- 제안값이 유한 숫자인지 검사하되 설정 기반 소수 자릿수 round/trunc/ceil은 적용하지 않는다.
+- 제안값이 유한 숫자인지 검사한다. 일반 Parameter에는 설정 기반 소수 자릿수 round/trunc/ceil을 적용하지
+  않으며, PowerMix 최종 출력에만 아래의 0.01 단위 합계 보정을 적용한다.
 - v4 PowerMix는 `(Country, Year)`별 `Liquids/Hydro/Solar/Wind/Bioenergy/Gas/Coal/Nuclear/Geothermal/Other`
   10개 응답이 모두 있고 각 값이 0~1이며 합이 절대오차 `1e-6` 이내에서 1인지 검사한다. 일부 member만
   성공시키지 않고 실패한 atomic group 전체를 제외한다.
+- 이 검증을 통과한 PowerMix 제안은 최종 저장·응답 조립 시 largest-remainder 방식으로 각 값을 0.01 단위로
+  배분한다. `table1`은 `(Year, Country)`, `table2`는 `(Year, Month, Country)`별로 독립 처리하며 각 그룹의
+  Decimal 합을 정확히 `1.00`으로 만든다. 원래 합이 `1±1e-6`을 벗어나거나 필수 축·Energy Source가 없으면
+  임의 정규화하지 않고 실패한다. 같은 시트에 두 table 결과가 있어도 별도 ProposalParameter로 유지한다.
+  현재 canonical v4 write target은 `table1`이며, 이 출력 규칙 자체가 월별 `table2` target을 활성화하지는 않는다.
 - v4 LiqUtilAdjustment는 음수만 제외하고 1 초과의 관측·제안값은 clamp하거나 거부하지 않는다.
 - 서버가 보관한 좌표, Basecase/LUT reference, 모델 대상을 key로 다시 결합한다.
 - 유효한 slot이 남은 결과만 proposal JSON으로 만든다.
@@ -518,9 +524,11 @@ v4 Step2가 빈 결과로 끝나면 내부 `slot_selection_diagnostics`에 catal
 단정하지 않으며, 진단 객체는 API·callback·proposal JSON에 노출하지 않는다.
 
 proposal Step3의 `proposedValue`는 유한 숫자여야 한다. Confirmation은 `proposedValue` key를 요구하지만 값은
-`null`일 수 있고, `null`이 아닌 값만 persistence 경계에서 엄격한 유한 숫자로 정규화한다. 두 경로 모두
-설정 기반 소수 자릿수 정밀도 변환은 하지 않는다. Basecase/LUT 기준값의 기존 정밀도 정책은 유지하되,
-v4 PowerMix authoritative fraction은 atomic sum을 훼손하지 않도록 원본 정밀도를 보존한다.
+`null`일 수 있고, `null`이 아닌 값만 persistence 경계에서 엄격한 유한 숫자로 정규화한다. 설정 기반 소수
+자릿수 정밀도 변환은 하지 않으며, 예외적으로 PowerMix proposal 최종값만 그룹별 0.01 단위·합계 1.00 규칙을
+적용한다. Confirmation에서 사용자가 수정한 값에는 이 proposal 전용 보정을 다시 적용하지 않는다.
+Basecase/LUT 기준값의 기존 정밀도 정책은 유지하되, v4 PowerMix authoritative fraction은 atomic sum을
+훼손하지 않도록 원본 정밀도를 보존한다.
 `new-bc-v8`의 파라미터별 validator와 진단은 server-side에만 두며 public JSON 필드를 추가하지 않는다.
 
 동기 요청은 처리가 끝난 `PROPOSED` 또는 `ABSTAINED` 결과를 바로 반환한다. 비동기 요청은 먼저 HTTP `200`과
@@ -868,7 +876,7 @@ fingerprint와 DB uniqueness를 별도 도입해야 한다. 그 전의 `--execut
   변경하지 않는다. 별도의 catalog 변경 release에서는 master와 Lever catalog를 한 transaction으로 적용하고,
   checksum이 바뀌면 신규 v4 Scenario를 생성한다. Agent runtime은 DDL이나 canonical DML을 실행하지 않는다.
 - 시작 시 schema validation이 필수 테이블·컬럼과 nullable 계약을 검사한다. 누락된 schema를 임의로 우회하지 않고 startup 또는 context load에서 명확히 실패시킨다.
-- confirmation의 custom parameter와 항목 추가·삭제 허용, 기존 저장 데이터는 유지한다. `proposedValue` key는 필수지만 Confirmation 값은 `null`일 수 있고, non-null 값만 persistence에서 유한 숫자로 검증한다. proposal Step3 값은 유한 숫자여야 한다. 설정 기반 소수 자릿수 정밀도 변환은 적용하지 않으며 Basecase/LUT 기준값 정밀도 정책은 유지하되 v4 PowerMix source fraction은 원본 정밀도를 보존한다. v4 `new-bc-v8`의 PowerMix atomic 범위·합계, HurricaneIntensity 0~4 정수, 파라미터별 제약/evidence 검증은 proposal 내부 정책이며 Confirmation의 공통 공개 계약을 바꾸지 않는다.
+- confirmation의 custom parameter와 항목 추가·삭제 허용, 기존 저장 데이터는 유지한다. `proposedValue` key는 필수지만 Confirmation 값은 `null`일 수 있고, non-null 값만 persistence에서 유한 숫자로 검증한다. proposal Step3 값은 유한 숫자여야 한다. 설정 기반 소수 자릿수 정밀도 변환은 적용하지 않되 PowerMix proposal 최종 출력만 table1의 Year+Country 또는 table2의 Year+Month+Country별 0.01 단위·합계 1.00으로 보정한다. Basecase/LUT 기준값 정밀도 정책은 유지하고 v4 PowerMix source fraction은 원본 정밀도를 보존한다. v4 `new-bc-v8`의 PowerMix atomic 범위·합계, HurricaneIntensity 0~4 정수, 파라미터별 제약/evidence 검증은 proposal 내부 정책이며 Confirmation의 공통 공개 계약을 바꾸지 않는다.
 
 ## 관련 문서
 

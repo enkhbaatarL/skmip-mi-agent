@@ -194,6 +194,9 @@ slot/evidence/value 검증을 공통 적용한다. capability contract는 각각
 오류, non-finite 값이나 상충 duplicate로 차단된 key는 LUT로 fallback하지 않는다. PowerMix는 raw source와
 Basecase/LUT 결합 effective reference, Step3 각각에서 Country/Year별 10개 Energy Source를 하나의 atomic
 vector로 검증한다. raw source fraction에는 기존 5자리 정밀도 변환이나 재정규화를 적용하지 않는다.
+검증을 통과한 최종 proposal은 table1의 Year+Country 또는 table2의 Year+Month+Country 그룹별로
+largest-remainder 보정을 적용해 각 값을 0.01 단위로 만들고 합계를 정확히 1.00으로 저장·응답한다.
+현재 canonical v4 write target은 table1이며 이 포맷터만으로 table2 target이 활성화되지는 않는다.
 LiqUtilAdjustment는 selected Lever, Scenario/Event scope와 applicability 필터 뒤에도 Plant·Train·기간 근거가
 필요하다. 표기가 actual coordinate와 다르면 Step2 LLM이 원문 Plant/Train 문구와 좌표 일치 이유를 구조화하고,
 서버가 서로 다른 원문 span과 exact target을 검증한다. 후보가 하나라는 이유만으로 근거를 생략하지 않는다. LiqUtil
@@ -353,7 +356,7 @@ skmip-mi-agent/
 
 API는 `api.py`에서 시작해 `flows/`로 들어간다. 제안 Flow는 전략에 따라 v1/v3 legacy mapping adapter 또는 v4 Lever-native context loader로 raw 후보를 만든 뒤, version별 scope gate를 LLM·저장보다 먼저 적용한다. 활성 MI Base는 요청별로 선택해 `mi_base_case_id`로 저장하고, 허용 후보만 그 요청의 Basecase/LUT, prompt와 저장 service로 전달한다. v1 proposal은 대표 event ID를 저장하지만 v3/v4 proposal은 `mi_event_id=NULL`로 저장하고 `scenario_group_id`를 authoritative link로 사용한다. 외부 API의 기존 optional `eventId`도 v3/v4에서는 `null`이며 MI Base 식별자를 public payload에 추가하지 않는다. DB query는 flow/node가 직접 작성하지 않고 Agent service와 `apps/persistence/`의 domain service/repository를 통해 실행한다.
 
-확정 단계의 custom parameter 허용 동작, 기존 저장 데이터와 JSON shape은 그대로 유지한다. proposal 생성의 Step3는 `proposedValue`를 유한 숫자로 검증한다. Confirmation은 각 value 객체에 `proposedValue` key가 있어야 하지만 값은 `null`일 수 있고, `null`이 아닌 값만 persistence 경계에서 엄격한 유한 숫자로 정규화한다. 원래 proposal과 동일한 항목·값인지 비교하지 않으므로 사용자는 구조 계약과 알려진 정의 검증 범위 안에서 항목을 수정·추가·삭제할 수 있으며, custom parameter도 공통 구조 검증을 통과하면 저장할 수 있다. 어느 경로도 설정 기반 소수 자릿수 round/trunc/ceil을 적용하지 않는다. Basecase/LUT 기준값의 기존 정밀도 정책은 유지하되, v4 PowerMix authoritative fraction은 atomic sum을 훼손하지 않도록 원본 정밀도를 보존한다. runtime allow-list는 신규 proposal 생성에만 적용하며 confirmation을 추가로 제한하지 않는다. v4 provenance와 미지원 진단은 request state, trace, validation warning 또는 실패 detail에만 둔다. `new-bc-v8`는 packaged baseline인 `new-bc-v2`의 digest와 ID 13·14의 유효 matrix 범위 `G:CL`을 고정하고, 활성 MI Base의 Object Storage workbook에도 같은 구조 계약을 적용한다. mgmt v0044는 같은 DB master 종료 열을 반영한다. 새 workbook의 Agent 소비 record·값은 이전 artifact와 동일하며, DB DDL, legacy mapping, writer/recalculation/engine은 변경하지 않는다.
+확정 단계의 custom parameter 허용 동작, 기존 저장 데이터와 JSON shape은 그대로 유지한다. proposal 생성의 Step3는 `proposedValue`를 유한 숫자로 검증한다. Confirmation은 각 value 객체에 `proposedValue` key가 있어야 하지만 값은 `null`일 수 있고, `null`이 아닌 값만 persistence 경계에서 엄격한 유한 숫자로 정규화한다. 원래 proposal과 동일한 항목·값인지 비교하지 않으므로 사용자는 구조 계약과 알려진 정의 검증 범위 안에서 항목을 수정·추가·삭제할 수 있으며, custom parameter도 공통 구조 검증을 통과하면 저장할 수 있다. 설정 기반 소수 자릿수 round/trunc/ceil은 적용하지 않되 PowerMix proposal 최종값만 그룹별 0.01 단위·합계 1.00으로 보정한다. 이 proposal 전용 보정은 Confirmation 수정값에 다시 적용하지 않는다. Basecase/LUT 기준값의 기존 정밀도 정책은 유지하되, v4 PowerMix authoritative fraction은 atomic sum을 훼손하지 않도록 원본 정밀도를 보존한다. runtime allow-list는 신규 proposal 생성에만 적용하며 confirmation을 추가로 제한하지 않는다. v4 provenance와 미지원 진단은 request state, trace, validation warning 또는 실패 detail에만 둔다. `new-bc-v8`는 packaged baseline인 `new-bc-v2`의 digest와 ID 13·14의 유효 matrix 범위 `G:CL`을 고정하고, 활성 MI Base의 Object Storage workbook에도 같은 구조 계약을 적용한다. mgmt v0044는 같은 DB master 종료 열을 반영한다. 새 workbook의 Agent 소비 record·값은 이전 artifact와 동일하며, DB DDL, legacy mapping, writer/recalculation/engine은 변경하지 않는다.
 
 코드를 변경하기 전에는 [AGENTS.md](../../../AGENTS.md),
 [Python conventions](../../../.claude/rules/python-conventions.md)와

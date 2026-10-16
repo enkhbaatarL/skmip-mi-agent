@@ -301,7 +301,7 @@ stateDiagram-v2
 
 확정 JSON은 제안 JSON과 같은 모양이다. 사용자가 수정했다면 `proposedValue`에 수정값이 들어가며, 후속 조회에서는 확정값을 우선 사용한다. v4 Lever provenance와 제외 reason code는 이 공개·저장 JSON shape에 새 필드로 넣지 않는다.
 
-확정은 원래 proposal의 항목·값과 동일한지 비교하지 않는다. 사용자는 항목을 수정·추가·삭제할 수 있고, canonical master에 없는 custom parameter도 공통 구조 검증을 통과하면 저장할 수 있다. 각 value 객체에는 `basecaseValue`, `proposedValue`, `rationale` key가 필요하지만 `proposedValue` 값은 `null`일 수 있다. `null`이 아닌 값만 persistence 경계에서 엄격한 유한 숫자로 정규화한다. proposal Step3에서 생성하는 값은 유한 숫자여야 하며, 두 경로 모두 설정 기반 소수 자릿수 round/trunc/ceil을 적용하지 않는다. `basecaseValue`의 기존 기준값 정밀도 정책은 유지한다. v4 기능은 public payload나 parameter별 min/max·정수·단위 validator를 추가하지 않는다.
+확정은 원래 proposal의 항목·값과 동일한지 비교하지 않는다. 사용자는 항목을 수정·추가·삭제할 수 있고, canonical master에 없는 custom parameter도 공통 구조 검증을 통과하면 저장할 수 있다. 각 value 객체에는 `basecaseValue`, `proposedValue`, `rationale` key가 필요하지만 `proposedValue` 값은 `null`일 수 있다. `null`이 아닌 값만 persistence 경계에서 엄격한 유한 숫자로 정규화한다. proposal Step3에서 생성하는 값은 유한 숫자여야 한다. 설정 기반 소수 자릿수 round/trunc/ceil은 적용하지 않지만 PowerMix proposal 저장값은 table1의 Year+Country 또는 table2의 Year+Month+Country 그룹별로 0.01 단위·합계 1.00을 보장한다. 사용자 Confirmation 수정값에는 이를 다시 적용하지 않는다. `basecaseValue`의 기존 기준값 정밀도 정책은 유지한다. v4 기능은 public payload나 parameter별 min/max·정수·단위 validator를 추가하지 않는다.
 
 ## 6. 운영자가 기억할 점
 

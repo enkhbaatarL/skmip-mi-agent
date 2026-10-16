@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Iterator, Mapping
 from dataclasses import replace
+from decimal import Decimal
 import json
 import math
 import os
@@ -1378,7 +1379,7 @@ def test_liq_lut_value_keeps_basecase_metadata_from_matching_non_time_axes(
     assert cell["coordinates"]["Nameplate Capacity (MTPA)"] == 6.599999
 
 
-def test_powermix_keeps_only_explicit_source_cell_without_normalization() -> None:
+def test_powermix_output_rejects_partial_group_after_legacy_sanitization() -> None:
     candidate = _candidate("PowerMix", "power")
     gas_axes = {"Country": "Japan", "Year": 2026, "Energy Source": "Gas"}
     coal_axes = {"Country": "Japan", "Year": 2026, "Energy Source": "Coal"}
@@ -1430,19 +1431,179 @@ def test_powermix_keeps_only_explicit_source_cell_without_normalization() -> Non
         },
     ]
     assert any("slot-2" in warning for warning in warnings)
-    operational = _build_proposal_parameters(sanitized, [candidate])[0].model_dump(
+    with pytest.raises(MIBaseError, match="group total must equal 1"):
+        _build_proposal_parameters(sanitized, [candidate])
+
+
+def _power_mix_adjustment(
+    candidate_key: str,
+    *,
+    country: str,
+    year: int,
+    month: int | None,
+    shares: Mapping[str, float],
+) -> dict[str, Any]:
+    return {
+        "candidate_key": candidate_key,
+        "model_file": "Demand",
+        "model_sheet": "PowerMixAdjustment",
+        "parameter_name": "PowerMix",
+        "value_grid": [
+            {
+                "coordinates": {
+                    "Country": country,
+                    "Year": year,
+                    **({"Month": month} if month is not None else {}),
+                    "Energy Source": energy_source,
+                },
+                "basecase_value": proposed_value,
+                "proposed_value": proposed_value,
+                "rationale_ko": "발전원 비중 제안",
+            }
+            for energy_source, proposed_value in shares.items()
+        ],
+        "parameter_selection_rationale_ko": "발전원 비중 조정",
+    }
+
+
+def _assert_power_mix_groups_are_centesimal(
+    values: list[dict[str, Any]],
+    *,
+    group_axes: tuple[str, ...],
+) -> None:
+    groups: dict[tuple[Any, ...], list[Decimal]] = {}
+    for value in values:
+        group_key = tuple(value[axis_name] for axis_name in group_axes)
+        proposed_value = Decimal(str(value["proposedValue"]))
+        assert proposed_value % Decimal("0.01") == 0
+        groups.setdefault(group_key, []).append(proposed_value)
+    assert groups
+    assert all(sum(group, start=Decimal("0")) == Decimal("1.00") for group in groups.values())
+
+
+def test_powermix_table1_formats_each_country_year_group_to_exact_centesimal_total() -> None:
+    candidate = _candidate("PowerMix", "power-annual")
+    adjustments = [
+        _power_mix_adjustment(
+            "power-annual",
+            country="Japan",
+            year=2026,
+            month=None,
+            shares={"Gas": 0.333, "Coal": 0.333, "Solar": 0.334},
+        ),
+        _power_mix_adjustment(
+            "power-annual",
+            country="Korea",
+            year=2026,
+            month=None,
+            shares={"Gas": 0.555, "Coal": 0.225, "Solar": 0.22},
+        ),
+    ]
+
+    operational = _build_proposal_parameters(adjustments, [candidate])[0].model_dump(
         by_alias=True,
     )
-    assert len(operational["values"]) == 1
-    assert operational["values"][0]["Energy Source"] == "Gas"
-    assert operational["values"][0]["proposedValue"] == 0.8
-    assert "lutValue" not in operational["values"][0]
-    sync_projection = _build_proposal_parameters(
-        sanitized,
-        [candidate],
-        include_lut_value=True,
-    )[0].model_dump(by_alias=True)
-    assert sync_projection["values"][0]["lutValue"] == 0.6
+
+    assert operational["modelTarget"]["tableName"] == "table1"
+    _assert_power_mix_groups_are_centesimal(
+        operational["values"],
+        group_axes=("Year", "Country"),
+    )
+    japan_values = {
+        value["Energy Source"]: value["proposedValue"]
+        for value in operational["values"]
+        if value["Country"] == "Japan"
+    }
+    assert japan_values == {"Gas": 0.33, "Coal": 0.33, "Solar": 0.34}
+    assert any("최종 출력값" in value["rationale"] for value in operational["values"])
+
+
+def test_powermix_table2_formats_each_country_year_month_group_independently() -> None:
+    candidate = {
+        **_candidate("PowerMix", "power-monthly"),
+        "model_table": "table2",
+        "basecase_column_roles": "A:Country,B:Year,C:Month,D:Energy Source,E:PowerMix",
+    }
+    adjustments = [
+        _power_mix_adjustment(
+            "power-monthly",
+            country="Japan",
+            year=2026,
+            month=1,
+            shares={"Gas": 0.335, "Coal": 0.335, "Solar": 0.33},
+        ),
+        _power_mix_adjustment(
+            "power-monthly",
+            country="Japan",
+            year=2026,
+            month=2,
+            shares={"Gas": 0.505, "Coal": 0.295, "Solar": 0.2},
+        ),
+    ]
+
+    operational = _build_proposal_parameters(adjustments, [candidate])[0].model_dump(
+        by_alias=True,
+    )
+
+    assert operational["modelTarget"]["tableName"] == "table2"
+    _assert_power_mix_groups_are_centesimal(
+        operational["values"],
+        group_axes=("Year", "Month", "Country"),
+    )
+    assert {value["Month"] for value in operational["values"]} == {1, 2}
+
+
+def test_powermix_table1_and_table2_are_emitted_as_separate_parameters() -> None:
+    annual_candidate = _candidate("PowerMix", "power-annual")
+    monthly_candidate = {
+        **_candidate("PowerMix", "power-monthly"),
+        "model_table": "table2",
+        "basecase_column_roles": "A:Country,B:Year,C:Month,D:Energy Source,E:PowerMix",
+    }
+    adjustments = [
+        _power_mix_adjustment(
+            "power-annual",
+            country="Japan",
+            year=2026,
+            month=None,
+            shares={"Gas": 0.6, "Coal": 0.4},
+        ),
+        _power_mix_adjustment(
+            "power-monthly",
+            country="Japan",
+            year=2026,
+            month=1,
+            shares={"Gas": 0.7, "Coal": 0.3},
+        ),
+    ]
+
+    operational = _build_proposal_parameters(
+        adjustments,
+        [annual_candidate, monthly_candidate],
+    )
+
+    assert [parameter.model_target.table_name for parameter in operational] == [
+        "table1",
+        "table2",
+    ]
+
+
+def test_powermix_table2_rejects_a_value_without_month() -> None:
+    candidate = {
+        **_candidate("PowerMix", "power-monthly"),
+        "model_table": "table2",
+        "basecase_column_roles": "A:Country,B:Year,C:Month,D:Energy Source,E:PowerMix",
+    }
+    adjustment = _power_mix_adjustment(
+        "power-monthly",
+        country="Japan",
+        year=2026,
+        month=None,
+        shares={"Gas": 0.6, "Coal": 0.4},
+    )
+
+    with pytest.raises(MIBaseError, match=r"missing required axes.*Month"):
+        _build_proposal_parameters([adjustment], [candidate])
 
 
 def test_state_dump_excludes_basecase_index_and_contains_no_full_rows(
