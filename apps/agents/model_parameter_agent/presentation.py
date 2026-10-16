@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from decimal import ROUND_FLOOR, Decimal, InvalidOperation
 import json
 import re
 from typing import Any
@@ -29,8 +30,25 @@ from apps.agents.model_parameter_agent.utils.logical_table_catalog import (
     LogicalTableCatalogEntry,
     load_logical_table_catalog,
 )
+from apps.agents.model_parameter_agent.utils.proposal_policy import (
+    POWER_MIX_ENERGY_SOURCES,
+    POWER_MIX_PARAMETER,
+    POWER_MIX_SUM_TOLERANCE,
+)
 from apps.common.exceptions.custom import MIBaseError
 from apps.common.values.error_codes import ErrorCode
+
+
+_POWER_MIX_OUTPUT_SCALE = Decimal("100")
+_POWER_MIX_OUTPUT_TOTAL = Decimal("1.00")
+_POWER_MIX_OUTPUT_QUANTUM = Decimal("0.01")
+_POWER_MIX_GROUP_AXES_BY_TABLE: dict[str, tuple[str, ...]] = {
+    "table1": ("Year", "Country"),
+    "table2": ("Year", "Month", "Country"),
+}
+_POWER_MIX_SOURCE_ORDER = {
+    source.casefold(): index for index, source in enumerate(POWER_MIX_ENERGY_SOURCES)
+}
 
 
 def _slot_from_axes(slot_axes: list[dict[str, Any]]) -> dict[str, Any]:
@@ -285,6 +303,133 @@ def _finalize_group_values(
     group["values"] = finalized_values
 
 
+def _power_mix_output_error(detail: str) -> MIBaseError:
+    return MIBaseError(
+        ErrorCode.INVALID_REQUEST,
+        detail=f"PowerMix proposal output formatting failed: {detail}",
+    )
+
+
+def _power_mix_decimal(value: Any, *, group_label: str, energy_source: str) -> Decimal:  # noqa: ANN401
+    if isinstance(value, bool):
+        detail = f"proposedValue must be numeric: group={group_label}, Energy Source={energy_source}"
+        raise _power_mix_output_error(detail)
+    try:
+        decimal_value = Decimal(str(value))
+    except (InvalidOperation, TypeError, ValueError) as exc:
+        detail = f"proposedValue must be numeric: group={group_label}, Energy Source={energy_source}"
+        raise _power_mix_output_error(detail) from exc
+    if not decimal_value.is_finite() or not Decimal("0") <= decimal_value <= Decimal("1"):
+        detail = (
+            "proposedValue must be finite and between 0 and 1: "
+            f"group={group_label}, Energy Source={energy_source}, value={value!r}"
+        )
+        raise _power_mix_output_error(detail)
+    return decimal_value
+
+
+def _format_power_mix_group_values(group: dict[str, Any]) -> None:  # noqa: C901
+    if str(group.get("parameter_name") or "").strip() != POWER_MIX_PARAMETER:
+        return
+
+    table_name = str(group.get("model_table") or "").strip().casefold()
+    group_axes = _POWER_MIX_GROUP_AXES_BY_TABLE.get(table_name)
+    if group_axes is None:
+        detail = f"model table must be table1 or table2, got {group.get('model_table')!r}"
+        raise _power_mix_output_error(detail)
+    user_group_label = "국가·연도" if table_name == "table1" else "국가·연도·월"
+
+    values_by_group: dict[tuple[Any, ...], list[dict[str, Any]]] = {}
+    sources_by_group: dict[tuple[Any, ...], set[str]] = {}
+    for value in group["values"]:
+        if table_name == "table1" and _axis_value_key(value.get("Month")) not in {None, ""}:
+            detail = "table1 value must not contain Month"
+            raise _power_mix_output_error(detail)
+        missing_axes = [
+            axis_name
+            for axis_name in (*group_axes, "Energy Source")
+            if _axis_value_key(value.get(axis_name)) in {None, ""}
+        ]
+        if missing_axes:
+            detail = f"{table_name} value is missing required axes {missing_axes}"
+            raise _power_mix_output_error(detail)
+        group_key = tuple(_axis_value_key(value.get(axis_name)) for axis_name in group_axes)
+        energy_source = str(value.get("Energy Source") or "").strip()
+        source_key = energy_source.casefold()
+        if source_key in sources_by_group.setdefault(group_key, set()):
+            detail = f"duplicate Energy Source in group={group_key}: {energy_source}"
+            raise _power_mix_output_error(detail)
+        sources_by_group[group_key].add(source_key)
+        values_by_group.setdefault(group_key, []).append(value)
+
+    tolerance = Decimal(str(POWER_MIX_SUM_TOLERANCE))
+    for group_key, group_values in values_by_group.items():
+        group_label = ", ".join(
+            f"{axis_name}={axis_value}" for axis_name, axis_value in zip(group_axes, group_key, strict=True)
+        )
+        decimal_values = [
+            _power_mix_decimal(
+                value.get("proposedValue"),
+                group_label=group_label,
+                energy_source=str(value.get("Energy Source") or ""),
+            )
+            for value in group_values
+        ]
+        total = sum(decimal_values, start=Decimal("0"))
+        if total <= 0 or abs(total - _POWER_MIX_OUTPUT_TOTAL) > tolerance:
+            detail = (
+                f"group total must equal 1 within {POWER_MIX_SUM_TOLERANCE:g}: "
+                f"group={group_label}, total={total}"
+            )
+            raise _power_mix_output_error(detail)
+
+        normalized_units = [value / total * _POWER_MIX_OUTPUT_SCALE for value in decimal_values]
+        whole_units = [int(value.to_integral_value(rounding=ROUND_FLOOR)) for value in normalized_units]
+        remaining_units = int(_POWER_MIX_OUTPUT_SCALE) - sum(whole_units)
+        if not 0 <= remaining_units <= len(group_values):
+            detail = (
+                f"could not allocate centesimal remainder: group={group_label}, "
+                f"remainder={remaining_units}"
+            )
+            raise _power_mix_output_error(detail)
+
+        allocation_order = sorted(
+            range(len(group_values)),
+            key=lambda index: (
+                -(normalized_units[index] - Decimal(whole_units[index])),
+                _POWER_MIX_SOURCE_ORDER.get(
+                    str(group_values[index].get("Energy Source") or "").strip().casefold(),
+                    len(_POWER_MIX_SOURCE_ORDER),
+                ),
+                str(group_values[index].get("Energy Source") or "").strip().casefold(),
+                index,
+            ),
+        )
+        for index in allocation_order[:remaining_units]:
+            whole_units[index] += 1
+
+        formatted_values = [Decimal(units) / _POWER_MIX_OUTPUT_SCALE for units in whole_units]
+        if sum(formatted_values, start=Decimal("0")) != _POWER_MIX_OUTPUT_TOTAL:
+            detail = f"formatted group total is not 1.00: group={group_label}"
+            raise _power_mix_output_error(detail)
+
+        for value, original, formatted in zip(
+            group_values,
+            decimal_values,
+            formatted_values,
+            strict=True,
+        ):
+            value["proposedValue"] = float(formatted.quantize(_POWER_MIX_OUTPUT_QUANTUM))
+            if original == formatted:
+                continue
+            note = (
+                f"최종 출력값은 {formatted:.2f}이며, 0.01 단위 보정 후 "
+                f"같은 {user_group_label} 발전원 그룹의 합계는 1.00입니다."
+            )
+            rationale = str(value.get("rationale") or "").strip()
+            value["rationale"] = f"{rationale} {note}".strip()
+
+
 def _build_proposal_parameters(  # noqa: C901
     adjustments: list[dict[str, Any]],
     candidates: list[dict[str, Any]],
@@ -292,23 +437,27 @@ def _build_proposal_parameters(  # noqa: C901
     include_lut_value: bool = False,
 ) -> list[ProposalParameter]:
     candidate_index = {str(candidate.get("candidate_key") or ""): candidate for candidate in candidates}
-    grouped: dict[tuple[str, str, str], dict[str, Any]] = {}
+    grouped: dict[tuple[str, str, str, str], dict[str, Any]] = {}
     for adjustment in adjustments:
         if adjustment.get("selected", True) is False:
             continue
         candidate = candidate_index.get(str(adjustment.get("candidate_key") or "")) or {}
+        model_table = str(candidate.get("model_table") or adjustment.get("model_table") or "").strip()
+        parameter_name = str(adjustment.get("parameter_name") or "")
+        table_group_key = model_table.casefold() if parameter_name == POWER_MIX_PARAMETER else ""
         key = (
             str(adjustment.get("model_file") or ""),
             str(adjustment.get("model_sheet") or ""),
-            str(adjustment.get("parameter_name") or ""),
+            table_group_key,
+            parameter_name,
         )
         group = grouped.setdefault(
             key,
             {
                 "model_file": key[0],
                 "model_sheet": key[1],
-                "model_table": str(candidate.get("model_table") or ""),
-                "parameter_name": key[2],
+                "model_table": model_table,
+                "parameter_name": key[3],
                 "slot_axes_field_names": [],
                 "value_field_names": [],
                 "rationales": [],
@@ -362,6 +511,7 @@ def _build_proposal_parameters(  # noqa: C901
             group,
             include_lut_value=include_lut_value,
         )
+        _format_power_mix_group_values(group)
         proposal_parameters.append(
             ProposalParameter(
                 parameter_name=group["parameter_name"],

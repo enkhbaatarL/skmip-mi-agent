@@ -118,7 +118,9 @@ DB/canonical만 맞거나 LUT 테스트만 통과하거나 전체 파라미터 �
   Country/Year별 승인된 10-member raw vector, Basecase/LUT 결합 effective vector와 Step3 proposed vector
   각각에서 완전성·중복·유한성·0~1 범위·합 1±`1e-6`을 atomic하게 통과해야 한다. partial group이
   Step3나 persistence에 남으면 `FAIL`이다. Step2 seed의 3축 중복·누락·추가, 비정수 Year 또는 미승인
-  Energy Source가 atomic expansion으로 가려져도 `FAIL`이다.
+  Energy Source가 atomic expansion으로 가려져도 `FAIL`이다. 최종 proposal의 모든 PowerMix 값은 0.01의
+  정수배여야 하고, table1은 Year+Country, table2는 Year+Month+Country별 Decimal 합이 정확히 1.00이어야 한다.
+  서로 다른 table이나 그룹을 합쳐서 1.00을 맞춘 경우도 `FAIL`이다.
 - LiqUtilAdjustment는 Lever·Scenario/Event scope와 applicability 필터 후 exact 후보가 하나면 시설·기간
   문구 일부가 생략돼도 unique-inferred로 허용한다. 동등 후보가 여러 개거나 명시 대상·기간과 모순되면
   Step3 전에 `ABSTAINED_INSUFFICIENT_EVIDENCE`로 제외하고, 1 초과 유효값은 보존한다. lifecycle

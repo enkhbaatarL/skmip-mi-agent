@@ -194,7 +194,8 @@ schema `model-parameter-lut-adapters-v3`과 Impact Lever hydrated catalog checks
 
 기존 `model_parameter_proposed_value_max_decimal_places`와 `model_parameter_proposed_value_precision_mode`는 과거
 설정 입력을 깨지 않기 위한 호환 필드이므로 로컬·Neuro 설정에 그대로 선언한다. 다만 신규 proposal과
-confirmation의 `proposedValue`에는 적용하지 않는다. proposal Step3 값은 유한 숫자여야 한다. Confirmation은
+confirmation의 `proposedValue`에는 적용하지 않는다. proposal Step3 값은 유한 숫자여야 하며, PowerMix
+proposal 최종 출력만 별도 group-aware largest-remainder 규칙으로 0.01 단위·합계 1.00을 보장한다. Confirmation은
 `proposedValue` key를 요구하지만 값은 `null`일 수 있고, non-null 값만 persistence 경계에서 엄격한 유한
 숫자로 정규화한다. 두 경로 모두 설정 기반 소수 자릿수 round/trunc/ceil을 하지 않는다.
 
@@ -276,6 +277,10 @@ PowerMix는 authoritative materialization에서 월별 반복 annual row가 일�
 `Other`. Basecase 우선·동일 exact LUT fallback을 적용한 effective vector와 Step3의 10개 proposed value도
 완전성·중복·0~1 범위와 합이 절대오차 `1e-6` 이내에서 1인지 다시 검증한다. source·effective exact 검증·
 slot limit 또는 Step3 응답에서 하나라도 실패하면 vector 전체를 제외한다.
+검증을 통과한 proposal 출력은 `table1=(Year, Country)`, `table2=(Year, Month, Country)` 그룹별로 0.01 단위에
+맞추고 Decimal 합을 정확히 1.00으로 만든다. source와 effective reference는 이 출력 보정 대상이 아니며 원본
+정밀도를 유지한다. 현재 canonical v4 write target은 table1이고, table2 포맷 지원만으로 월별 target이
+활성화되지는 않는다.
 
 LiqUtilAdjustment는 하나의 같은 v4 Lever provenance에서 액화설비 운영 변화 방향, exact Plant와 exact
 Train 둘 모두, slot Year/Month와 일치하는 구체적 `time_window`, `source_event_ids`로 Group의 실제
