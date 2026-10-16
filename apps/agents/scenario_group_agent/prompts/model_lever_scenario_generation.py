@@ -645,6 +645,19 @@ _NUMERIC_DIMENSION_LABEL_RULE = (
     "  수치에 맞춰 `수준`으로 씁니다. 비교 기준값(예: 2026년 312 TWh)은 question에 남깁니다.\n"
 )
 
+# Group 259: `제한 구역 집행 지속`, `보험 강화·정시 통항`처럼 주체·관계가 빠진 압축 label이 즉시 이해되지 않았다.
+_READABLE_LABEL_RULE = (
+    "- Dimension label은 판단 대상(누가·무엇이)과 판단 축(규모·기간·시점·범위)을 함께 담습니다\n"
+    "  (예: `호르무즈 LNG선 운항 차질 규모`, `이란 통항 통제가 이어지는 기간`). Choice label은 그 축의 값으로\n"
+    "  읽혀야 하며, 기간·시점 Dimension이면 Choice도 기간·시점으로 구분합니다.\n"
+    "- Choice label은 대체로 15~30자의 서술형 구절로, 행위 주체나 대상과 그 상태 변화를 함께 씁니다.\n"
+    "  question을 보지 않고 표의 셀만 읽어도 무슨 일이 일어났는지 이해되어야 합니다.\n"
+    "- 두 상태를 `·`로 나열하지 않습니다. 두 상태의 관계가 핵심이면 `~지만`, `~로`, `~해도`처럼 연결어미로\n"
+    "  관계를 씁니다. `집행 지속`, `구축 완화`, `회복 가시`처럼 동작 명사를 이어 붙인 압축 표현도 쓰지 않습니다.\n"
+    "- 예: `제한 구역 집행 지속` → `이란이 제한 구역 통항 통제를 실제 집행`, `보험 강화·정시 통항` →\n"
+    "  `보험 부담은 커지나 LNG선은 정시 통항`, `폐쇄 예고가 통항 상쇄` → `이란 폐쇄 예고로 통항 증가세가 꺾임`\n"
+)
+
 
 def build_v4_dimension_design_user_prompt(
     *,
@@ -707,6 +720,7 @@ def build_v4_dimension_design_user_prompt(
         "- 각 Dimension에는 같은 판단 축·단위를 사용하는 선택지 2~4개를 만듭니다.\n"
         "- Choice label은 비교 가능한 하나의 시장·운영 상태를 30자 이내로 작성합니다.\n"
         "  낮음·중간·높음, 단기·중기·장기, 거의 없음·일부 감소·큰 감소처럼 강도만 쓰지 않습니다.\n"
+        f"{_READABLE_LABEL_RULE}"
         "- 한 Dimension 안의 Choice끼리 pressure가 겹치지 않게 합니다. Choice 2개는 `bearish / bullish`, 3개는\n"
         "  `bearish / balanced / bullish`로 만들고, 같은 pressure의 Choice가 둘 이상 필요해 보이면 하나로 합칩니다.\n"
         "  4개는 세 방향을 모두 포함하되 추가한 같은 방향 Choice가 규모·시점에서 명확히 다를 때만 허용합니다.\n"
@@ -811,6 +825,7 @@ def build_v4_additional_dimension_user_prompt(
         "신호·대상·영향 경로를 생략하지 않고, 질문 어미만 `...하는지에 따라` 형태로 바꿔 Scenario와 JKM "
         "결과가 구분되는 이유를 설명합니다. 최소 글자 수는 강제하지 않습니다.\n"
         "- Choice label은 비교 가능한 하나의 시장·운영 상태를 30자 이내로 작성합니다.\n"
+        f"{_READABLE_LABEL_RULE}"
         "- lever와 axis는 source 질문의 값을 그대로 사용하고 Choice는 2~4개를 만듭니다.\n"
         "- pressure coverage 예시: Choice 2개는 `bearish / bullish`, 3개는 `bearish / balanced / bullish`, "
         "4개는 `bearish / balanced / bullish / bullish`처럼 세 방향을 모두 포함하고 의미상 필요한 한 방향을 "

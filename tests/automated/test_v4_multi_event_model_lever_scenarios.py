@@ -2806,6 +2806,9 @@ def test_v4_prompts_follow_fact_path_uncertainty_contract() -> None:
     assert "원문 관측값·전망치는 Choice 경계로 그대로 사용합니다" in dimension
     assert "만든 차이·증가분·감소분·비율은" in dimension
     assert "label에 `폭`·`변화량`·`감소분`·`증가분`을 쓰려고 Choice 값을 계산해 바꾸지 말고" in dimension
+    assert "Dimension label은 판단 대상(누가·무엇이)과 판단 축(규모·기간·시점·범위)을 함께 담습니다" in dimension
+    assert "행위 주체나 대상과 그 상태 변화를 함께 씁니다" in dimension
+    assert "두 상태를 `·`로 나열하지 않습니다" in dimension
     assert "rationale은 최대 200자의 구체적인 한국어 한 문장" in dimension
     assert "question은 필요한 관측 정보와 판단 대상을 충분히 포함" in dimension
     assert "`사실: … | 파생: … | 가정: … | 영향: …` 형식" in dimension
@@ -2930,6 +2933,7 @@ def test_v4_additional_dimension_prompt_recommends_unused_count_but_allows_empty
     assert "실제 unused question 수: 4개" in prompt
     assert "Additional Dimension 후보 권장 범위: 1~4개" in prompt
     assert "빈 dimensions도 정상 결과" in prompt
+    assert "두 상태를 `·`로 나열하지 않습니다" in prompt
     assert V4ReadableAdditionalDimensionDesignDraft(dimensions=[]).dimensions == []
 
 
