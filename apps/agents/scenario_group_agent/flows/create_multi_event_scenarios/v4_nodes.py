@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 from langgraph.config import get_stream_writer
 from langgraph.runtime import Runtime
@@ -83,7 +84,31 @@ from apps.persistence.event.schema import EventPayload
 from apps.persistence.model_impact_lever.schema import ModelImpactLeverPayload
 
 
-V4_EVENT_LLM_TIMEOUT_SECONDS = 180.0
+V4LlmStage = Literal["event_analysis", "interaction", "dimension", "scenario"]
+
+
+def _stage_timeout_seconds(stage: V4LlmStage) -> float:
+    """v4 생성 단계별 LLM 호출 상한(초)을 설정에서 읽는다."""
+    settings = get_settings()
+    return {
+        "event_analysis": settings.llm_v4_event_analysis_timeout_sec,
+        "interaction": settings.llm_v4_interaction_timeout_sec,
+        "dimension": settings.llm_v4_dimension_timeout_sec,
+        "scenario": settings.llm_v4_scenario_timeout_sec,
+    }[stage]
+
+
+async def _with_stage_timeout[T](awaitable: Awaitable[T], *, stage: V4LlmStage, label: str) -> T:
+    """단계 상한을 넘긴 LLM 호출을 끊는다.
+
+    TimeoutError는 classify_llm_error에서 재시도 가능 오류로 분류되어 기존 단계 재시도로 이어진다.
+    """
+    timeout_seconds = _stage_timeout_seconds(stage)
+    try:
+        async with asyncio.timeout(timeout_seconds):
+            return await awaitable
+    except TimeoutError as exc:
+        raise TimeoutError(f"{label} exceeded {timeout_seconds:g}s") from exc
 
 
 def _emit_internal_retry(
@@ -140,29 +165,27 @@ async def _analyze_event_with_retries(
     for attempt in range(1, MAX_STAGE_ATTEMPTS + 1):
         await _backoff(attempt)
         try:
-            try:
-                async with asyncio.timeout(V4_EVENT_LLM_TIMEOUT_SECONDS):
-                    readable: V4ReadableEventAnalysisDraft = await invoke_stage_structured_output(
-                        output_schema=V4ReadableEventAnalysisDraft,
-                        system_prompt=V4_EVENT_IMPACT_SYSTEM_PROMPT,
-                        user_prompt=build_v4_event_impact_analysis_user_prompt(
-                            events=[event_payload],
-                            impact_levers=[lever.model_dump() for lever in impact_levers],
-                            catalog_version=catalog_version,
-                            analysis_as_of=analysis_as_of,
-                            selected_event_count=selected_event_count,
-                            open_question_budget=open_question_budget,
-                            validation_feedback=feedback,
-                            parameter_axes=parameter_axes,
-                        ),
-                        trace_context=trace_context,
-                        stage=f"event_impact_analysis:{event_id}",
-                        reasoning_effort_override=get_settings().llm_v4_analysis_reasoning_effort,
-                    )
-            except TimeoutError as exc:
-                raise TimeoutError(
-                    f"Event {event_id} impact analysis exceeded {V4_EVENT_LLM_TIMEOUT_SECONDS:g}s",
-                ) from exc
+            readable: V4ReadableEventAnalysisDraft = await _with_stage_timeout(
+                invoke_stage_structured_output(
+                    output_schema=V4ReadableEventAnalysisDraft,
+                    system_prompt=V4_EVENT_IMPACT_SYSTEM_PROMPT,
+                    user_prompt=build_v4_event_impact_analysis_user_prompt(
+                        events=[event_payload],
+                        impact_levers=[lever.model_dump() for lever in impact_levers],
+                        catalog_version=catalog_version,
+                        analysis_as_of=analysis_as_of,
+                        selected_event_count=selected_event_count,
+                        open_question_budget=open_question_budget,
+                        validation_feedback=feedback,
+                        parameter_axes=parameter_axes,
+                    ),
+                    trace_context=trace_context,
+                    stage=f"event_impact_analysis:{event_id}",
+                    reasoning_effort_override=get_settings().llm_v4_analysis_reasoning_effort,
+                ),
+                stage="event_analysis",
+                label=f"Event {event_id} impact analysis",
+            )
             draft = expand_v4_readable_event_analysis(
                 readable,
                 event_id=event_id,
@@ -313,19 +336,23 @@ class AnalyzeEventInteractionsNode(BaseNode):
         attempt = state.interaction_attempt + 1
         await _backoff(attempt)
         try:
-            draft: V4ReadableInteractionAnalysisDraft = await invoke_stage_structured_output(
-                output_schema=V4ReadableInteractionAnalysisDraft,
-                system_prompt=V4_INTERACTION_SYSTEM_PROMPT,
-                user_prompt=build_v4_interaction_analysis_user_prompt(
-                    impact_paths=[path.model_dump() for path in state.analysis_draft.impact_paths],
-                    event_question_count=len(state.analysis_draft.path_uncertainties),
-                    event_count=len(state.events),
-                    events=[event.model_dump() for event in state.events],
-                    validation_feedback=state.interaction_error,
+            draft: V4ReadableInteractionAnalysisDraft = await _with_stage_timeout(
+                invoke_stage_structured_output(
+                    output_schema=V4ReadableInteractionAnalysisDraft,
+                    system_prompt=V4_INTERACTION_SYSTEM_PROMPT,
+                    user_prompt=build_v4_interaction_analysis_user_prompt(
+                        impact_paths=[path.model_dump() for path in state.analysis_draft.impact_paths],
+                        event_question_count=len(state.analysis_draft.path_uncertainties),
+                        event_count=len(state.events),
+                        events=[event.model_dump() for event in state.events],
+                        validation_feedback=state.interaction_error,
+                    ),
+                    trace_context=runtime.context if runtime is not None else None,
+                    stage="event_interaction_analysis",
+                    reasoning_effort_override=get_settings().llm_v4_analysis_reasoning_effort,
                 ),
-                trace_context=runtime.context if runtime is not None else None,
-                stage="event_interaction_analysis",
-                reasoning_effort_override=get_settings().llm_v4_analysis_reasoning_effort,
+                stage="interaction",
+                label="Event interaction analysis",
             )
             return {
                 "interaction_attempt": attempt,
@@ -418,17 +445,23 @@ class DesignModelLeverDimensionsNode(BaseNode):
         attempt = state.dimension_attempt + 1
         await _backoff(attempt)
         try:
-            readable: V4ReadableDimensionDesignDraft = await invoke_stage_structured_output(
-                output_schema=V4ReadableDimensionDesignDraft,
-                system_prompt=V4_DIMENSION_SYSTEM_PROMPT,
-                user_prompt=build_v4_dimension_design_user_prompt(
-                    impact_analysis=state.analysis_draft.model_dump(),
-                    validation_warnings=[warning.model_dump() for warning in state.analysis_draft.validation_warnings],
-                    analysis_as_of=state.analysis_as_of,
-                    validation_feedback=state.dimension_error,
+            readable: V4ReadableDimensionDesignDraft = await _with_stage_timeout(
+                invoke_stage_structured_output(
+                    output_schema=V4ReadableDimensionDesignDraft,
+                    system_prompt=V4_DIMENSION_SYSTEM_PROMPT,
+                    user_prompt=build_v4_dimension_design_user_prompt(
+                        impact_analysis=state.analysis_draft.model_dump(),
+                        validation_warnings=[
+                            warning.model_dump() for warning in state.analysis_draft.validation_warnings
+                        ],
+                        analysis_as_of=state.analysis_as_of,
+                        validation_feedback=state.dimension_error,
+                    ),
+                    trace_context=runtime.context if runtime is not None else None,
+                    stage="dimension_design",
                 ),
-                trace_context=runtime.context if runtime is not None else None,
-                stage="dimension_design",
+                stage="dimension",
+                label="Dimension design",
             )
             draft = expand_v4_readable_dimension_design(readable, impact_analysis=state.analysis_draft)
             return {
@@ -518,30 +551,34 @@ class SynthesizeV4ScenariosNode(BaseNode):
                 *state.analysis_draft.validation_warnings,
                 *state.dimension_draft.validation_warnings,
             ]
-            readable: V4ReadableScenarioSynthesisDraft = await invoke_stage_structured_output(
-                output_schema=V4ReadableScenarioSynthesisDraft,
-                system_prompt=(
-                    V4_SCENARIO_DISTINCT_DRIVER_SYSTEM_PROMPT
-                    if state.scenario_synthesis_policy == "distinct_driver"
-                    else V4_SCENARIO_SYSTEM_PROMPT
-                ),
-                user_prompt=build_v4_scenario_synthesis_user_prompt(
-                    analysis_as_of=state.analysis_as_of,
-                    events=[event.model_dump() for event in state.events],
-                    impact_analysis=state.analysis_draft.model_dump(),
-                    dimension_definitions=[
-                        definition.model_dump() for definition in state.dimension_draft.dimension_definitions
-                    ],
-                    validation_warnings=[warning.model_dump() for warning in warnings],
-                    validation_feedback=_retry_validation_feedback(
-                        state.scenario_error,
-                        state.scenario_error_code,
+            readable: V4ReadableScenarioSynthesisDraft = await _with_stage_timeout(
+                invoke_stage_structured_output(
+                    output_schema=V4ReadableScenarioSynthesisDraft,
+                    system_prompt=(
+                        V4_SCENARIO_DISTINCT_DRIVER_SYSTEM_PROMPT
+                        if state.scenario_synthesis_policy == "distinct_driver"
+                        else V4_SCENARIO_SYSTEM_PROMPT
                     ),
-                    policy=state.scenario_synthesis_policy,
-                    scenario_count_range=state.scenario_count_range,
+                    user_prompt=build_v4_scenario_synthesis_user_prompt(
+                        analysis_as_of=state.analysis_as_of,
+                        events=[event.model_dump() for event in state.events],
+                        impact_analysis=state.analysis_draft.model_dump(),
+                        dimension_definitions=[
+                            definition.model_dump() for definition in state.dimension_draft.dimension_definitions
+                        ],
+                        validation_warnings=[warning.model_dump() for warning in warnings],
+                        validation_feedback=_retry_validation_feedback(
+                            state.scenario_error,
+                            state.scenario_error_code,
+                        ),
+                        policy=state.scenario_synthesis_policy,
+                        scenario_count_range=state.scenario_count_range,
+                    ),
+                    trace_context=runtime.context if runtime is not None else None,
+                    stage="scenario_synthesis",
                 ),
-                trace_context=runtime.context if runtime is not None else None,
-                stage="scenario_synthesis",
+                stage="scenario",
+                label="Scenario synthesis",
             )
             draft = expand_v4_readable_scenario_synthesis(
                 readable,

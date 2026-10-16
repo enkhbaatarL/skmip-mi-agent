@@ -378,3 +378,22 @@ class StructuredOutputConnectorTest(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_describe_invocation_error_keeps_class_status_and_cause_for_empty_messages() -> None:
+    class GatewayError(Exception):
+        status_code = 504
+
+    try:
+        try:
+            raise TimeoutError
+        except TimeoutError as cause:
+            raise GatewayError from cause
+    except GatewayError as exc:
+        detail = llm_client._describe_invocation_error(exc)
+
+    assert detail == "GatewayError | status_code=504 | cause=TimeoutError"
+
+
+def test_describe_invocation_error_keeps_message_when_present() -> None:
+    assert llm_client._describe_invocation_error(ValueError("bad gateway")) == "ValueError: bad gateway"

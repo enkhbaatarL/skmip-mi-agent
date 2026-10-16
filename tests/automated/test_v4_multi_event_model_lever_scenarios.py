@@ -2425,7 +2425,7 @@ def test_v4_event_timeout_is_retried_without_blocking_the_batch() -> None:
     with (
         patch.object(v4_nodes, "invoke_stage_structured_output", side_effect=never_returns),
         patch.object(v4_nodes, "_backoff", new=AsyncMock()),
-        patch.object(v4_nodes, "V4_EVENT_LLM_TIMEOUT_SECONDS", 0.001),
+        patch.object(v4_nodes, "_stage_timeout_seconds", return_value=0.001),
     ):
         outcome = asyncio.run(
             v4_nodes._analyze_event_with_retries(
@@ -3413,3 +3413,66 @@ def test_v4_shortfall_fallback_is_used_when_the_retry_cannot_continue() -> None:
     assert update["scenario_error"] is None
     assert update["finalized_result"] is first["scenario_shortfall_fallback"]
     assert v4_nodes.route_after_v4_scenarios(state.model_copy(update=update)) == "generate_v4_group_title"
+
+
+
+@pytest.mark.parametrize(
+    ("node", "state_overrides", "error_key", "label"),
+    [
+        (v4_nodes.AnalyzeEventInteractionsNode(), {}, "interaction_error", "Event interaction analysis"),
+        (v4_nodes.DesignModelLeverDimensionsNode(), {}, "dimension_error", "Dimension design"),
+        (
+            v4_nodes.SynthesizeV4ScenariosNode(),
+            {"dimension_draft": _dimensions()},
+            "scenario_error",
+            "Scenario synthesis",
+        ),
+    ],
+)
+def test_v4_stage_timeout_cuts_a_stuck_call_and_marks_it_retryable(
+    node: object,
+    state_overrides: dict[str, object],
+    error_key: str,
+    label: str,
+) -> None:
+    async def never_returns(**_kwargs: object) -> object:
+        await asyncio.sleep(1)
+        raise AssertionError("timed-out call must not complete")
+
+    analysis = _analysis()
+    state = V4MultiEventGenerationState.model_validate(
+        {
+            "events": [
+                EventPayload(mi_event_id=101, event_type_l2_id=8),
+                EventPayload(mi_event_id=202, event_type_l2_id=12),
+            ],
+            "impact_levers": _catalog(),
+            "analysis_draft": analysis,
+            **state_overrides,
+        },
+    )
+    with (
+        patch.object(v4_nodes, "invoke_stage_structured_output", side_effect=never_returns),
+        patch.object(v4_nodes, "_backoff", new=AsyncMock()),
+        patch.object(v4_nodes, "_stage_timeout_seconds", return_value=0.001),
+    ):
+        update = asyncio.run(node.run(state))
+
+    assert update[error_key] == f"{label} exceeded 0.001s"
+    assert update[error_key.replace("_error", "_retryable")] is True
+
+
+def test_v4_stage_timeouts_are_read_from_settings() -> None:
+    settings = SimpleNamespace(
+        llm_v4_event_analysis_timeout_sec=1.0,
+        llm_v4_interaction_timeout_sec=2.0,
+        llm_v4_dimension_timeout_sec=3.0,
+        llm_v4_scenario_timeout_sec=4.0,
+    )
+    with patch.object(v4_nodes, "get_settings", return_value=settings):
+        timeouts = [
+            v4_nodes._stage_timeout_seconds(stage)
+            for stage in ("event_analysis", "interaction", "dimension", "scenario")
+        ]
+
+    assert timeouts == [1.0, 2.0, 3.0, 4.0]

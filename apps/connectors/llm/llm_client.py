@@ -696,6 +696,26 @@ async def _set_llm_trace_outputs(
     trace_run.completed = True
 
 
+def _describe_invocation_error(ex: BaseException) -> str:
+    """LLM 호출 예외를 원인 추적이 가능한 한 줄로 만든다.
+
+    TimeoutError처럼 str()이 빈 예외도 클래스 이름, HTTP 상태 코드, 직접 원인을 남긴다.
+    """
+
+    def _name_and_message(item: BaseException) -> str:
+        message = str(item)
+        return f"{type(item).__name__}: {message}" if message else type(item).__name__
+
+    parts = [_name_and_message(ex)]
+    status_code = getattr(ex, "status_code", None)
+    if status_code is not None:
+        parts.append(f"status_code={status_code}")
+    cause = ex.__cause__ or ex.__context__
+    if cause is not None and cause is not ex:
+        parts.append(f"cause={_name_and_message(cause)}")
+    return " | ".join(parts)[:600]
+
+
 @log_connector(connector_type="LLM", log_input=False, log_output=False, log_retry=False)
 async def invoke_llm_function_call(
     messages: list[dict[str, str]],
@@ -753,7 +773,7 @@ async def invoke_llm_function_call(
             )
             return result
     except Exception as ex:
-        raise MIBaseError(ErrorCode.LLM_INVOCATION_ERROR, detail=str(ex)) from ex
+        raise MIBaseError(ErrorCode.LLM_INVOCATION_ERROR, detail=_describe_invocation_error(ex)) from ex
     finally:
         await http_client.aclose()
 
@@ -863,7 +883,7 @@ async def invoke_llm_structured_output[T: BaseModel](
     except ValidationError as ex:
         raise MIBaseError(ErrorCode.LLM_INVALID_RESPONSE_ERROR, detail=str(ex)) from ex
     except Exception as ex:
-        raise MIBaseError(ErrorCode.LLM_INVOCATION_ERROR, detail=str(ex)) from ex
+        raise MIBaseError(ErrorCode.LLM_INVOCATION_ERROR, detail=_describe_invocation_error(ex)) from ex
     finally:
         await http_client.aclose()
 
@@ -924,6 +944,6 @@ async def invoke_llm_text(
             )
             return result
     except Exception as ex:
-        raise MIBaseError(ErrorCode.LLM_INVOCATION_ERROR, detail=str(ex)) from ex
+        raise MIBaseError(ErrorCode.LLM_INVOCATION_ERROR, detail=_describe_invocation_error(ex)) from ex
     finally:
         await http_client.aclose()

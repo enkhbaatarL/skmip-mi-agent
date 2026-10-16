@@ -35,6 +35,10 @@ data:
     llm_timeout_sec: 310
     llm_stream_enabled: true
     llm_reasoning_effort: default
+    llm_v4_event_analysis_timeout_sec: 120
+    llm_v4_interaction_timeout_sec: 90
+    llm_v4_dimension_timeout_sec: 180
+    llm_v4_scenario_timeout_sec: 180
     llm_verbosity: high
     llm_structured_output_strict: false
 

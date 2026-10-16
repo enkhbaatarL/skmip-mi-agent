@@ -230,6 +230,12 @@ class Settings(BaseSettings):
         "high",
         "xhigh",
     ] = "low"
+    # v4 생성 단계별 LLM 호출 상한(초). 정상 소요보다 크게 늦어진(멈춘) 호출을 끊고 단계 재시도로 넘긴다.
+    # 재시도된 같은 요청은 보통 정상 시간 안에 끝나므로, 전체 호출 타임아웃(llm_timeout_sec)보다 짧게 둔다.
+    llm_v4_event_analysis_timeout_sec: float = Field(default=120.0, gt=0)
+    llm_v4_interaction_timeout_sec: float = Field(default=90.0, gt=0)
+    llm_v4_dimension_timeout_sec: float = Field(default=180.0, gt=0)
+    llm_v4_scenario_timeout_sec: float = Field(default=180.0, gt=0)
     llm_verbosity: Literal["default", "low", "medium", "high"] = "default"
     llm_structured_output_strict: bool = Field(default=False)
 
