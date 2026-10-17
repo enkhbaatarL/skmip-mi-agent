@@ -35,9 +35,12 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Iterator
 from contextlib import asynccontextmanager, contextmanager, nullcontext
+from dataclasses import dataclass
 from inspect import isawaitable
+import time
 from typing import Any, Literal, TypeVar
 
 import httpx
@@ -213,14 +216,93 @@ def _is_json_syntax_validation_error(exc: ValidationError) -> bool:
     return bool(errors) and all(error.get("type") == "json_invalid" for error in errors)
 
 
+@dataclass(frozen=True, slots=True)
+class StreamStallLimits:
+    """스트리밍 응답이 멈췄다고 볼 기준. 조각이 계속 들어오는 응답은 끊지 않는다.
+
+    first_chunk_sec: 요청 시작부터 첫 조각까지 기다리는 최대 시간(추론 모델은 답을 쓰기 전 조각이 없을 수 있다)
+    idle_sec: 첫 조각 이후 조각 사이 공백의 최대 시간
+    None이면 해당 기준을 쓰지 않는다.
+    """
+
+    first_chunk_sec: float | None = None
+    idle_sec: float | None = None
+
+
+class LLMStreamStalledError(TimeoutError):
+    """스트리밍 응답에서 정해진 시간 동안 조각이 오지 않았다."""
+
+
+@dataclass(slots=True)
+class _StreamTiming:
+    started_at: float
+    first_chunk_at: float | None = None
+    last_chunk_at: float | None = None
+    max_gap_sec: float = 0.0
+    chunk_count: int = 0
+
+    def record_chunk(self) -> None:
+        now = time.monotonic()
+        if self.first_chunk_at is None:
+            self.first_chunk_at = now
+        elif self.last_chunk_at is not None:
+            self.max_gap_sec = max(self.max_gap_sec, now - self.last_chunk_at)
+        self.last_chunk_at = now
+        self.chunk_count += 1
+
+    def summary(self) -> str:
+        first_chunk = (
+            f"{self.first_chunk_at - self.started_at:.1f}" if self.first_chunk_at is not None else "none"
+        )
+        return (
+            f"first_chunk_sec={first_chunk} | max_gap_sec={self.max_gap_sec:.1f} | chunks={self.chunk_count} | "
+            f"total_sec={time.monotonic() - self.started_at:.1f}"
+        )
+
+
+def _remaining_stream_wait(timing: _StreamTiming, limits: StreamStallLimits | None) -> tuple[float | None, str]:
+    """다음 조각을 기다릴 수 있는 시간과, 초과했을 때 남길 설명을 돌려준다."""
+    if limits is None:
+        return None, ""
+    if timing.first_chunk_at is None:
+        if limits.first_chunk_sec is None:
+            return None, ""
+        elapsed = time.monotonic() - timing.started_at
+        reason = f"first chunk not received within {limits.first_chunk_sec:g}s"
+        return max(limits.first_chunk_sec - elapsed, 0.0), reason
+    if limits.idle_sec is None:
+        return None, ""
+    return limits.idle_sec, f"no chunk for {limits.idle_sec:g}s after {timing.chunk_count} chunks"
+
+
+async def _await_with_stream_limit[V](awaitable: Any, wait_sec: float | None, reason: str) -> V:  # noqa: ANN401
+    if wait_sec is None:
+        return await awaitable
+    try:
+        async with asyncio.timeout(wait_sec):
+            return await awaitable
+    except TimeoutError as exc:
+        raise LLMStreamStalledError(f"LLM stream timed out: {reason}") from exc
+
+
 async def _consume_structured_output_stream[T: BaseModel](
     *,
     output_schema: type[T],
     stream_response: Any,  # noqa: ANN401
+    timing: _StreamTiming | None = None,
+    stall_limits: StreamStallLimits | None = None,
 ) -> tuple[str, T, LLMUsageModel | None]:
+    timing = timing or _StreamTiming(started_at=time.monotonic())
     content_chunks: list[str] = []
     raw_usage: Any = None
-    async for chunk in stream_response:
+    iterator = stream_response.__aiter__()
+    while True:
+        wait_sec, reason = _remaining_stream_wait(timing, stall_limits)
+        try:
+            chunk = await _await_with_stream_limit(iterator.__anext__(), wait_sec, reason)
+        except StopAsyncIteration:
+            break
+        timing.record_chunk()
         chunk_usage = getattr(chunk, "usage", None)
         if chunk_usage is not None:
             raw_usage = chunk_usage
@@ -246,12 +328,19 @@ async def _request_structured_output_stream[T: BaseModel](
     output_schema: type[T],
     request_kwargs: dict[str, Any],
     retries_remaining: int,
+    stall_limits: StreamStallLimits | None = None,
+    log_label: str | None = None,
 ) -> tuple[str, T, LLMUsageModel | None]:
+    timing = _StreamTiming(started_at=time.monotonic())
     try:
-        stream_response = await create(**request_kwargs)
+        # 응답 헤더를 받기 전 대기도 첫 조각 대기 시간에 포함한다.
+        wait_sec, reason = _remaining_stream_wait(timing, stall_limits)
+        stream_response = await _await_with_stream_limit(create(**request_kwargs), wait_sec, reason)
         return await _consume_structured_output_stream(
             output_schema=output_schema,
             stream_response=stream_response,
+            timing=timing,
+            stall_limits=stall_limits,
         )
     except ValidationError as exc:
         # Schema/semantic validation is owned by the calling flow so it can
@@ -273,6 +362,8 @@ async def _request_structured_output_stream[T: BaseModel](
             output_schema=output_schema,
             request_kwargs=request_kwargs,
             retries_remaining=retries_remaining - 1,
+            stall_limits=stall_limits,
+            log_label=log_label,
         )
     except Exception as exc:
         if retries_remaining <= 0:
@@ -288,7 +379,12 @@ async def _request_structured_output_stream[T: BaseModel](
             output_schema=output_schema,
             request_kwargs=request_kwargs,
             retries_remaining=retries_remaining - 1,
+            stall_limits=stall_limits,
+            log_label=log_label,
         )
+    finally:
+        # 멈춤 감지 기준을 정하기 위해 첫 조각 도착 시간과 조각 사이 최대 공백을 남긴다.
+        logger.info(f"[CONNECTOR][LLM][stream_timing] {log_label or '-'} | {timing.summary()}")
 
 
 def _parse_sdk_structured_output[T: BaseModel](
@@ -320,10 +416,29 @@ async def _request_strict_structured_output_stream[T: BaseModel](
     output_schema: type[T],
     request_kwargs: dict[str, Any],
     retries_remaining: int,
+    stall_limits: StreamStallLimits | None = None,
+    log_label: str | None = None,
 ) -> tuple[str, T, LLMUsageModel | None]:
+    timing = _StreamTiming(started_at=time.monotonic())
     try:
-        async with stream(**request_kwargs) as response_stream:
+        stream_manager = stream(**request_kwargs)
+        # 응답 헤더를 받기 전 대기도 첫 조각 대기 시간에 포함한다.
+        wait_sec, reason = _remaining_stream_wait(timing, stall_limits)
+        response_stream = await _await_with_stream_limit(stream_manager.__aenter__(), wait_sec, reason)
+        try:
+            # 이벤트를 직접 순회해 조각 도착을 기록하고 멈춤을 감지한다. 순회가 끝난 뒤의 최종 응답은
+            # SDK가 누적한 결과다.
+            events = response_stream.__aiter__()
+            while True:
+                wait_sec, reason = _remaining_stream_wait(timing, stall_limits)
+                try:
+                    await _await_with_stream_limit(events.__anext__(), wait_sec, reason)
+                except StopAsyncIteration:
+                    break
+                timing.record_chunk()
             response = await response_stream.get_final_completion()
+        finally:
+            await stream_manager.__aexit__(None, None, None)
         return _parse_sdk_structured_output(
             output_schema=output_schema,
             response=response,
@@ -343,7 +458,11 @@ async def _request_strict_structured_output_stream[T: BaseModel](
             output_schema=output_schema,
             request_kwargs=request_kwargs,
             retries_remaining=retries_remaining - 1,
+            stall_limits=stall_limits,
+            log_label=log_label,
         )
+    finally:
+        logger.info(f"[CONNECTOR][LLM][stream_timing] {log_label or '-'} | strict | {timing.summary()}")
 
 
 def _extra_headers(trace_context: TraceContext | None) -> dict[str, str] | None:
@@ -791,8 +910,12 @@ async def invoke_llm_structured_output[T: BaseModel](
     trace_context: TraceContext | None = None,
     stream: bool = False,
     reasoning_effort: ReasoningEffortOption | None = None,
+    stall_limits: StreamStallLimits | None = None,
+    log_label: str | None = None,
 ) -> LLMStructuredResult[T]:
     """Structured output LLM 호출. 결과와 usage 정보를 함께 반환.
+
+    ``stall_limits``는 스트리밍 호출(strict 여부와 무관)에 적용되며, 조각이 계속 들어오는 응답은 끊지 않는다.
 
     ``llm_structured_output_strict`` 설정이 활성화되면 OpenAI SDK의 Pydantic
     parsing helper를 사용해 strict JSON Schema를 생성하고 같은
@@ -842,6 +965,8 @@ async def invoke_llm_structured_output[T: BaseModel](
                     output_schema=output_schema,
                     request_kwargs=request_kwargs,
                     retries_remaining=max(0, max_retries),
+                    stall_limits=stall_limits,
+                    log_label=log_label,
                 )
             elif stream:
                 content, parsed_result, usage = await _request_structured_output_stream(
@@ -849,6 +974,8 @@ async def invoke_llm_structured_output[T: BaseModel](
                     output_schema=output_schema,
                     request_kwargs=request_kwargs,
                     retries_remaining=max(0, max_retries),
+                    stall_limits=stall_limits,
+                    log_label=log_label,
                 )
             elif strict:
                 resp = await client.chat.completions.parse(**request_kwargs)

@@ -3476,3 +3476,27 @@ def test_v4_stage_timeouts_are_read_from_settings() -> None:
         ]
 
     assert timeouts == [1.0, 2.0, 3.0, 4.0]
+
+
+
+def test_v4_stage_without_timeout_waits_for_a_slow_call() -> None:
+    async def slow(**_kwargs: object) -> str:
+        await asyncio.sleep(0.05)
+        return "done"
+
+    with patch.object(v4_nodes, "_stage_timeout_seconds", return_value=None):
+        result = asyncio.run(v4_nodes._with_stage_timeout(slow(), stage="scenario", label="Scenario synthesis"))
+
+    assert result == "done"
+
+
+def test_v4_stream_stall_limits_are_disabled_unless_configured() -> None:
+    disabled = SimpleNamespace(llm_v4_stream_first_chunk_timeout_sec=None, llm_v4_stream_idle_timeout_sec=None)
+    enabled = SimpleNamespace(llm_v4_stream_first_chunk_timeout_sec=150.0, llm_v4_stream_idle_timeout_sec=30.0)
+
+    with patch.object(v4_nodes, "get_settings", return_value=disabled):
+        assert v4_nodes._stream_stall_limits() is None
+    with patch.object(v4_nodes, "get_settings", return_value=enabled):
+        limits = v4_nodes._stream_stall_limits()
+
+    assert (limits.first_chunk_sec, limits.idle_sec) == (150.0, 30.0)

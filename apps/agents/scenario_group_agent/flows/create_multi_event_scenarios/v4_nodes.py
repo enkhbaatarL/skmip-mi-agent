@@ -80,6 +80,7 @@ from apps.common.logging.logger_config import logger
 from apps.common.tracing.context import TraceContext
 from apps.common.values.enums import ModelPreference
 from apps.common.values.error_codes import ErrorCode
+from apps.connectors.llm.llm_client import StreamStallLimits
 from apps.persistence.event.schema import EventPayload
 from apps.persistence.model_impact_lever.schema import ModelImpactLeverPayload
 
@@ -87,8 +88,8 @@ from apps.persistence.model_impact_lever.schema import ModelImpactLeverPayload
 V4LlmStage = Literal["event_analysis", "interaction", "dimension", "scenario"]
 
 
-def _stage_timeout_seconds(stage: V4LlmStage) -> float:
-    """v4 생성 단계별 LLM 호출 상한(초)을 설정에서 읽는다."""
+def _stage_timeout_seconds(stage: V4LlmStage) -> float | None:
+    """v4 생성 단계별 LLM 호출 총 시간 상한(초)을 설정에서 읽는다. None이면 상한을 두지 않는다."""
     settings = get_settings()
     return {
         "event_analysis": settings.llm_v4_event_analysis_timeout_sec,
@@ -98,12 +99,24 @@ def _stage_timeout_seconds(stage: V4LlmStage) -> float:
     }[stage]
 
 
+def _stream_stall_limits() -> StreamStallLimits | None:
+    """v4 생성 단계의 스트리밍 멈춤 감지 기준을 설정에서 읽는다. 둘 다 없으면 사용하지 않는다."""
+    settings = get_settings()
+    first_chunk_sec = settings.llm_v4_stream_first_chunk_timeout_sec
+    idle_sec = settings.llm_v4_stream_idle_timeout_sec
+    if first_chunk_sec is None and idle_sec is None:
+        return None
+    return StreamStallLimits(first_chunk_sec=first_chunk_sec, idle_sec=idle_sec)
+
+
 async def _with_stage_timeout[T](awaitable: Awaitable[T], *, stage: V4LlmStage, label: str) -> T:
-    """단계 상한을 넘긴 LLM 호출을 끊는다.
+    """단계 총 시간 상한을 넘긴 LLM 호출을 끊는다. 상한이 없으면 그대로 기다린다.
 
     TimeoutError는 classify_llm_error에서 재시도 가능 오류로 분류되어 기존 단계 재시도로 이어진다.
     """
     timeout_seconds = _stage_timeout_seconds(stage)
+    if timeout_seconds is None:
+        return await awaitable
     try:
         async with asyncio.timeout(timeout_seconds):
             return await awaitable
@@ -181,6 +194,7 @@ async def _analyze_event_with_retries(
                     ),
                     trace_context=trace_context,
                     stage=f"event_impact_analysis:{event_id}",
+                    stall_limits=_stream_stall_limits(),
                     reasoning_effort_override=get_settings().llm_v4_analysis_reasoning_effort,
                 ),
                 stage="event_analysis",
@@ -349,6 +363,7 @@ class AnalyzeEventInteractionsNode(BaseNode):
                     ),
                     trace_context=runtime.context if runtime is not None else None,
                     stage="event_interaction_analysis",
+                    stall_limits=_stream_stall_limits(),
                     reasoning_effort_override=get_settings().llm_v4_analysis_reasoning_effort,
                 ),
                 stage="interaction",
@@ -459,6 +474,7 @@ class DesignModelLeverDimensionsNode(BaseNode):
                     ),
                     trace_context=runtime.context if runtime is not None else None,
                     stage="dimension_design",
+                    stall_limits=_stream_stall_limits(),
                 ),
                 stage="dimension",
                 label="Dimension design",
@@ -576,6 +592,7 @@ class SynthesizeV4ScenariosNode(BaseNode):
                     ),
                     trace_context=runtime.context if runtime is not None else None,
                     stage="scenario_synthesis",
+                    stall_limits=_stream_stall_limits(),
                 ),
                 stage="scenario",
                 label="Scenario synthesis",

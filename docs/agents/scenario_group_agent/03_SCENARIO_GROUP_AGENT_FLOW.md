@@ -322,11 +322,18 @@ Choice가 2개면 bearish·bullish를 모두 포함하고, 3~4개면 bearish·ba
 각 LLM 단계는 최초 호출 포함 최대 3회 시도하며 1초·2초 backoff를 적용한다. schema/structured-output,
 timeout, connection, 명시된 retryable HTTP 오류만 재시도한다. 검증을 통과한 앞 단계 결과는 재사용한다.
 
-게이트웨이·모델 쪽에서 일부 요청이 멈췄다가 재시도하면 정상 시간에 끝나는 경우가 있어, v4 생성 단계는 전체 호출
-타임아웃(`llm_timeout_sec`)보다 짧은 단계별 상한으로 멈춘 호출을 끊고 위 재시도로 넘긴다. 기본값은 Event 분석
-120초(`llm_v4_event_analysis_timeout_sec`), 상호작용 분석 90초(`llm_v4_interaction_timeout_sec`), Dimension 설계
-180초(`llm_v4_dimension_timeout_sec`), Scenario 합성 180초(`llm_v4_scenario_timeout_sec`)다. LLM 호출 오류의
-detail에는 예외 클래스, HTTP 상태 코드, 직접 원인을 남긴다.
+v4 생성 단계는 두 가지 방식으로 오래 걸리는 호출을 끊고 위 재시도로 넘길 수 있다.
+
+- 총 시간 상한(`llm_v4_event_analysis_timeout_sec`, `llm_v4_interaction_timeout_sec`,
+  `llm_v4_dimension_timeout_sec`, `llm_v4_scenario_timeout_sec`): 경과 시간만 보고 끊으므로 느리지만 진행 중인
+  호출도 끊는다. 기본값은 기존 동작과 같게 Event 분석만 180초이고 나머지는 두지 않는다.
+- 스트리밍 멈춤 감지(`llm_v4_stream_first_chunk_timeout_sec`, `llm_v4_stream_idle_timeout_sec`): 요청 시작부터 첫
+  응답 조각까지, 또는 조각 사이 공백이 기준을 넘을 때만 끊는다. 조각이 계속 오는 호출은 끊지 않는다. 스트리밍
+  호출(strict 여부와 무관)에 적용되며 코드 기본은 꺼져 있다. 배포 설정은 첫 조각 150초, 공백 90초다.
+  기준값은 `[CONNECTOR][LLM][stream_timing]` 로그로 정했다(2026-10-17, 68회 호출: 첫 조각 최대 75초,
+  조각 사이 최대 공백 39초).
+
+LLM 호출 오류의 detail에는 예외 클래스, HTTP 상태 코드, 직접 원인을 남긴다.
 
 producer는 기본 30초마다 heartbeat를 갱신한다. 갱신 시 `queued|running`이면 계속 실행하고,
 `succeeded|failed`이면 owner를 취소하지 않고 heartbeat만 종료한다. `interrupted` 또는 operation 누락일 때만

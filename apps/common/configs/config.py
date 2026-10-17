@@ -230,12 +230,16 @@ class Settings(BaseSettings):
         "high",
         "xhigh",
     ] = "low"
-    # v4 생성 단계별 LLM 호출 상한(초). 정상 소요보다 크게 늦어진(멈춘) 호출을 끊고 단계 재시도로 넘긴다.
-    # 재시도된 같은 요청은 보통 정상 시간 안에 끝나므로, 전체 호출 타임아웃(llm_timeout_sec)보다 짧게 둔다.
-    llm_v4_event_analysis_timeout_sec: float = Field(default=120.0, gt=0)
-    llm_v4_interaction_timeout_sec: float = Field(default=90.0, gt=0)
-    llm_v4_dimension_timeout_sec: float = Field(default=180.0, gt=0)
-    llm_v4_scenario_timeout_sec: float = Field(default=180.0, gt=0)
+    # v4 생성 단계별 LLM 호출 총 시간 상한(초). None이면 전체 호출 타임아웃(llm_timeout_sec)만 적용한다.
+    # 총 시간 상한은 느리지만 진행 중인 호출도 끊으므로 기본은 기존 동작(Event 분석만 180초)과 같게 둔다.
+    llm_v4_event_analysis_timeout_sec: float | None = Field(default=180.0, gt=0)
+    llm_v4_interaction_timeout_sec: float | None = Field(default=None, gt=0)
+    llm_v4_dimension_timeout_sec: float | None = Field(default=None, gt=0)
+    llm_v4_scenario_timeout_sec: float | None = Field(default=None, gt=0)
+    # v4 생성 단계의 스트리밍 멈춤 감지(초). 요청 시작부터 첫 조각까지, 그리고 조각 사이 공백이 이 값을 넘으면
+    # 멈춘 호출로 보고 끊어 단계 재시도로 넘긴다. 조각이 계속 오는 호출은 끊지 않는다. None이면 사용하지 않는다.
+    llm_v4_stream_first_chunk_timeout_sec: float | None = Field(default=None, gt=0)
+    llm_v4_stream_idle_timeout_sec: float | None = Field(default=None, gt=0)
     llm_verbosity: Literal["default", "low", "medium", "high"] = "default"
     llm_structured_output_strict: bool = Field(default=False)
 
