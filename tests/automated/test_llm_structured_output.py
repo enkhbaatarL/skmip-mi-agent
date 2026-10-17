@@ -53,14 +53,24 @@ class _FakeStream:
 
 
 class _FakeStrictStream:
-    def __init__(self, response: object) -> None:
+    def __init__(self, response: object, *, event_delays: list[float] | None = None) -> None:
         self._response = response
+        self._event_delays = event_delays or [0.0]
+        self.exited = False
 
     async def __aenter__(self) -> _FakeStrictStream:
         return self
 
     async def __aexit__(self, *_args: object) -> None:
-        return None
+        self.exited = True
+
+    def __aiter__(self) -> AsyncIterator[object]:
+        return self._iterate()
+
+    async def _iterate(self) -> AsyncIterator[object]:
+        for delay in self._event_delays:
+            await asyncio.sleep(delay)
+            yield SimpleNamespace(type="content.delta")
 
     async def get_final_completion(self) -> object:
         return self._response
@@ -378,3 +388,64 @@ class StructuredOutputConnectorTest(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_describe_invocation_error_keeps_class_status_and_cause_for_empty_messages() -> None:
+    class GatewayError(Exception):
+        status_code = 504
+
+    try:
+        try:
+            raise TimeoutError
+        except TimeoutError as cause:
+            raise GatewayError from cause
+    except GatewayError as exc:
+        detail = llm_client._describe_invocation_error(exc)
+
+    assert detail == "GatewayError | status_code=504 | cause=TimeoutError"
+
+
+def test_describe_invocation_error_keeps_message_when_present() -> None:
+    assert llm_client._describe_invocation_error(ValueError("bad gateway")) == "ValueError: bad gateway"
+
+
+
+class StrictStreamStallLimitsTest(unittest.IsolatedAsyncioTestCase):
+    async def _request(
+        self,
+        strict_stream: _FakeStrictStream,
+        limits: llm_client.StreamStallLimits,
+    ) -> tuple[str, BaseModel, object]:
+        return await llm_client._request_strict_structured_output_stream(
+            stream=MagicMock(return_value=strict_stream),
+            output_schema=_StructuredOutput,
+            request_kwargs={},
+            retries_remaining=0,
+            stall_limits=limits,
+            log_label="test",
+        )
+
+    async def test_strict_stream_with_steady_events_completes(self) -> None:
+        parsed = _StructuredOutput(value=3)
+        strict_stream = _FakeStrictStream(
+            _nonstream_response('{"value":3}', _Usage(), parsed=parsed),
+            event_delays=[0.03, 0.03, 0.03],
+        )
+
+        _content, result, _usage = await self._request(
+            strict_stream,
+            llm_client.StreamStallLimits(first_chunk_sec=0.5, idle_sec=0.05),
+        )
+
+        assert result is parsed
+        assert strict_stream.exited is True
+
+    async def test_strict_stream_gap_is_reported_as_stalled_and_closes_the_stream(self) -> None:
+        strict_stream = _FakeStrictStream(
+            _nonstream_response('{"value":3}', _Usage()),
+            event_delays=[0.0, 0.3],
+        )
+
+        with self.assertRaisesRegex(llm_client.LLMStreamStalledError, "no chunk for 0.05s after 1 chunks"):
+            await self._request(strict_stream, llm_client.StreamStallLimits(idle_sec=0.05))
+        assert strict_stream.exited is True

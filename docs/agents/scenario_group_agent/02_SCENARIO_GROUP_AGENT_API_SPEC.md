@@ -306,7 +306,7 @@ Scenario table row와 cell 증적은 다음 shape을 사용한다.
 | `scenarioTable.rows[].scenarioRole` | string \| null | `ceiling`, `mixed`, `floor` 역할 |
 | `scenarioTable.rows[].baselineYn` | string \| null | baseline 여부 |
 | `scenarioTable.rows[].pressureTarget` | `JKM` \| null | 압력 대상 |
-| `scenarioTable.rows[].pressureBand` | string \| null | JKM 압력 구간 |
+| `scenarioTable.rows[].pressureBand` | string \| null | Base Scenario 대비 JKM 압력 구간 |
 | `scenarioTable.rows[].probabilityScore` | number \| null | 0~100 확률 점수 |
 | `scenarioTable.rows[].pressureRationale` | string \| null | 최종 압력 근거 |
 | `scenarioTable.rows[].cells` | object | `{dimensionId: valueId}` canonical 선택값 |
@@ -472,7 +472,9 @@ POST /scenario-groups/{scenarioGroupId}/validation
 
 요청 row는 `scenarioId`, `displayOrder`, `title`, `cells`만 허용한다. v4 header는 현재 Dimension ID를
 Create 순서대로 보내고 cell은 해당 Dimension의 `valueId` 또는 정확한 단일 label이어야 한다. 최종
-Scenario 수는 2~7개다.
+Scenario 수는 3~8개다. Create가 제외한 조합(`generationDiagnostics.excludedCandidates`)을 다시 넣으면 사유 코드와
+함께 비차단 경고 `V4_EXCLUDED_COMBINATION_REINTRODUCED`를 낸다. 옛 코드 `NOT_INDEPENDENT`,
+`LOW_DISTINCTIVENESS`는 `DUPLICATE`로 읽는다.
 
 즉시 응답은 접수 상태다.
 
@@ -505,8 +507,8 @@ Dimension cell은 `null`일 때 허용 방향 안에서 자동 배정할 수 있
 `bullish=+1`인 동일 가중 ordinal 지표다. bullish·bearish Scenario의 빈 Additional Dimension은
 `목표 방향 → balanced → 반대 방향` 순서로 사용 가능한 value를 선택한다. balanced Scenario는 row의 모든 빈 Additional
 Dimension contribution 조합을 함께 비교해 최종 합계의 절댓값이 가장 작은 조합을 선택한다. 자동 배정만 발생한
-기존 Scenario의 `pressureBand`와 확률은 유지하며, 최종 aggregate ordering과 strong extreme 부호 검사는 계속
-적용한다.
+기존 Scenario의 확률은 유지한다. `pressureBand`는 모든 row를 Base 대비로 다시 계산하며, 최종 aggregate ordering과
+Base 대비 strong extreme 부호 검사는 계속 적용한다.
 
 Validation이 blocking 결론을 정상 반환한 경우에도 operation은 `succeeded`일 수 있다. 다음 단계 활성화는
 operation status가 아니라 `canProceed`로 결정한다.
