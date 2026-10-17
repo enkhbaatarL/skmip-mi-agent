@@ -57,6 +57,10 @@ from apps.agents.scenario_group_agent.prompts.model_lever_scenario_generation im
     is_v4_unconfirmed_statement,
     summarize_parameter_slots,
 )
+from apps.agents.scenario_group_agent.utils.pressure_band import (
+    assign_relative_pressure_bands,
+    uses_unique_strong_bands,
+)
 from apps.agents.scenario_group_agent.utils.scenario_similarity import (
     ScenarioSimilarityInput,
     find_similar_scenario_pairs,
@@ -3500,3 +3504,41 @@ def test_v4_stream_stall_limits_are_disabled_unless_configured() -> None:
         limits = v4_nodes._stream_stall_limits()
 
     assert (limits.first_chunk_sec, limits.idle_sec) == (150.0, 30.0)
+
+
+
+def test_assign_relative_pressure_bands_demotes_extra_strong_bands_only_when_unique() -> None:
+    deltas = [0, 2, 3, -2, -2, 1]
+
+    assert assign_relative_pressure_bands(deltas, unique_strong=False) == [
+        "balanced",
+        "strong_bullish",
+        "strong_bullish",
+        "strong_bearish",
+        "strong_bearish",
+        "bullish",
+    ]
+    assert assign_relative_pressure_bands(deltas, unique_strong=True) == [
+        "balanced",
+        "bullish",
+        "strong_bullish",
+        "strong_bearish",
+        "bearish",
+        "bullish",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("diagnostics", "expected"),
+    [
+        (None, True),
+        ({}, True),
+        ({"scenario_synthesis_policy": "band_unique"}, True),
+        ({"scenarioSynthesisPolicy": "distinct_driver"}, False),
+    ],
+)
+def test_uses_unique_strong_bands_treats_unrecorded_groups_as_band_unique(
+    diagnostics: dict[str, object] | None,
+    expected: bool,
+) -> None:
+    assert uses_unique_strong_bands(diagnostics) is expected

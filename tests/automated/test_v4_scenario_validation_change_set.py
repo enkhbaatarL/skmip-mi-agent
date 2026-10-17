@@ -1060,6 +1060,23 @@ def test_pressure_extreme_sign_uses_baseline_delta_when_baseline_is_given() -> N
     assert relative_checks == []
 
 
+def test_rebase_v4_pressure_bands_applies_band_unique_strong_demotion() -> None:
+    analysis = _analyze(_table())
+
+    _baseline_row_key, bands = rebase_v4_pressure_bands(
+        rows=analysis.canonical_rows,
+        dimension_definitions=DEFINITIONS,
+        probability_scores={"scenario:1": 50, "scenario:2": 30, "scenario:3": 20},
+        unique_strong=True,
+    )
+
+    assert bands == {
+        "scenario:1": "balanced",
+        "scenario:2": "bearish",
+        "scenario:3": "strong_bearish",
+    }
+
+
 def test_rebase_v4_pressure_bands_uses_highest_probability_row_as_baseline() -> None:
     analysis = _analyze(_table())
 
@@ -1804,7 +1821,7 @@ def test_v4_role_recalculation_keeps_floor_and_ceiling_distinct_on_ties() -> Non
     assert scenarios[1].baseline_yn == "Y"
 
 
-def test_v4_role_recalculation_rebases_bands_and_excludes_baseline_from_floor_and_ceiling() -> None:
+def _rebase_role_scenarios() -> list[SimpleNamespace]:
     combinations = [
         # (dimension_values, probability) — 합산: +2, 0, -2, 0
         ({"demand": "demand_high", "supply": "supply_low"}, 40),
@@ -1825,8 +1842,18 @@ def test_v4_role_recalculation_rebases_bands_and_excludes_baseline_from_floor_an
         )
         for index, (values, probability) in enumerate(combinations, start=1)
     ]
+    return scenarios
 
-    ScenarioService()._apply_v4_baseline_and_roles(scenarios, DEFINITIONS, user_id=101)
+
+def test_v4_role_recalculation_rebases_bands_and_excludes_baseline_from_floor_and_ceiling() -> None:
+    scenarios = _rebase_role_scenarios()
+
+    ScenarioService()._apply_v4_baseline_and_roles(
+        scenarios,
+        DEFINITIONS,
+        user_id=101,
+        generation_diagnostics={"scenario_synthesis_policy": "distinct_driver"},
+    )
 
     assert [scenario.baseline_yn for scenario in scenarios] == ["Y", "N", "N", "N"]
     assert [scenario.global_pressure_band for scenario in scenarios] == [
@@ -1838,6 +1865,28 @@ def test_v4_role_recalculation_rebases_bands_and_excludes_baseline_from_floor_an
     assert scenarios[0].scenario_role is None
     assert scenarios[2].scenario_role == "floor"
     assert scenarios[3].scenario_role == "ceiling"
+
+
+@pytest.mark.parametrize("generation_diagnostics", [None, {}, {"scenarioSynthesisPolicy": "band_unique"}])
+def test_v4_role_recalculation_keeps_one_strong_band_for_band_unique_groups(
+    generation_diagnostics: dict[str, object] | None,
+) -> None:
+    scenarios = _rebase_role_scenarios()
+
+    ScenarioService()._apply_v4_baseline_and_roles(
+        scenarios,
+        DEFINITIONS,
+        user_id=101,
+        generation_diagnostics=generation_diagnostics,
+    )
+
+    # Base 대비 차이: 0, -2, -4, -2 → 차이가 가장 큰 하나만 strong_bearish로 둔다
+    assert [scenario.global_pressure_band for scenario in scenarios] == [
+        "balanced",
+        "bearish",
+        "strong_bearish",
+        "bearish",
+    ]
 
 
 @pytest.mark.parametrize(

@@ -330,8 +330,9 @@ v4 생성 단계는 두 가지 방식으로 오래 걸리는 호출을 끊고 �
 - 스트리밍 멈춤 감지(`llm_v4_stream_first_chunk_timeout_sec`, `llm_v4_stream_idle_timeout_sec`): 요청 시작부터 첫
   응답 조각까지, 또는 조각 사이 공백이 기준을 넘을 때만 끊는다. 조각이 계속 오는 호출은 끊지 않는다. 스트리밍
   호출(strict 여부와 무관)에 적용되며 코드 기본은 꺼져 있다. 배포 설정은 첫 조각 150초, 공백 90초다.
-  기준값은 `[CONNECTOR][LLM][stream_timing]` 로그로 정했다(2026-10-17, 68회 호출: 첫 조각 최대 75초,
-  조각 사이 최대 공백 39초).
+  기준값은 `[CONNECTOR][LLM][stream_timing]` 로그로 정했다(2026-10-17, 68회 호출: 첫 조각 최대 75초, 조각 사이
+  최대 공백 39초). 이 로그는 첫 조각, 본문이 담긴 첫 조각(`first_content_sec`, 진단용), 조각 사이 최대 공백,
+  조각 수, 전체 시간을 남긴다. 실측상 첫 조각부터 본문이며, 긴 공백은 본문 도중에 생긴다.
 
 LLM 호출 오류의 detail에는 예외 클래스, HTTP 상태 코드, 직접 원인을 남긴다.
 
@@ -398,7 +399,9 @@ balanced target은 row의 모든 빈 Dimension contribution 조합을 한 번에
 때만 constrained LLM이 의미적으로 적합한 value를 고르며 허용 범위 밖 응답은 실패 처리한다. autofill-only
 Scenario는 기존 확률을 보존한다. 모든 row의 `pressureBand`는 편집 후 Base(최고 확률, 같으면 앞선 표시 순서)
 대비로 다시 계산하며, 새 row의 LLM band도 이 값으로 대체한다. pressure ordering과 Base 대비 strong extreme
-부호 검사는 마지막에 다시 적용한다. 적용 단계도 같은 기준으로 band, floor·ceiling·mixed role을 다시 계산한다.
+부호 검사는 마지막에 다시 적용한다. 적용 단계도 같은 기준으로 band, floor·ceiling·mixed role을 다시 계산한다. `band_unique`
+정책 그룹(정책 기록이 없는 기존 그룹 포함)은 생성 단계와 같게 같은 strong band를 받은 Scenario 중 차이가 가장 큰 하나만
+strong으로 두고 나머지는 같은 방향의 완화된 band로 내린다.
 
 ### 판정
 

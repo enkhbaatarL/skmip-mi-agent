@@ -239,3 +239,16 @@ class StreamStallLimitsTest(unittest.IsolatedAsyncioTestCase):
         _content, parsed, _usage = await self._request(stream, None)
 
         assert parsed.value == 2
+
+
+
+def test_stream_timing_reports_first_content_separately_from_first_chunk() -> None:
+    timing = llm_client._StreamTiming(started_at=0.0)
+    with patch.object(llm_client.time, "monotonic", side_effect=[1.0, 3.0, 10.0]):
+        timing.record_chunk(has_content=False)
+        timing.record_chunk(has_content=True)
+        summary = timing.summary()
+
+    assert summary == (
+        "first_chunk_sec=1.0 | first_content_sec=3.0 | max_gap_sec=2.0 | chunks=2 | total_sec=10.0"
+    )

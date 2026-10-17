@@ -51,6 +51,7 @@ from apps.agents.scenario_group_agent.subgraphs.scenario_review.nodes import (
 from apps.agents.scenario_group_agent.subgraphs.scenario_review.state import (
     ScenarioReviewState,
 )
+from apps.agents.scenario_group_agent.utils.pressure_band import uses_unique_strong_bands
 from apps.common.exceptions.custom import MIBaseError
 from apps.common.logging.logger_config import logger
 from apps.common.tracing.context import TraceContext, build_langgraph_config
@@ -825,6 +826,9 @@ async def _run_v4_scenario_validation(
                 row.client_row_key: float(fields_by_key[row.client_row_key].probability_score)
                 for row in analysis.canonical_rows
             },
+            unique_strong=uses_unique_strong_bands(
+                state.scenario_group.generation_diagnostics if state.scenario_group is not None else None,
+            ),
         )
         for row in analysis.canonical_rows:
             fields_by_key[row.client_row_key] = fields_by_key[row.client_row_key].model_copy(

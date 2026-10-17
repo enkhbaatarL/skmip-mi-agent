@@ -14,7 +14,7 @@ import unicodedata
 from apps.agents.scenario_group_agent.flows.add_dimension.nodes import filter_available_candidates
 from apps.agents.scenario_group_agent.utils.pressure_band import (
     PRESSURE_CONTRIBUTION_SCORES,
-    relative_pressure_band,
+    assign_relative_pressure_bands,
 )
 from apps.agents.scenario_group_agent.utils.dimension_values import (
     DimensionValueCatalog,
@@ -1062,11 +1062,13 @@ def rebase_v4_pressure_bands(
     rows: list[CanonicalScenarioRow],
     dimension_definitions: list[dict[str, Any]],
     probability_scores: dict[str, float],
+    unique_strong: bool = False,
 ) -> tuple[str | None, dict[str, str]]:
     """편집된 표의 Base 행과 Base 대비 pressure band를 계산한다.
 
     Base는 적용 단계(_apply_v4_baseline_and_roles)와 같게 probability가 가장 높고, 같으면 표시 순서가
-    앞선 행이다. 반환값은 (Base row key, row key별 band)다.
+    앞선 행이다. unique_strong이면 band_unique 생성 단계와 같은 strong band 강등 규칙을 적용한다.
+    반환값은 (Base row key, row key별 band)다.
     """
     if not rows:
         return None, {}
@@ -1083,9 +1085,11 @@ def rebase_v4_pressure_bands(
         key=lambda row: (probability_scores.get(row.client_row_key, 0.0), -row.display_order),
     )
     base_score = scores[baseline.client_row_key]
-    return baseline.client_row_key, {
-        row.client_row_key: relative_pressure_band(scores[row.client_row_key] - base_score) for row in rows
-    }
+    bands = assign_relative_pressure_bands(
+        [scores[row.client_row_key] - base_score for row in rows],
+        unique_strong=unique_strong,
+    )
+    return baseline.client_row_key, {row.client_row_key: band for row, band in zip(rows, bands, strict=True)}
 
 
 def validate_v4_pressure_aggregate(  # noqa: C901

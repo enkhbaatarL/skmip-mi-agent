@@ -229,6 +229,10 @@ class StreamStallLimits:
     idle_sec: float | None = None
 
 
+# strict 스트림(SDK 이벤트)에서 본문으로 보는 이벤트 종류. 타이밍 로그의 first_content_sec에만 쓴다.
+_STRICT_CONTENT_EVENT_TYPES = frozenset({"content.delta", "refusal.delta"})
+
+
 class LLMStreamStalledError(TimeoutError):
     """스트리밍 응답에서 정해진 시간 동안 조각이 오지 않았다."""
 
@@ -237,25 +241,31 @@ class LLMStreamStalledError(TimeoutError):
 class _StreamTiming:
     started_at: float
     first_chunk_at: float | None = None
+    # 진단용: 본문이 담긴 첫 조각 시각. 멈춤 판단에는 쓰지 않는다.
+    first_content_at: float | None = None
     last_chunk_at: float | None = None
     max_gap_sec: float = 0.0
     chunk_count: int = 0
 
-    def record_chunk(self) -> None:
+    def record_chunk(self, *, has_content: bool = False) -> None:
         now = time.monotonic()
         if self.first_chunk_at is None:
             self.first_chunk_at = now
         elif self.last_chunk_at is not None:
             self.max_gap_sec = max(self.max_gap_sec, now - self.last_chunk_at)
+        if has_content and self.first_content_at is None:
+            self.first_content_at = now
         self.last_chunk_at = now
         self.chunk_count += 1
 
+    def _since_start(self, moment: float | None) -> str:
+        return f"{moment - self.started_at:.1f}" if moment is not None else "none"
+
     def summary(self) -> str:
-        first_chunk = (
-            f"{self.first_chunk_at - self.started_at:.1f}" if self.first_chunk_at is not None else "none"
-        )
         return (
-            f"first_chunk_sec={first_chunk} | max_gap_sec={self.max_gap_sec:.1f} | chunks={self.chunk_count} | "
+            f"first_chunk_sec={self._since_start(self.first_chunk_at)} | "
+            f"first_content_sec={self._since_start(self.first_content_at)} | "
+            f"max_gap_sec={self.max_gap_sec:.1f} | chunks={self.chunk_count} | "
             f"total_sec={time.monotonic() - self.started_at:.1f}"
         )
 
@@ -302,16 +312,14 @@ async def _consume_structured_output_stream[T: BaseModel](
             chunk = await _await_with_stream_limit(iterator.__anext__(), wait_sec, reason)
         except StopAsyncIteration:
             break
-        timing.record_chunk()
         chunk_usage = getattr(chunk, "usage", None)
         if chunk_usage is not None:
             raw_usage = chunk_usage
 
         choices = getattr(chunk, "choices", None) or []
-        if not choices:
-            continue
-        delta = getattr(choices[0], "delta", None)
+        delta = getattr(choices[0], "delta", None) if choices else None
         content = getattr(delta, "content", None)
+        timing.record_chunk(has_content=bool(content))
         if content:
             content_chunks.append(content)
 
@@ -432,10 +440,10 @@ async def _request_strict_structured_output_stream[T: BaseModel](
             while True:
                 wait_sec, reason = _remaining_stream_wait(timing, stall_limits)
                 try:
-                    await _await_with_stream_limit(events.__anext__(), wait_sec, reason)
+                    event = await _await_with_stream_limit(events.__anext__(), wait_sec, reason)
                 except StopAsyncIteration:
                     break
-                timing.record_chunk()
+                timing.record_chunk(has_content=getattr(event, "type", None) in _STRICT_CONTENT_EVENT_TYPES)
             response = await response_stream.get_final_completion()
         finally:
             await stream_manager.__aexit__(None, None, None)

@@ -1,6 +1,7 @@
 from __future__ import annotations  # noqa: CPY001
 
-from typing import Literal
+from collections.abc import Mapping, Sequence
+from typing import Any, Literal
 
 
 PressureBandValue = Literal["strong_bearish", "bearish", "balanced", "bullish", "strong_bullish"]
@@ -26,9 +27,40 @@ def relative_pressure_band(delta: int) -> PressureBandValue:
     return "balanced"
 
 
+def uses_unique_strong_bands(generation_diagnostics: Mapping[str, Any] | None) -> bool:
+    """그룹이 strong band를 방향당 하나만 두는 band_unique 정책으로 만들어졌는지 판단한다.
+
+    정책 기록이 없는 기존 그룹은 band_unique로 본다.
+    """
+    diagnostics = generation_diagnostics or {}
+    policy = diagnostics.get("scenario_synthesis_policy") or diagnostics.get("scenarioSynthesisPolicy")
+    return policy != "distinct_driver"
+
+
+def assign_relative_pressure_bands(deltas: Sequence[int], *, unique_strong: bool) -> list[PressureBandValue]:
+    """Base 대비 차이 목록에 band를 붙인다.
+
+    unique_strong이면 band_unique 생성 단계와 같게, 같은 strong band를 받은 Scenario가 여럿일 때 차이의 절댓값이
+    가장 큰 하나만 strong으로 두고 나머지는 같은 방향의 완화된 band로 내린다. 동점이면 앞선 Scenario가 strong을 갖는다.
+    """
+    bands = [relative_pressure_band(delta) for delta in deltas]
+    if not unique_strong:
+        return bands
+    for strong_band, moderate_band in (("strong_bullish", "bullish"), ("strong_bearish", "bearish")):
+        holders = [index for index, band in enumerate(bands) if band == strong_band]
+        if len(holders) <= 1:
+            continue
+        holders.sort(key=lambda index: abs(deltas[index]), reverse=True)
+        for index in holders[1:]:
+            bands[index] = moderate_band
+    return bands
+
+
 __all__ = [
     "PRESSURE_CONTRIBUTION_SCORES",
     "STRONG_PRESSURE_DELTA",
     "PressureBandValue",
+    "assign_relative_pressure_bands",
     "relative_pressure_band",
+    "uses_unique_strong_bands",
 ]
