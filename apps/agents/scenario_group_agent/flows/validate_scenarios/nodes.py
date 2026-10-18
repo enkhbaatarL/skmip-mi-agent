@@ -22,6 +22,7 @@ from apps.agents.scenario_group_agent.flows.validate_scenarios.v4_validation imp
     build_v4_additional_dimension_autofill_plan,
     check_counts,
     normalize_v4_probability_scores,
+    rebase_v4_pressure_bands,
     render_reason_markdown,
     validate_v4_pressure_aggregate,
 )
@@ -50,6 +51,7 @@ from apps.agents.scenario_group_agent.subgraphs.scenario_review.nodes import (
 from apps.agents.scenario_group_agent.subgraphs.scenario_review.state import (
     ScenarioReviewState,
 )
+from apps.agents.scenario_group_agent.utils.pressure_band import uses_unique_strong_bands
 from apps.common.exceptions.custom import MIBaseError
 from apps.common.logging.logger_config import logger
 from apps.common.tracing.context import TraceContext, build_langgraph_config
@@ -815,14 +817,29 @@ async def _run_v4_scenario_validation(
                     update={"probability_score": float(probability_score)}
                 )
 
+        # 생성 단계와 같게 pressure band는 Base 대비 상대값이다. 편집으로 Base나 조합이 바뀔 수 있으므로
+        # 새 행의 LLM band를 포함해 모든 행의 band를 Base 대비로 다시 계산한다.
+        baseline_row_key, rebased_bands = rebase_v4_pressure_bands(
+            rows=analysis.canonical_rows,
+            dimension_definitions=definitions,
+            probability_scores={
+                row.client_row_key: float(fields_by_key[row.client_row_key].probability_score)
+                for row in analysis.canonical_rows
+            },
+            unique_strong=uses_unique_strong_bands(
+                state.scenario_group.generation_diagnostics if state.scenario_group is not None else None,
+            ),
+        )
+        for row in analysis.canonical_rows:
+            fields_by_key[row.client_row_key] = fields_by_key[row.client_row_key].model_copy(
+                update={"pressure_band": rebased_bands[row.client_row_key]}
+            )
         checks.extend(
             validate_v4_pressure_aggregate(
                 rows=analysis.canonical_rows,
                 dimension_definitions=definitions,
-                pressure_bands={
-                    row.client_row_key: fields_by_key[row.client_row_key].pressure_band
-                    for row in analysis.canonical_rows
-                },
+                pressure_bands=rebased_bands,
+                baseline_row_key=baseline_row_key,
             )
         )
         blocking = any(check.blocking and check.status == "FAIL" for check in checks)

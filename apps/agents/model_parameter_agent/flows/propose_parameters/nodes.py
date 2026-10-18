@@ -345,7 +345,8 @@ _SAFE_LEVER_PARAMETER_DIRECTIONS: Mapping[
     ("regional_upstream_production", "RegionalProductionAdjustment"): _CAPACITY_DIRECTION_MAP,
     ("lng_charter_rate", "ShippingCost"): _COST_DIRECTION_MAP,
     ("lng_vessel_fuel_cost", "ShippingFuelCost"): _COST_DIRECTION_MAP,
-    ("canal_toll", "CanalToll"): _COST_DIRECTION_MAP,
+    ("canal_toll", "Suez Canal Cost"): _COST_DIRECTION_MAP,
+    ("canal_toll", "Panama Canal Cost"): _COST_DIRECTION_MAP,
     ("us_gom_hurricane_disruption", "HurricaneIntensity"): _COST_DIRECTION_MAP,
 }
 
@@ -1563,7 +1564,7 @@ def load_basecase_samples(state: ModelParameterProposalState) -> dict[str, Any]:
             "model_parameter_proposal_flow_release": getattr(
                 cfg,
                 "model_parameter_proposal_flow_release",
-                "v4.1.7",
+                "v4.1.9",
             ),
             "model_parameter_variation_mode": _configured_variation_mode(cfg),
             "model_parameter_variation_profile_enabled": bool(
@@ -6150,7 +6151,7 @@ def _v4_policy_value(  # noqa: C901
     ):
         raise MIBaseError(
             ErrorCode.INVALID_REQUEST,
-            detail=("v4.1.7 value requires an evidence-specific direction and observed/derived/assumption explanation"),
+            detail=("v4.1.9 value requires an evidence-specific direction and observed/derived/assumption explanation"),
         )
     raw_basis = slot_value.evidence_basis
     evidence_basis = raw_basis or "DERIVED"

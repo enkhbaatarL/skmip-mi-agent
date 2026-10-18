@@ -219,18 +219,43 @@ LLM은 ID나 source lineage를 만들지 않는다. 서버가 catalog와 검증�
 
 #### 4. Scenario 합성
 
-검증된 Dimension choice와 interaction으로 3~5개의 고유 조합을 선택한다. 각 Scenario는 title, narrative,
+검증된 Dimension choice와 interaction으로 고유 조합을 선택한다. 각 Scenario는 title, narrative,
 Dimension value 조합, JKM `pressureBand`, 근거, role, 상대 확률 가중치를 가진다. 이 호출은 그룹 description만
 만들고 그룹 제목은 만들지 않는다.
+
+개수와 band 규칙은 설정 `scenario_synthesis_policy`로 고르며, 생성 시점의 정책과 개수 범위는 state에
+고정하고 `generationDiagnostics.scenarioSynthesisPolicy`, `scenarioCountRange`에 기록한다. 롤백은 설정을
+`band_unique`로 되돌린다.
+
+| 정책 | 개수 | band 규칙 | 제외 사유 코드 |
+| --- | --- | --- | --- |
+| `band_unique` (기본) | 3~5 | 생성 Scenario끼리 band 중복 금지, 생성·제외를 합쳐 5 band를 한 번씩 덮음, Base 대비 방향당 최대 2개 | LLM `LOW_PROBABILITY`·`NOT_INDEPENDENT`, 서버 `LOW_DISTINCTIVENESS` |
+| `distinct_driver` | 이벤트 1~2개는 3~5, 3개 이상은 (이벤트 수+1)~(이벤트 수+3) | 같은 band 여러 개 허용, Base 대비 상방·하방 각 1개 이상 | `INSUFFICIENT_EVIDENCE`, `CONTRADICTION`, `DUPLICATE`, `LOW_PROBABILITY`, 서버 `EXCEEDS_MAX_COUNT` |
+
+`pressureBand`는 두 정책 모두 실제 JKM 방향이 아니라 **Base 대비 상대 위치**다. Base(최고 확률 Scenario)와의
+`pressureContribution` 합산 차이가 0이면 `balanced`, ±1이면 `bullish`·`bearish`, ±2 이상이면 strong band다.
 
 서버는 다음을 최종화한다.
 
 - Scenario와 Dimension/Value ID
 - 중복 조합 차단
-- floor와 ceiling 각 1개, 필요한 경우 mixed role
-- contribution과 pressure band 순서 정합성
+- Base를 제외한 Scenario 중 Base 대비 가장 낮은·높은 floor와 ceiling, 필요한 경우 mixed role
+- Base 대비 pressure band (`distinct_driver`는 제외 후보 band도 같은 기준으로 다시 계산)
 - `probabilityScore` 정수 합계 100
 - 최고 확률 Scenario 하나의 `baselineYn=Y`
+
+`distinct_driver` 정책의 추가 처리는 다음과 같다.
+
+- Dimension 선택지로 만들 수 있는데도 Base 대비 상방 또는 하방 Scenario가 없으면 합성을 재시도한다.
+  선택지 구조상 만들 수 없는 방향은 `directionCoverageGaps`에 기록하고 결과를 막지 않는다.
+- 최대 개수를 넘으면 Base와 압력 차이가 가장 작고 확률이 낮은 후보부터 `EXCEEDS_MAX_COUNT`로 제외한다.
+  한 방향의 마지막 Scenario는 제외하지 않는다.
+- 목표 최소 개수에 못 미치면 미달 피드백과 함께 합성을 **한 번만** 다시 시도한다. 재시도 결과가 더 적거나
+  재시도가 실패하면 첫 결과를 쓴다. 최종 미달은 `scenarioCountShortfall`(목표, 실제, 제외 사유 분포)로 남기고,
+  서버가 강제하는 하한은 3개다.
+
+두 정책 모두 같은 band이면서 Dimension 값이 1개만 다른 쌍과 제목이 비슷한 쌍(문자 2-gram Jaccard 0.6 이상)을
+`similarScenarioPairs`에 통계로 남긴다. 생성 결과는 바꾸지 않는다.
 
 `baselineYn=Y`는 미래 사실 확정이나 기관 합의를 의미하지 않는다. 생성 기준시점에서 가장 지지되는 작업
 가정이며, 대안 View의 lineage를 제거하는 해소 판정으로 사용하지 않는다.
@@ -243,7 +268,7 @@ Dimension value 조합, JKM `pressureBand`, 근거, role, 상대 확률 가중�
 정수 배분의 나머지가 같은 경우 기존 baseline을 우선한다.
 
 자동 추가된 fallback을 포함해 최종 점수가 5 미만인 후보가 있으면 기존 합성
-재시도 경로로 이동한다. 최종 생성 개수는 기존 결과 스키마의 3~5개 조건을 따른다.
+재시도 경로로 이동한다. 최종 생성 개수는 정책별 최대 개수와 결과 스키마의 하한 3개를 따른다.
 재시도 한도를 소진하면 생성 작업이 실패한다.
 
 TTF·HH 관련성이 명확한 경우만 `relatedMarkets`에 보조 근거를 둔다. JKM 근거는 `pressureRationale`이
@@ -296,6 +321,20 @@ Choice가 2개면 bearish·bullish를 모두 포함하고, 3~4개면 bearish·ba
 
 각 LLM 단계는 최초 호출 포함 최대 3회 시도하며 1초·2초 backoff를 적용한다. schema/structured-output,
 timeout, connection, 명시된 retryable HTTP 오류만 재시도한다. 검증을 통과한 앞 단계 결과는 재사용한다.
+
+v4 생성 단계는 두 가지 방식으로 오래 걸리는 호출을 끊고 위 재시도로 넘길 수 있다.
+
+- 총 시간 상한(`llm_v4_event_analysis_timeout_sec`, `llm_v4_interaction_timeout_sec`,
+  `llm_v4_dimension_timeout_sec`, `llm_v4_scenario_timeout_sec`): 경과 시간만 보고 끊으므로 느리지만 진행 중인
+  호출도 끊는다. 기본값은 기존 동작과 같게 Event 분석만 180초이고 나머지는 두지 않는다.
+- 스트리밍 멈춤 감지(`llm_v4_stream_first_chunk_timeout_sec`, `llm_v4_stream_idle_timeout_sec`): 요청 시작부터 첫
+  응답 조각까지, 또는 조각 사이 공백이 기준을 넘을 때만 끊는다. 조각이 계속 오는 호출은 끊지 않는다. 스트리밍
+  호출(strict 여부와 무관)에 적용되며 코드 기본은 꺼져 있다. 배포 설정은 첫 조각 150초, 공백 90초다.
+  기준값은 `[CONNECTOR][LLM][stream_timing]` 로그로 정했다(2026-10-17, 68회 호출: 첫 조각 최대 75초, 조각 사이
+  최대 공백 39초). 이 로그는 첫 조각, 본문이 담긴 첫 조각(`first_content_sec`, 진단용), 조각 사이 최대 공백,
+  조각 수, 전체 시간을 남긴다. 실측상 첫 조각부터 본문이며, 긴 공백은 본문 도중에 생긴다.
+
+LLM 호출 오류의 detail에는 예외 클래스, HTTP 상태 코드, 직접 원인을 남긴다.
 
 producer는 기본 30초마다 heartbeat를 갱신한다. 갱신 시 `queued|running`이면 계속 실행하고,
 `succeeded|failed`이면 owner를 취소하지 않고 heartbeat만 종료한다. `interrupted` 또는 operation 누락일 때만
@@ -358,8 +397,11 @@ contribution을 반드시 선택한다. 이 fallback은 새 후보뿐 아니라 
 balanced target은 row의 모든 빈 Dimension contribution 조합을 한 번에 비교한다. 최종 합계 절댓값, 기존
 점수와의 차이, 저장값 재사용 수, header 순서 순으로 동률을 해소한다. 선택 contribution 안에 value가 여러 개일
 때만 constrained LLM이 의미적으로 적합한 value를 고르며 허용 범위 밖 응답은 실패 처리한다. autofill-only
-Scenario는 기존 `pressureBand`와 확률을 보존하고 전체 row의 pressure ordering·strong extreme 부호 검사는
-마지막에 다시 적용한다.
+Scenario는 기존 확률을 보존한다. 모든 row의 `pressureBand`는 편집 후 Base(최고 확률, 같으면 앞선 표시 순서)
+대비로 다시 계산하며, 새 row의 LLM band도 이 값으로 대체한다. pressure ordering과 Base 대비 strong extreme
+부호 검사는 마지막에 다시 적용한다. 적용 단계도 같은 기준으로 band, floor·ceiling·mixed role을 다시 계산한다. `band_unique`
+정책 그룹(정책 기록이 없는 기존 그룹 포함)은 생성 단계와 같게 같은 strong band를 받은 Scenario 중 차이가 가장 큰 하나만
+strong으로 두고 나머지는 같은 방향의 완화된 band로 내린다.
 
 ### 판정
 

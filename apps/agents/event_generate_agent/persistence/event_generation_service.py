@@ -40,7 +40,7 @@ class EventGenerationService:
         self,
         event: GeneratedEventOut,
         *,
-        user_id: int | None = None,
+        user_id: str | None = None,
     ) -> ConfirmedEventOut:
         """이벤트 1건을 신규 insert하고 발급된 mi_event_id를 돌려준다."""
         from apps.common.configs.database.sync_database.connection import get_sync_session

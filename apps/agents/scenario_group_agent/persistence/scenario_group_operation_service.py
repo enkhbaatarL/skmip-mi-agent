@@ -460,6 +460,7 @@ class ScenarioGroupOperationService:
                     active_scenarios,
                     target_definitions,
                     user_id=user_id,
+                    generation_diagnostics=dict(getattr(group, "generation_diagnostics", None) or {}),
                 )
                 group_update = {
                     "dimension_definitions": target_definitions,

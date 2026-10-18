@@ -131,7 +131,7 @@ async def run_generate_from_query(
     date_from: str | None = None,
     date_to: str | None = None,
     language: str | None = None,
-    user_id: int | None = None,
+    user_id: str | None = None,
 ) -> GenerateFromQueryResult:
     from apps.common.configs.config import get_settings
 

@@ -21,6 +21,7 @@ from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.api_sch
 from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.state import (
     V4MultiEventGenerationState,
 )
+from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.v4_budget import scenario_count_range
 from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.v4_nodes import (
     AnalyzeEventImpactsNode,
     AnalyzeEventInteractionsNode,
@@ -90,6 +91,7 @@ def prepare_v4_multi_event_scenarios(
         )
     event_by_id = {int(event.mi_event_id): event for event in events}
     ordered_events = [event_by_id[event_id] for event_id in payload.mi_event_ids]
+    synthesis_policy = get_settings().scenario_synthesis_policy
 
     impact_levers, catalog_version, catalog_checksum = ModelImpactLeverService().load_active_catalog(
         catalog_version=get_settings().scenario_group_v4_impact_catalog_version,
@@ -115,6 +117,8 @@ def prepare_v4_multi_event_scenarios(
         "impact_parameter_axes": ModelImpactLeverService().load_parameter_semantic_axes(impact_levers),
         "user_id": payload.user_id,
         "analysis_as_of": _analysis_as_of(),
+        "scenario_synthesis_policy": synthesis_policy,
+        "scenario_count_range": scenario_count_range(len(ordered_events), policy=synthesis_policy),
         "operation_id": operation_id,
     }
 

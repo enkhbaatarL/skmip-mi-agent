@@ -1,0 +1,9 @@
+{
+  "schema_version": 10,
+  "release_id": "new-bc-v10",
+  "extends": "model-parameter-workbook-contract-v9.json",
+  "remove_parameters": [
+    "CanalToll"
+  ],
+  "parameters": {}
+}

@@ -24,6 +24,9 @@ from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.v4_sche
     V4EventInteraction,
     V4InteractionUncertainty,
     V4PathUncertainty,
+    V4ScenarioCountRange,
+    V4ScenarioCountShortfall,
+    V4SimilarScenarioPair,
     V4ValidationWarning,
 )
 from apps.agents.scenario_group_agent.schemas.base import ApiModel
@@ -166,6 +169,12 @@ class GenerationDiagnostics(ApiModel):
         default_factory=AdditionalDimensionGeneration,
     )
     additional_dimension_candidates: list[V4DimensionDefinition] = Field(default_factory=list)
+    # v4 Scenario 합성 정책과 개수 진단. 정책 도입 전에 만든 그룹은 None·빈 값이다.
+    scenario_synthesis_policy: str | None = None
+    scenario_count_range: V4ScenarioCountRange | None = None
+    scenario_count_shortfall: V4ScenarioCountShortfall | None = None
+    direction_coverage_gaps: list[str] = Field(default_factory=list)
+    similar_scenario_pairs: list[V4SimilarScenarioPair] = Field(default_factory=list)
 
 
 class V3GenerationDiagnostics(GenerationDiagnostics):

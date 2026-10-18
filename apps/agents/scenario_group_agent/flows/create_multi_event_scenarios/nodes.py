@@ -54,7 +54,7 @@ from apps.persistence.event.schema import EventPayload
 
 
 if TYPE_CHECKING:
-    from apps.connectors.llm.llm_client import ReasoningEffortOption
+    from apps.connectors.llm.llm_client import ReasoningEffortOption, StreamStallLimits
 
 
 MAX_STAGE_ATTEMPTS = 3
@@ -132,6 +132,7 @@ async def invoke_stage_structured_output[T: BaseModel](
     stage: str | None = None,
     reasoning_effort_override: ReasoningEffortOption | None = None,
     preference: ModelPreference | None = None,
+    stall_limits: StreamStallLimits | None = None,
 ) -> T:
     from apps.common.configs.config import get_settings
     from apps.connectors.llm.llm_client import invoke_llm_structured_output
@@ -154,6 +155,8 @@ async def invoke_stage_structured_output[T: BaseModel](
         stream=cfg.llm_stream_enabled,
         reasoning_effort=reasoning_effort_override or cfg.llm_reasoning_effort,
         preference=preference,
+        stall_limits=stall_limits,
+        log_label=stage,
     )
     return response.result
 

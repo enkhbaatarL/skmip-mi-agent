@@ -82,9 +82,9 @@ DB/canonical만 맞거나 LUT 테스트만 통과하거나 전체 파라미터 �
 ### 후보 경계
 
 - executable Impact Lever binding에서 raw candidate를 만든다.
-- v1/v3는 production `MODEL_PARAMETER_PROPOSAL_ALLOWLIST` 5종을, v4는
-  `model-parameter-proposal-capabilities-v4`의 ID
-  `{4, 6, 7, 8, 11, 12, 13, 14, 15, 16, 17, 18, 20, 22, 23, 24}`과 name/target을 읽어
+- v1/v3는 production `MODEL_PARAMETER_PROPOSAL_ALLOWLIST` 5종을, 현행 v4.1은
+  `model-parameter-proposal-capabilities-v6`의 ID
+  `{4, 6, 7, 8, 11, 12, 13, 14, 15, 16, 17, 18, 20, 22, 23, 25, 26}`과 name/target을 읽어
   `runtime-allowed`와 `active-but-blocked`를 나눈다.
 - blocked candidate는 Step1.5·Step2·Step3·신규 proposal과 그 결과에서 파생된 Confirmation에 도달하면 안 되며
   `PROPOSAL_SCOPE_EXCLUDED` reason code가 있어야 한다.
@@ -93,7 +93,7 @@ DB/canonical만 맞거나 LUT 테스트만 통과하거나 전체 파라미터 �
 
 ### Slot, 값과 저장
 
-- 정확히 v4 전략인 요청은 `new-bc-v8` versioned contract를 사용한다. 활성 MI Base workbook은 Object Storage에서
+- 정확히 v4 전략인 요청은 `new-bc-v10` versioned contract를 사용한다. 활성 MI Base workbook은 Object Storage에서
   받은 실제 digest를 요청별로 고정하고, startup/configured-fallback 검증은
   `resources/basecase_v4/new-bc-v2/` packaged baseline digest를 사용한다. v1/v3는
   기존 `resources/basecase/`를 계속 사용해야 한다. startup은 contract schema/path와 Workbook path/digest만 검증하며
@@ -106,7 +106,7 @@ DB/canonical만 맞거나 LUT 테스트만 통과하거나 전체 파라미터 �
   authoritative count나 slot whitelist로 평가하지 않는다.
 - v3/v4 ordered Event의 `detail_analysis`는 각각 event당 앞 4,000자·6,000자,
   `numeric_facts_md`는 중요도순 최대 12행·4,000자까지 공통 brief에 포함되고, 5개 Event와 현재
-  extend16 catalog를 합친 compact Step2 packet이 기본 327,680-byte guard 안인지 자동화로 확인한다.
+  `extend17-v10` catalog를 합친 compact Step2 packet이 기본 327,680-byte guard 안인지 자동화로 확인한다.
 - Step2 slot은 exact Basecase+LUT union 안에 있어야 한다.
 - v4 Step2 compact catalog는 값·reference 없이 terminal별 값이 있는 `Life Cycle Category`를 판단 전용
   `applicability_attributes`로 보존하며, v1/v3와 반환 `slot_axes`에는 이 속성이 없어야 한다.
@@ -196,7 +196,7 @@ type/value 지표에 Proposal 실패나 semantic abstain을 억지로 포함하�
 남기고, triple-success가 아닌 Group의 종류/값/exact-slot은 `N/A`로 표시한다. exact slot 교집합이 없는 Group은
 `not comparable`로 집계한다. 선정과 평가는
 `tests/manual/model_parameter_agent/evaluate_representative_trios.py`를 사용하며 현재 release identity는
-Scenario Lever `v4.1`, Proposal Flow `v4.1.7`을 각각 기록한다.
+Scenario Lever `v4.1`, Proposal Flow `v4.1.9`을 각각 기록한다.
 중단·재개 등으로 실행 증적이 비중복 파일 여러 개라면 `--execution-evidence`를 반복한다. 도구는 release identity가
 같은지 검사하고 동일 Scenario attempt가 중복되면 덮어쓰지 않고 실패한다. 코드 수정 뒤 동일 Scenario를 재실행한
 증적은 `--post-fix-execution-evidence`와 필수 `--post-fix-reason`으로만 명시 교체하고 원 source/status/stage를
@@ -258,7 +258,7 @@ python tests/manual/model_parameter_agent/evaluate_representative_trios.py final
   --output-markdown <run-dir>/final-cohort-trio-quality-report.md
 ```
 
-v4.1.7 완료 기준은 동일 40 Group trio에서 다음과 같이 판정한다.
+현행 v4.1.9 완료 기준은 동일 40 Group trio에서 다음과 같이 판정한다.
 
 | 지표 | Gate | Target |
 | --- | ---: | ---: |
@@ -306,7 +306,7 @@ python tests/manual/model_parameter_agent/collect_existing_representative_trios.
 
 수집 기준은 다음과 같다.
 
-- Scenario Lever `v4.1`, Proposal Flow `v4.1.7`, API `v4`, strategy
+- Scenario Lever `v4.1`, Proposal Flow `v4.1.9`, API `v4`, strategy
   `multi_event_model_lever_dimensions`를 exact pin한다.
 - Group status `created|realized`, stage `completed`, `parameter_mapping_ready=true`와 Dimension/baseline/role/cell
   구조 gate를 통과해야 한다.

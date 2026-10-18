@@ -177,3 +177,78 @@ class StructuredOutputStreamTest(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class _DelayedStream:
+    """각 조각 앞에 지정한 시간만큼 기다리는 가짜 스트림."""
+
+    def __init__(self, delayed_chunks: list[tuple[float, object]]) -> None:
+        self._delayed_chunks = delayed_chunks
+
+    def __aiter__(self) -> AsyncIterator[object]:
+        return self._iterate()
+
+    async def _iterate(self) -> AsyncIterator[object]:
+        for delay, chunk in self._delayed_chunks:
+            await asyncio.sleep(delay)
+            yield chunk
+
+
+class StreamStallLimitsTest(unittest.IsolatedAsyncioTestCase):
+    async def _request(
+        self,
+        stream: _DelayedStream,
+        limits: llm_client.StreamStallLimits | None,
+    ) -> tuple[str, BaseModel, object]:
+        return await llm_client._request_structured_output_stream(
+            create=AsyncMock(return_value=stream),
+            output_schema=_StructuredOutput,
+            request_kwargs={},
+            retries_remaining=0,
+            stall_limits=limits,
+            log_label="test",
+        )
+
+    async def test_steady_chunks_are_not_cut_even_when_total_time_exceeds_the_idle_limit(self) -> None:
+        stream = _DelayedStream(
+            [(0.03, _content_chunk('{"val')), (0.03, _content_chunk('ue":')), (0.03, _content_chunk("1}"))],
+        )
+
+        _content, parsed, _usage = await self._request(
+            stream,
+            llm_client.StreamStallLimits(first_chunk_sec=0.5, idle_sec=0.05),
+        )
+
+        assert parsed.value == 1
+
+    async def test_missing_first_chunk_is_reported_as_a_stalled_stream(self) -> None:
+        stream = _DelayedStream([(0.3, _content_chunk('{"value":1}'))])
+
+        with self.assertRaisesRegex(llm_client.LLMStreamStalledError, "first chunk not received within 0.05s"):
+            await self._request(stream, llm_client.StreamStallLimits(first_chunk_sec=0.05))
+
+    async def test_gap_between_chunks_is_reported_as_a_stalled_stream(self) -> None:
+        stream = _DelayedStream([(0.0, _content_chunk('{"value":')), (0.3, _content_chunk("1}"))])
+
+        with self.assertRaisesRegex(llm_client.LLMStreamStalledError, "no chunk for 0.05s after 1 chunks"):
+            await self._request(stream, llm_client.StreamStallLimits(idle_sec=0.05))
+
+    async def test_without_limits_a_slow_stream_completes(self) -> None:
+        stream = _DelayedStream([(0.1, _content_chunk('{"value":')), (0.1, _content_chunk("2}"))])
+
+        _content, parsed, _usage = await self._request(stream, None)
+
+        assert parsed.value == 2
+
+
+
+def test_stream_timing_reports_first_content_separately_from_first_chunk() -> None:
+    timing = llm_client._StreamTiming(started_at=0.0)
+    with patch.object(llm_client.time, "monotonic", side_effect=[1.0, 3.0, 10.0]):
+        timing.record_chunk(has_content=False)
+        timing.record_chunk(has_content=True)
+        summary = timing.summary()
+
+    assert summary == (
+        "first_chunk_sec=1.0 | first_content_sec=3.0 | max_gap_sec=2.0 | chunks=2 | total_sec=10.0"
+    )
