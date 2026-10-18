@@ -1,8 +1,8 @@
-"""확정된 이벤트를 tmm_mi_mievent_m 에 저장하는 서비스."""
+"""tmm_mi_mievent_m 에 확정 이벤트를 저장하고, 기존 이벤트를 근거용으로 조회하는 서비스."""
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 from apps.agents.event_generate_agent.constants import (
@@ -103,3 +103,28 @@ class EventGenerationService:
 
         logger.info(f"[SERVICE][EventGenerationService] EVENT_TYPE_CATALOG_LOADED | count={len(catalog)}")
         return catalog
+
+    def search_events(
+        self,
+        keyword: str,
+        *,
+        limit: int,
+        date_from: date | None = None,
+        date_to: date | None = None,
+    ) -> list[dict[str, Any]]:
+        """tmm_mi_mievent_m 에서 키워드(제목·검색 요약 LIKE)로 기존 이벤트를 최신 발생순으로 조회한다.
+
+        date_to 는 그날을 포함하도록 하루 뒤를 exclusive 경계로 넘긴다. 읽기 전용이라 commit 하지 않는다.
+        """
+        from apps.common.configs.database.sync_database.connection import get_sync_session
+
+        session = get_sync_session()
+        try:
+            return EventRepository(session=session).search_event_analyses(
+                keyword=keyword,
+                date_from=date_from,
+                date_to=date_to + timedelta(days=1) if date_to is not None else None,
+                limit=limit,
+            )
+        finally:
+            session.close()

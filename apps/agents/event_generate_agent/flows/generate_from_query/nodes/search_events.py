@@ -2,7 +2,7 @@
 
 classify_route 가 사용자 문장에서 기존 이벤트에 대한 특정 언급을 읽어내면
 (`SearchRoute.EXISTING_EVENT`) 이 노드로 들어온다. 실제 조회는
-tools/event_search.py 가 MI MCP 서버(mi_events_list → mi_event_detail)로 수행하고,
+tools/event_search.py 가 tmm_mi_mievent_m 직접 조회로 수행하고,
 이 노드는 토픽별 키워드 결정, 실패 처리, 공통 근거(EvidenceItem) 변환만 맡는다.
 
 여러 이벤트를 병합하는 요청은 대상 이벤트마다 토픽이 하나씩 오므로(plan.topics),
@@ -46,7 +46,7 @@ def _tag_topic(hits: list[ExistingEventHit], topic_key: str) -> list[ExistingEve
 async def search_existing_events(state: GenerateFromQueryState) -> dict[str, Any]:
     """토픽별 키워드/기간으로 기존 이벤트를 조회해 state.evidences 에 근거(T1-E1 …)로 덧붙인다.
 
-    MCP 서버는 외부 의존이므로 실패해도 flow 를 중단하지 않고 branch_errors 에 남긴다.
+    DB 조회는 외부 의존이므로 실패해도 flow 를 중단하지 않고 branch_errors 에 남긴다.
     토픽 일부만 실패하면 성공한 토픽의 결과는 그대로 쓴다.
     폴백 패스(pending_fallback)에서는 재검색 대상 토픽만 조회해 기존 결과 뒤에 덧붙인다.
     """

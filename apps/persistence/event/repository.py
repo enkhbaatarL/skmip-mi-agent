@@ -85,6 +85,54 @@ class EventRepository(BaseSyncSQLRepository):
         events = self.session.execute(stmt.offset(offset).limit(limit)).scalars().unique().all()
         return [self._event_to_backoffice_dict(event) for event in events]
 
+    def search_event_analyses(
+        self,
+        *,
+        keyword: str,
+        date_from: date | None = None,
+        date_to: date | None = None,
+        limit: int = 5,
+    ) -> list[dict[str, Any]]:
+        """키워드로 이벤트를 찾아 제목·detail_analysis 와 L2 유형만 가볍게 돌려준다.
+
+        이벤트 생성 Agent 가 기존 이벤트를 근거로 쓰기 위한 조회라 필요한 컬럼만 고른다.
+        event_type_l2_id 는 nullable 이므로 L2 는 outer join 한다. date_to 는 미포함(exclusive) 경계다.
+        """
+        stmt = (
+            select(
+                MiEventModel.mi_event_id,
+                MiEventModel.one_line_summary,
+                MiEventModel.detail_analysis,
+                MiEventModel.occurred_at,
+                MiEventModel.event_type_l2_id,
+                MiEventTypeL2Model.level_2_label,
+            )
+            .outerjoin(MiEventTypeL2Model, MiEventModel.event_type_l2_id == MiEventTypeL2Model.event_type_l2_id)
+            .where(MiEventModel.del_yn == "N")
+        )
+        stmt = self._apply_filters(
+            stmt,
+            keyword=keyword,
+            status=None,
+            event_type_l1_id=None,
+            event_type_l2_id=None,
+            recommended_only=False,
+            date_from=date_from,
+            date_to=date_to,
+        )
+        stmt = stmt.order_by(MiEventModel.occurred_at.desc(), MiEventModel.mi_event_id.desc()).limit(limit)
+        return [
+            {
+                "mi_event_id": int(row.mi_event_id),
+                "one_line_summary": row.one_line_summary or "",
+                "detail_analysis": row.detail_analysis or "",
+                "occurred_at": row.occurred_at.isoformat() if row.occurred_at else "",
+                "event_type_l2_id": _optional_int(row.event_type_l2_id),
+                "event_type_l2_name": row.level_2_label or "",
+            }
+            for row in self.session.execute(stmt).all()
+        ]
+
     def count_events(
         self,
         *,
