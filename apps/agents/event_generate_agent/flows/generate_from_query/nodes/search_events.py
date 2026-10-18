@@ -2,7 +2,7 @@
 
 classify_route 가 사용자 문장에서 기존 이벤트에 대한 특정 언급을 읽어내면
 (`SearchRoute.EXISTING_EVENT`) 이 노드로 들어온다. 실제 조회는
-tools/event_search.py 가 MI MCP 서버(mi_events_list → mi_event_detail)로 수행하고,
+tools/event_search.py 가 tmm_mi_mievent_m 직접 조회로 수행하고,
 이 노드는 토픽별 키워드 결정, 실패 처리, 공통 근거(EvidenceItem) 변환만 맡는다.
 
 여러 이벤트를 병합하는 요청은 대상 이벤트마다 토픽이 하나씩 오므로(plan.topics),
@@ -46,7 +46,7 @@ def _tag_topic(hits: list[ExistingEventHit], topic_key: str) -> list[ExistingEve
 async def search_existing_events(state: GenerateFromQueryState) -> dict[str, Any]:
     """토픽별 키워드/기간으로 기존 이벤트를 조회해 state.evidences 에 근거(T1-E1 …)로 덧붙인다.
 
-    MCP 서버는 외부 의존이므로 실패해도 flow 를 중단하지 않고 branch_errors 에 남긴다.
+    DB 조회는 외부 의존이므로 실패해도 flow 를 중단하지 않고 branch_errors 에 남긴다.
     토픽 일부만 실패하면 성공한 토픽의 결과는 그대로 쓴다.
     폴백 패스(pending_fallback)에서는 재검색 대상 토픽만 조회해 기존 결과 뒤에 덧붙인다.
     """
@@ -56,13 +56,19 @@ async def search_existing_events(state: GenerateFromQueryState) -> dict[str, Any
         logger.warning("[NODE][search_existing_events] NO_KEYWORD")
         return {"branch_errors": [_branch_error("검색할 이벤트 키워드가 없습니다.")]}
 
+    # plan_search 는 기간 지정이 없으면 date_from 을 비우고 date_to 만 오늘로 채운다.
+    # 기존 이벤트 참조는 오래된 이벤트도 찾아야 하므로, 지정이 없으면 기간 필터를 아예 걸지 않는다.
+    has_period = bool(plan and plan.date_from)
+    date_from = plan.date_from if has_period else ""
+    date_to = plan.date_to if has_period else ""
+
     results = await asyncio.gather(
         *(
             search_events_by_keyword(
                 topic.event_keyword.strip(),
                 limit=MAX_EXISTING_EVENTS,
-                date_from=plan.date_from if plan else "",
-                date_to=plan.date_to if plan else "",
+                date_from=date_from,
+                date_to=date_to,
             )
             for topic in topics
         ),

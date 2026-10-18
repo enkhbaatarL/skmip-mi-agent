@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -82,3 +83,59 @@ def test_event_generation_service_uses_text_user_id_for_actor_columns() -> None:
     assert result.mi_event_id == 101
     session.commit.assert_called_once_with()
     session.close.assert_called_once_with()
+
+
+@pytest.mark.parametrize(
+    ("search_text", "expected"),
+    [
+        (
+            "독일·영국 둔켈플라우테(Dunkelflaute)와 한파 동시 발생 가정.",
+            "독일·영국 둔켈플라우테(Dunkelflaute)와 한파 동시 발생 가정.",
+        ),
+        ("", "LNG 시장 이벤트"),
+    ],
+)
+def test_event_generation_service_stores_search_text_with_summary_fallback(search_text: str, expected: str) -> None:
+    session = Mock()
+    repository = Mock()
+    repository.insert_event.return_value = 102
+    event = GeneratedEventOut(one_line_summary="LNG 시장 이벤트", event_type_l2_id=10)
+
+    with (
+        patch(
+            "apps.common.configs.database.sync_database.connection.get_sync_session",
+            return_value=session,
+        ),
+        patch(
+            "apps.agents.event_generate_agent.persistence.event_generation_service.EventRepository",
+            return_value=repository,
+        ),
+    ):
+        EventGenerationService().create_event(event, search_text=search_text)
+
+    payload = repository.insert_event.call_args.args[0]
+    assert payload["one_line_summary"] == "LNG 시장 이벤트"
+    # search_text 는 NOT NULL 이라 LLM 이 비워 두면 한 줄 요약으로 대신한다.
+    assert payload["search_text"] == expected
+
+
+def test_search_text_is_persisted_but_not_exposed_in_api_response() -> None:
+    from apps.agents.event_generate_agent.flows.generate_from_query.api_schema import GeneratedFromQueryEventOut
+    from apps.agents.event_generate_agent.flows.generate_from_query.nodes import persist
+    from apps.agents.event_generate_agent.schemas.api.event import ConfirmedEventOut
+    from apps.agents.event_generate_agent.schemas.domain import EventDraft, EventTypeAssignment, EventValidation
+
+    assert "search_text" not in GeneratedFromQueryEventOut.model_fields
+
+    state = GenerateFromQueryState(
+        draft=EventDraft(one_line_summary="[독일·영국 저풍 한파] 동시 충격 가정", search_text="검색용 요약"),
+        validation=EventValidation(),
+        type_assignment=EventTypeAssignment(event_type_l2_id=9),
+    )
+    service = Mock()
+    service.create_event.return_value = ConfirmedEventOut(mi_event_id=51, event_type_l2_id=9)
+    with patch.object(persist, "EventGenerationService", return_value=service):
+        update = asyncio.run(persist.persist_events(state))
+
+    assert update["saved_event_id"] == 51
+    assert service.create_event.call_args.kwargs["search_text"] == "검색용 요약"
