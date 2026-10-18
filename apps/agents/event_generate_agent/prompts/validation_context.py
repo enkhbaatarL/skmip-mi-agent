@@ -63,7 +63,5 @@ def format_claims(claims: list[EventClaim]) -> str:
             parts.append(f"사실={', '.join(claim.fact_ids)}")
         if claim.evidence:
             parts.append(f"근거={', '.join(f'{link.evidence_key}:{link.relation.value}' for link in claim.evidence)}")
-        if claim.shock_cluster:
-            parts.append(f"충격묶음={claim.shock_cluster}")
         lines.append(" | ".join(parts))
     return "\n".join(lines)

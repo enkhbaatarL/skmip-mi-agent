@@ -4,7 +4,7 @@ from datetime import date
 import json
 from typing import Any
 
-from sqlalchemy import Select, or_, select
+from sqlalchemy import Select, case, literal, literal_column, or_, select
 from sqlalchemy.orm import joinedload
 
 from apps.common.configs.database.sync_database.base import BaseSyncSQLRepository
@@ -92,12 +92,25 @@ class EventRepository(BaseSyncSQLRepository):
         date_from: date | None = None,
         date_to: date | None = None,
         limit: int = 5,
+        include_detail: bool = False,
     ) -> list[dict[str, Any]]:
         """키워드로 이벤트를 찾아 제목·detail_analysis 와 L2 유형만 가볍게 돌려준다.
 
         이벤트 생성 Agent 가 기존 이벤트를 근거로 쓰기 위한 조회라 필요한 컬럼만 고른다.
+        키워드는 공백 단위로 쪼개 제목(one_line_summary)에서 LIKE 로 찾고, include_detail 이면
+        상세 분석(detail_analysis)까지 넓힌다. 단어가 하나라도 맞으면 후보로 올리고, 흔한 단어 하나만 맞은
+        이벤트가 앞을 차지하지 않도록 맞은 단어 수(match_score)가 많은 순으로 먼저 정렬한다.
+        백오피스 목록과 검색 범위가 달라 공용 `_apply_filters` 대신 여기서 키워드 조건을 건다.
         event_type_l2_id 는 nullable 이므로 L2 는 outer join 한다. date_to 는 미포함(exclusive) 경계다.
         """
+        tokens = list(dict.fromkeys(keyword.split()))
+        if not tokens:
+            return []
+        columns = [MiEventModel.one_line_summary]
+        if include_detail:
+            columns.append(MiEventModel.detail_analysis)
+        token_matches = [or_(*(column.like(f"%{token}%") for column in columns)) for token in tokens]
+        match_score = sum((case((match, 1), else_=0) for match in token_matches), start=literal(0))
         stmt = (
             select(
                 MiEventModel.mi_event_id,
@@ -106,13 +119,14 @@ class EventRepository(BaseSyncSQLRepository):
                 MiEventModel.occurred_at,
                 MiEventModel.event_type_l2_id,
                 MiEventTypeL2Model.level_2_label,
+                match_score.label("match_score"),
             )
             .outerjoin(MiEventTypeL2Model, MiEventModel.event_type_l2_id == MiEventTypeL2Model.event_type_l2_id)
-            .where(MiEventModel.del_yn == "N")
+            .where(MiEventModel.del_yn == "N", or_(*token_matches))
         )
         stmt = self._apply_filters(
             stmt,
-            keyword=keyword,
+            keyword=None,
             status=None,
             event_type_l1_id=None,
             event_type_l2_id=None,
@@ -120,7 +134,11 @@ class EventRepository(BaseSyncSQLRepository):
             date_from=date_from,
             date_to=date_to,
         )
-        stmt = stmt.order_by(MiEventModel.occurred_at.desc(), MiEventModel.mi_event_id.desc()).limit(limit)
+        stmt = stmt.order_by(
+            literal_column("match_score").desc(),
+            MiEventModel.occurred_at.desc(),
+            MiEventModel.mi_event_id.desc(),
+        ).limit(limit)
         return [
             {
                 "mi_event_id": int(row.mi_event_id),
@@ -129,6 +147,7 @@ class EventRepository(BaseSyncSQLRepository):
                 "occurred_at": row.occurred_at.isoformat() if row.occurred_at else "",
                 "event_type_l2_id": _optional_int(row.event_type_l2_id),
                 "event_type_l2_name": row.level_2_label or "",
+                "match_score": int(row.match_score),
             }
             for row in self.session.execute(stmt).all()
         ]

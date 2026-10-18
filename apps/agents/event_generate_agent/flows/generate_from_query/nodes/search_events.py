@@ -56,13 +56,19 @@ async def search_existing_events(state: GenerateFromQueryState) -> dict[str, Any
         logger.warning("[NODE][search_existing_events] NO_KEYWORD")
         return {"branch_errors": [_branch_error("검색할 이벤트 키워드가 없습니다.")]}
 
+    # plan_search 는 기간 지정이 없으면 date_from 을 비우고 date_to 만 오늘로 채운다.
+    # 기존 이벤트 참조는 오래된 이벤트도 찾아야 하므로, 지정이 없으면 기간 필터를 아예 걸지 않는다.
+    has_period = bool(plan and plan.date_from)
+    date_from = plan.date_from if has_period else ""
+    date_to = plan.date_to if has_period else ""
+
     results = await asyncio.gather(
         *(
             search_events_by_keyword(
                 topic.event_keyword.strip(),
                 limit=MAX_EXISTING_EVENTS,
-                date_from=plan.date_from if plan else "",
-                date_to=plan.date_to if plan else "",
+                date_from=date_from,
+                date_to=date_to,
             )
             for topic in topics
         ),

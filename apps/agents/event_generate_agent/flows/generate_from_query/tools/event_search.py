@@ -1,6 +1,6 @@
 """기존 MI 이벤트 검색 툴.
 
-tmm_mi_mievent_m 을 직접 조회해 키워드(제목·검색 요약 LIKE)/기간(occurred_at)으로 이벤트를 찾는다.
+tmm_mi_mievent_m 을 직접 조회해 키워드(제목·상세 분석 단어별 LIKE)/기간(occurred_at)으로 이벤트를 찾는다.
 근거 본문은 `detail_analysis` 컬럼만 쓴다.
 
 DB 접근은 동기 세션이라 이벤트 루프를 막지 않도록 `asyncio.to_thread` 로 감싼다
@@ -44,7 +44,7 @@ async def search_events_by_keyword(
     """키워드로 기존 이벤트를 찾아 detail_analysis 를 담은 ExistingEventHit 목록을 만든다.
 
     Args:
-        keyword: 이벤트 제목/검색 요약 검색 키워드.
+        keyword: 이벤트 제목/상세 분석 검색 키워드. 공백 단위로 쪼개 하나라도 맞으면 후보가 된다.
         limit: 조회·반환할 이벤트 상한.
         date_from: 조회 시작일(YYYY-MM-DD, occurred_at 기준). 빈 문자열이면 하한을 걸지 않는다.
         date_to: 조회 종료일(YYYY-MM-DD, 당일 포함).
