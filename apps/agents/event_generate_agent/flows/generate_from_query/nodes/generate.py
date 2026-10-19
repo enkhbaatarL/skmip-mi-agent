@@ -277,7 +277,7 @@ async def draft_events(
             temperature=0.0,
             trace_context=runtime.context if runtime is not None else None,
             stream=cfg.llm_stream_enabled,
-            reasoning_effort=cfg.llm_event_draft_reasoning_effort,
+            reasoning_effort=cfg.llm_reasoning_effort,
         )
     except Exception as exc:
         # 외부 의존(LLM) 실패로 수집한 근거까지 잃지 않도록 경고로만 남긴다.

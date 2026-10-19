@@ -230,27 +230,6 @@ class Settings(BaseSettings):
         "high",
         "xhigh",
     ] = "low"
-    # Event Generate 초안 생성(QUALITY). default 면 모델 기본 effort 로 추론해 첫 출력까지 30초 가까이 걸린다.
-    # 검증·재작성 루프가 근거 정합성을 다시 확인하므로 기본은 낮게 두고, 품질이 부족하면 환경변수로 올린다.
-    llm_event_draft_reasoning_effort: Literal[
-        "default",
-        "none",
-        "minimal",
-        "low",
-        "medium",
-        "high",
-        "xhigh",
-    ] = "medium"
-    # Event Generate claim 검증(QUALITY). 근거 대조·규칙 판정 위주라 초안과 같은 낮은 effort 를 기본으로 둔다.
-    llm_event_validate_reasoning_effort: Literal[
-        "default",
-        "none",
-        "minimal",
-        "low",
-        "medium",
-        "high",
-        "xhigh",
-    ] = "medium"
     # v4 생성 단계별 LLM 호출 총 시간 상한(초). None이면 전체 호출 타임아웃(llm_timeout_sec)만 적용한다.
     # 총 시간 상한은 느리지만 진행 중인 호출도 끊으므로 기본은 기존 동작(Event 분석만 180초)과 같게 둔다.
     llm_v4_event_analysis_timeout_sec: float | None = Field(default=180.0, gt=0)
