@@ -1,0 +1,254 @@
+{
+  "schema_version": 9,
+  "release_id": "new-bc-v9",
+  "extends": "model-parameter-workbook-contract-v8.json",
+  "parameters": {
+    "Suez Canal Cost": {
+      "proposal_policy": {
+        "mode": "conditional",
+        "may_abstain": true,
+        "evidence_required": [
+          "Suez",
+          "TollChange",
+          "Year"
+        ]
+      },
+      "reference_source": {
+        "workbook_role": "trade",
+        "sheet": "ShippingCostInput",
+        "range": "A:C",
+        "parser": "exact_rows",
+        "header_row": 38,
+        "data_start_row": 39,
+        "data_end_row": 46,
+        "included_rows": [
+          39,
+          40,
+          41,
+          42,
+          43,
+          44,
+          45,
+          46
+        ],
+        "columns": {
+          "Canal/Year Key": "A",
+          "Year": "B",
+          "RE Base Case ($/crossing)": "C"
+        },
+        "column_headers": {
+          "Canal/Year Key": "Helper"
+        },
+        "required_cells": {
+          "C3": "Absolute"
+        },
+        "axis_transforms": {
+          "Canal": {
+            "source_field": "Canal/Year Key",
+            "operation": "strip_leading_year",
+            "allowed_values": [
+              "Suez"
+            ]
+          }
+        },
+        "key_axes": [
+          "Canal",
+          "Year"
+        ],
+        "metadata_axes": [],
+        "value_field": "RE Base Case ($/crossing)",
+        "reference_unit": "$/crossing",
+        "value_semantics": "absolute_final_suez_canal_cost",
+        "expected_record_count": 5
+      },
+      "write_target": {
+        "workbook_role": "trade",
+        "sheet": "ShippingCostInput",
+        "table": "table4",
+        "layout": "fixed_columns",
+        "header_row": 38,
+        "data_start_row": 39,
+        "data_end_row": 46,
+        "included_rows": [
+          39,
+          40,
+          41,
+          42,
+          43,
+          44,
+          45,
+          46
+        ],
+        "columns": {
+          "Canal/Year Key": "A",
+          "Year": "B",
+          "User Input Absolute Value ($/crossing)": "F"
+        },
+        "column_headers": {
+          "Canal/Year Key": "Helper"
+        },
+        "required_cells": {
+          "C3": "Absolute"
+        },
+        "axis_transforms": {
+          "Canal": {
+            "source_field": "Canal/Year Key",
+            "operation": "strip_leading_year",
+            "allowed_values": [
+              "Suez"
+            ]
+          }
+        },
+        "key_axes": [
+          "Canal",
+          "Year"
+        ],
+        "metadata_axes": [],
+        "value_field": "User Input Absolute Value ($/crossing)",
+        "write_unit": "$/crossing",
+        "value_semantics": "absolute_final_suez_canal_cost",
+        "observed_record_count": 5,
+        "row_policy": "existing_exact",
+        "metadata_authority": "write_target"
+      },
+      "constraints": {
+        "minimum": 0.0,
+        "maximum": null,
+        "atomic_group_axes": [],
+        "vector_axis": null,
+        "vector_members": [],
+        "sum": null,
+        "sum_tolerance": null,
+        "require_complete_vector": false,
+        "direct_evidence_required": true
+      }
+    },
+    "Panama Canal Cost": {
+      "proposal_policy": {
+        "mode": "conditional",
+        "may_abstain": true,
+        "evidence_required": [
+          "Panama",
+          "TollChange",
+          "Year"
+        ]
+      },
+      "reference_source": {
+        "workbook_role": "trade",
+        "sheet": "ShippingCostInput",
+        "range": "A:C",
+        "parser": "exact_rows",
+        "header_row": 49,
+        "data_start_row": 50,
+        "data_end_row": 57,
+        "included_rows": [
+          50,
+          51,
+          52,
+          53,
+          54,
+          55,
+          56,
+          57
+        ],
+        "columns": {
+          "Canal/Year Key": "A",
+          "Year": "B",
+          "RE Base Case ($/crossing)": "C"
+        },
+        "column_headers": {
+          "Canal/Year Key": "Helper",
+          "RE Base Case ($/crossing)": "RE Base Case ($/Crossing"
+        },
+        "required_cells": {
+          "C3": "Absolute",
+          "A49": "Helper",
+          "B49": "Year",
+          "C49": "RE Base Case ($/Crossing"
+        },
+        "axis_transforms": {
+          "Canal": {
+            "source_field": "Canal/Year Key",
+            "operation": "strip_leading_year",
+            "allowed_values": [
+              "Panama"
+            ]
+          }
+        },
+        "key_axes": [
+          "Canal",
+          "Year"
+        ],
+        "metadata_axes": [],
+        "value_field": "RE Base Case ($/crossing)",
+        "reference_unit": "$/crossing",
+        "value_semantics": "absolute_final_panama_canal_cost",
+        "expected_record_count": 5
+      },
+      "write_target": {
+        "workbook_role": "trade",
+        "sheet": "ShippingCostInput",
+        "table": "table5",
+        "layout": "fixed_columns",
+        "header_row": 49,
+        "data_start_row": 50,
+        "data_end_row": 57,
+        "included_rows": [
+          50,
+          51,
+          52,
+          53,
+          54,
+          55,
+          56,
+          57
+        ],
+        "columns": {
+          "Canal/Year Key": "A",
+          "Year": "B",
+          "User Input Absolute Value ($/crossing)": "F"
+        },
+        "column_headers": {
+          "Canal/Year Key": "Helper"
+        },
+        "required_cells": {
+          "C3": "Absolute",
+          "A49": "Helper",
+          "B49": "Year",
+          "F49": "User Input Absolute Value ($/crossing)"
+        },
+        "axis_transforms": {
+          "Canal": {
+            "source_field": "Canal/Year Key",
+            "operation": "strip_leading_year",
+            "allowed_values": [
+              "Panama"
+            ]
+          }
+        },
+        "key_axes": [
+          "Canal",
+          "Year"
+        ],
+        "metadata_axes": [],
+        "value_field": "User Input Absolute Value ($/crossing)",
+        "write_unit": "$/crossing",
+        "value_semantics": "absolute_final_panama_canal_cost",
+        "observed_record_count": 5,
+        "row_policy": "existing_exact",
+        "metadata_authority": "write_target"
+      },
+      "constraints": {
+        "minimum": 0.0,
+        "maximum": null,
+        "atomic_group_axes": [],
+        "vector_axis": null,
+        "vector_members": [],
+        "sum": null,
+        "sum_tolerance": null,
+        "require_complete_vector": false,
+        "direct_evidence_required": true
+      }
+    }
+  }
+}

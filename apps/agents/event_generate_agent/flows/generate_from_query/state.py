@@ -33,7 +33,7 @@ class GenerateFromQueryState(BaseModel):
     date_from: str = ""
     date_to: str = ""
     language: str = DEFAULT_LANGUAGE
-    user_id: int | None = None
+    user_id: str | None = None
 
     # --- classify_route / plan_search ---
     # route: classify_route 가 고른 1차 검색 분기(폴백해도 바뀌지 않는다. 폴백 분기는 fallback_route)

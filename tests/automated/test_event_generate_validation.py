@@ -52,6 +52,7 @@ from apps.agents.event_generate_agent.flows.generate_from_query.tools.temporal i
 )
 from apps.agents.event_generate_agent.prompts import (
     claim_verification as verify_prompt,
+    event_draft as draft_prompt,
     topic_brief as brief_prompt,
 )
 from apps.agents.event_generate_agent.schemas.api.event import GeneratedEventOut
@@ -64,8 +65,10 @@ from apps.agents.event_generate_agent.schemas.domain import (
     FeasibilityStatus,
     InferencePlausibility,
     IssueSeverity,
-    ScenarioSeverity,
+    ReasoningFix,
+    ReasoningIssue,
     SupportStatus,
+    ValidationIssue,
 )
 from apps.connectors.llm.llm_client import LLMStructuredResult
 
@@ -81,8 +84,8 @@ def _claim(claim_id: str, claim_type: ClaimType, **kwargs: Any) -> EventClaim:  
     return EventClaim(claim_id=claim_id, text=kwargs.pop("text", claim_id), claim_type=claim_type, **kwargs)
 
 
-def _draft(claims: list[EventClaim], severity: ScenarioSeverity | None = ScenarioSeverity.BASE) -> EventDraft:
-    return EventDraft(one_line_summary="테스트 이벤트", claims=claims, scenario_severity=severity)
+def _draft(claims: list[EventClaim]) -> EventDraft:
+    return EventDraft(one_line_summary="테스트 이벤트", claims=claims)
 
 
 def _codes(validation: EventValidation, severity: IssueSeverity) -> list[str]:
@@ -173,7 +176,7 @@ class TemporalTests(unittest.TestCase):
 
 def _apply(claims: list[EventClaim], verdicts: list[EventClaim], **kwargs: Any) -> EventValidation:  # noqa: ANN401
     return apply_claim_rules(
-        _draft(claims, kwargs.pop("severity", ScenarioSeverity.BASE)),
+        _draft(claims),
         verdicts={verdict.claim_id: verdict for verdict in verdicts},
         untracked=kwargs.pop("untracked", []),
         quantitative_issues=kwargs.pop("quantitative_issues", []),
@@ -205,13 +208,10 @@ class ClaimRuleTests(unittest.TestCase):
         validation = _apply(
             [claim],
             [claim.model_copy(update={"support": SupportStatus.CONTRADICTED, "hard_conflict": True})],
-            severity=ScenarioSeverity.TAIL_RISK,
         )
         self.assertEqual(_codes(validation, IssueSeverity.ERROR), ["USER_ASSUMPTION_CONFLICT"])
         self.assertFalse(validation.issues[0].fixable)
         self.assertTrue(validation.blocked)
-        # 발생 강도(TAIL_RISK)와 성립성(근거 충돌)은 별개 축으로 남는다.
-        self.assertIs(validation.scenario_severity, ScenarioSeverity.TAIL_RISK)
         self.assertIs(validation.feasibility_status, FeasibilityStatus.CONFLICTS_WITH_EVIDENCE)
 
     def test_user_assumption_off_schedule_only_warns(self) -> None:
@@ -280,41 +280,36 @@ class ClaimRuleTests(unittest.TestCase):
         validation = _apply(
             [price],
             [price.model_copy(update={"plausibility": InferencePlausibility.WEAK})],
-            reasoning_issues=["공급 회복(하방)과 수요 증가(상방)를 합성하지 않고 상승으로 단정함"],
+            reasoning_issues=[
+                ReasoningIssue(
+                    claim_ids=["C1"], message="공급 회복(하방)과 수요 증가(상방)를 합성하지 않고 상승으로 단정함"
+                )
+            ],
         )
         self.assertEqual(_codes(validation, IssueSeverity.ERROR), ["REASONING_GAP"])
         self.assertEqual(_codes(validation, IssueSeverity.WARNING), ["WEAK_INFERENCE"])
         self.assertTrue(all(issue.fixable for issue in validation.issues))
         self.assertTrue(validation.blocked)
 
-    def test_severity_floor_counts_independent_shock_clusters_once(self) -> None:
-        shocks = [
-            _claim("C1", ClaimType.USER_ASSUMPTION, shock_cluster="북서유럽 기상"),
-            _claim("C2", ClaimType.MODEL_INFERENCE, shock_cluster="북서유럽  기상"),  # 같은 묶음(공백 차이)
-            _claim("C3", ClaimType.MODEL_INFERENCE, shock_cluster="호르무즈 통항 차질"),
-            _claim("C4", ClaimType.MODEL_INFERENCE, shock_cluster="카타르 NFE 지연"),
-            _claim("C5", ClaimType.EVIDENCED_FACT, shock_cluster="이미 확인된 충격"),
-        ]
-        verdicts = {
-            claim.claim_id: claim.model_copy(
-                update={
-                    "support": SupportStatus.SUPPORTED
-                    if claim.claim_type is ClaimType.EVIDENCED_FACT
-                    else SupportStatus.UNSUPPORTED,
-                },
-            )
-            for claim in shocks
-        }
-        validation = apply_claim_rules(
-            _draft(shocks, ScenarioSeverity.BASE),
-            verdicts=verdicts,
-            untracked=[],
-            quantitative_issues=[],
-            unmarked_assumptions=[],
+    def test_reasoning_gap_keeps_known_claim_ids_and_fix_direction(self) -> None:
+        cause = _claim("C1", ClaimType.MODEL_INFERENCE, text="저풍·저일사 동반")
+        price = _claim("C2", ClaimType.MODEL_INFERENCE, text="TTF 상승 압력")
+        validation = _apply(
+            [cause, price],
+            [cause, price],
+            reasoning_issues=[
+                ReasoningIssue(
+                    claim_ids=["C1", " C2 ", "C9"],
+                    message="태양광 저발전 고리가 확립되지 않음",
+                    fix=ReasoningFix.REMOVE,
+                ),
+                ReasoningIssue(claim_ids=[], message="  "),
+            ],
         )
-        self.assertEqual(validation.shock_clusters, ["북서유럽 기상", "호르무즈 통항 차질", "카타르 NFE 지연"])
-        self.assertIs(validation.scenario_severity, ScenarioSeverity.SEVERE_STRESS)
-        self.assertIn("SEVERITY_RAISED", _codes(validation, IssueSeverity.WARNING))
+        [gap] = [issue for issue in validation.issues if issue.code == "REASONING_GAP"]
+        # 초안에 없는 claim ID(C9)는 버리고, 빈 메시지는 이슈로 만들지 않는다.
+        self.assertEqual(gap.claim_id, "C1, C2")
+        self.assertIn("연결 삭제", gap.message)
 
     def test_untracked_contradiction_and_failed_verification_block(self) -> None:
         untracked = _claim("U1", ClaimType.EVIDENCED_FACT, support=SupportStatus.CONTRADICTED)
@@ -563,6 +558,33 @@ class FinalizeResponseTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("VALIDATION_ISSUE", logged)
         self.assertIn("UNMARKED_ASSUMPTION", logged)
         self.assertNotIn("UNMARKED_ASSUMPTION", result.model_dump_json())
+
+
+class RevisionPromptTests(unittest.TestCase):
+    def test_revision_passes_only_fixable_errors_and_caps_claim_count(self) -> None:
+        claims = [_claim("C1", ClaimType.MODEL_INFERENCE, text="a"), _claim("C2", ClaimType.MODEL_INFERENCE, text="b")]
+        draft = EventDraft(one_line_summary="초안", claims=claims)
+        issues = [
+            ValidationIssue(
+                severity=IssueSeverity.ERROR, code="REASONING_GAP", message="연결 약함", claim_id="C1", fixable=True
+            ),
+            ValidationIssue(
+                severity=IssueSeverity.WARNING, code="UNMARKED_ASSUMPTION", message="가정 표시 없음", fixable=True
+            ),
+            ValidationIssue(
+                severity=IssueSeverity.ERROR, code="USER_ASSUMPTION_CONFLICT", message="사용자 모순", fixable=False
+            ),
+        ]
+        revision = draft_prompt.format_revision(draft, issues)
+        self.assertIn("[REASONING_GAP] claim=C1", revision)
+        self.assertNotIn("UNMARKED_ASSUMPTION", revision)
+        self.assertNotIn("USER_ASSUMPTION_CONFLICT", revision)
+        self.assertIn("2개 이하", revision)
+
+    def test_revision_is_empty_without_fixable_errors(self) -> None:
+        draft = EventDraft(one_line_summary="초안")
+        warning = ValidationIssue(severity=IssueSeverity.WARNING, code="WEAK_INFERENCE", fixable=True)
+        self.assertEqual(draft_prompt.format_revision(draft, [warning]), "")
 
 
 if __name__ == "__main__":

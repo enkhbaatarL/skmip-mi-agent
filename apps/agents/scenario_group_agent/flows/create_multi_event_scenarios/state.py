@@ -25,6 +25,7 @@ from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.schema 
     V3ScenarioSynthesisResult,
     V3TemplateDimensionSelection,
 )
+from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.v4_budget import ScenarioSynthesisPolicy
 from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.v4_schema import (
     ParameterCoverage,
     V4DimensionDesignDraft,
@@ -104,6 +105,9 @@ class V4MultiEventGenerationState(BaseModel):
     impact_parameter_axes: dict[str, str] = Field(default_factory=dict)
     user_id: int | None = None
     analysis_as_of: str = ""
+    # 생성 시점에 고정한 Scenario 합성 정책과 (목표 최소, 최대) 개수
+    scenario_synthesis_policy: ScenarioSynthesisPolicy = "band_unique"
+    scenario_count_range: tuple[int, int] = (3, 5)
 
     analysis_attempt: int = 0
     analysis_draft: V4EventImpactAnalysisDraft | V4EventImpactAnalysisResult | None = None
@@ -130,6 +134,10 @@ class V4MultiEventGenerationState(BaseModel):
     scenario_retryable: bool = False
 
     finalized_result: V4GenerationResult | None = None
+    # 목표 최소 개수 미달로 합성을 한 번 더 시도했는지와, 재시도 전 결과(재시도가 더 나쁘면 이 결과를 쓴다)
+    scenario_shortfall_retried: bool = False
+    scenario_shortfall_fallback: V4GenerationResult | None = None
+    scenario_shortfall_fallback_coverage: ParameterCoverage | None = None
     parameter_coverage: ParameterCoverage | None = None
     generation_diagnostics: GenerationDiagnostics | None = None
     saved_group: ScenarioGroupPayload | None = None

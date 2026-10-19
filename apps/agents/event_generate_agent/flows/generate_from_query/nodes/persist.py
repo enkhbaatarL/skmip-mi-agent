@@ -55,7 +55,13 @@ async def persist_events(state: GenerateFromQueryState) -> dict[str, Any]:
         return {"saved_event_id": None, "warnings": warnings}
 
     try:
-        confirmed = await asyncio.to_thread(EventGenerationService().create_event, target, user_id=state.user_id)
+        # search_text 는 DB 저장 전용이라 응답 shape(GeneratedEventOut)에 넣지 않고 따로 넘긴다.
+        confirmed = await asyncio.to_thread(
+            EventGenerationService().create_event,
+            target,
+            search_text=state.draft.search_text if state.draft else "",
+            user_id=state.user_id,
+        )
     except Exception as exc:
         # 저장 실패로 LLM 생성 결과까지 잃지 않도록, 경고로 노출하고 초안은 그대로 반환한다.
         logger.error(f"[NODE][persist_events] FAILED | error={exc!r}")

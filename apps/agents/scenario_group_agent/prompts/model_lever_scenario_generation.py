@@ -4,6 +4,7 @@ import re
 from typing import Any
 
 from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.v4_budget import (
+    ScenarioSynthesisPolicy,
     event_open_question_budgets,
     interaction_count_target,
     interaction_question_budget,
@@ -103,6 +104,26 @@ probability는 0~100 정수 백분율로 작성하고 모든 Scenario probabilit
 생성 목록에는 probability가 5 이상인 Scenario만 포함하십시오.
 5 미만인 후보는 excluded에 reasonCode=LOW_PROBABILITY로 기록하십시오.
 생성 Scenario는 3~5개이며, 최고 확률 Scenario인 Base 대비 상방·하방 조합을 모두 포함해야 합니다.
+개수나 방향 조건을 맞추기 위해 근거 없이 probability를 높이지 마십시오.
+"""
+)
+
+V4_SCENARIO_DISTINCT_DRIVER_SYSTEM_PROMPT = (
+    MODEL_LEVER_SYSTEM_PROMPT
+    + """
+
+현재 단계에서는 공통 영향, Interaction, Dimension 질문과 선택지를 변경하지 말고 출력 규칙에 적힌 개수
+범위로 대표 Scenario를 합성하십시오. 각 Scenario는 모든 질문에 정확히 하나씩 답하고, 서로 구분되는 핵심
+전제 조합과 결과 전달 경로를 가져야 합니다. narrative는 주요 조건과 최종 JKM 전달 경로를 두 문장으로
+설명하십시오.
+루트 그룹 description은 원본 이벤트와 검증된 분석을 대표하는 한국어 메타데이터로 작성하십시오.
+그룹 제목은 다음 단계에서 Scenario를 바탕으로 따로 작성하므로 출력하지 마십시오.
+영문 Event·Scenario를 사용하지 말고 description에는 `입력 사실`을 사용하지 마십시오.
+probability는 0~100 정수 백분율로 작성하고 모든 Scenario probability의 합계를 정확히 100으로 맞추십시오.
+생성 목록에는 probability가 5 이상인 Scenario만 포함하십시오.
+5 미만인 후보는 excluded에 reasonCode=LOW_PROBABILITY로 기록하십시오.
+최고 확률 Scenario가 Base이며, 생성 Scenario는 Base 대비 상방·하방 조합을 모두 포함해야 합니다.
+pressure는 실제 JKM 방향이 아니라 Base 대비 상대 위치이며, 같은 pressure의 Scenario를 여러 개 만들 수 있습니다.
 개수나 방향 조건을 맞추기 위해 근거 없이 probability를 높이지 마십시오.
 """
 )
@@ -645,6 +666,19 @@ _NUMERIC_DIMENSION_LABEL_RULE = (
     "  수치에 맞춰 `수준`으로 씁니다. 비교 기준값(예: 2026년 312 TWh)은 question에 남깁니다.\n"
 )
 
+# Group 259: `제한 구역 집행 지속`, `보험 강화·정시 통항`처럼 주체·관계가 빠진 압축 label이 즉시 이해되지 않았다.
+_READABLE_LABEL_RULE = (
+    "- Dimension label은 판단 대상(누가·무엇이)과 판단 축(규모·기간·시점·범위)을 함께 담습니다\n"
+    "  (예: `호르무즈 LNG선 운항 차질 규모`, `이란 통항 통제가 이어지는 기간`). Choice label은 그 축의 값으로\n"
+    "  읽혀야 하며, 기간·시점 Dimension이면 Choice도 기간·시점으로 구분합니다.\n"
+    "- Choice label은 대체로 15~30자의 서술형 구절로, 행위 주체나 대상과 그 상태 변화를 함께 씁니다.\n"
+    "  question을 보지 않고 표의 셀만 읽어도 무슨 일이 일어났는지 이해되어야 합니다.\n"
+    "- 두 상태를 `·`로 나열하지 않습니다. 두 상태의 관계가 핵심이면 `~지만`, `~로`, `~해도`처럼 연결어미로\n"
+    "  관계를 씁니다. `집행 지속`, `구축 완화`, `회복 가시`처럼 동작 명사를 이어 붙인 압축 표현도 쓰지 않습니다.\n"
+    "- 예: `제한 구역 집행 지속` → `이란이 제한 구역 통항 통제를 실제 집행`, `보험 강화·정시 통항` →\n"
+    "  `보험 부담은 커지나 LNG선은 정시 통항`, `폐쇄 예고가 통항 상쇄` → `이란 폐쇄 예고로 통항 증가세가 꺾임`\n"
+)
+
 
 def build_v4_dimension_design_user_prompt(
     *,
@@ -707,6 +741,7 @@ def build_v4_dimension_design_user_prompt(
         "- 각 Dimension에는 같은 판단 축·단위를 사용하는 선택지 2~4개를 만듭니다.\n"
         "- Choice label은 비교 가능한 하나의 시장·운영 상태를 30자 이내로 작성합니다.\n"
         "  낮음·중간·높음, 단기·중기·장기, 거의 없음·일부 감소·큰 감소처럼 강도만 쓰지 않습니다.\n"
+        f"{_READABLE_LABEL_RULE}"
         "- 한 Dimension 안의 Choice끼리 pressure가 겹치지 않게 합니다. Choice 2개는 `bearish / bullish`, 3개는\n"
         "  `bearish / balanced / bullish`로 만들고, 같은 pressure의 Choice가 둘 이상 필요해 보이면 하나로 합칩니다.\n"
         "  4개는 세 방향을 모두 포함하되 추가한 같은 방향 Choice가 규모·시점에서 명확히 다를 때만 허용합니다.\n"
@@ -811,6 +846,7 @@ def build_v4_additional_dimension_user_prompt(
         "신호·대상·영향 경로를 생략하지 않고, 질문 어미만 `...하는지에 따라` 형태로 바꿔 Scenario와 JKM "
         "결과가 구분되는 이유를 설명합니다. 최소 글자 수는 강제하지 않습니다.\n"
         "- Choice label은 비교 가능한 하나의 시장·운영 상태를 30자 이내로 작성합니다.\n"
+        f"{_READABLE_LABEL_RULE}"
         "- lever와 axis는 source 질문의 값을 그대로 사용하고 Choice는 2~4개를 만듭니다.\n"
         "- pressure coverage 예시: Choice 2개는 `bearish / bullish`, 3개는 `bearish / balanced / bullish`, "
         "4개는 `bearish / balanced / bullish / bullish`처럼 세 방향을 모두 포함하고 의미상 필요한 한 방향을 "
@@ -919,7 +955,14 @@ def build_v4_scenario_synthesis_user_prompt(
     dimension_definitions: list[dict[str, Any]],
     validation_warnings: list[dict[str, Any]],
     validation_feedback: str | None = None,
+    policy: ScenarioSynthesisPolicy = "band_unique",
+    scenario_count_range: tuple[int, int] = (3, 5),
 ) -> str:
+    count_rules, exclusion_rules = _v4_scenario_count_and_exclusion_rules(
+        policy=policy,
+        event_count=len(events),
+        scenario_count_range=scenario_count_range,
+    )
     feedback = _feedback(
         "Scenario",
         validation_feedback,
@@ -959,17 +1002,10 @@ def build_v4_scenario_synthesis_user_prompt(
         "  지칭합니다. 영문 `Event`, `Scenario`와 `입력 사실`을 쓰지 않습니다.\n"
         "- LNG·JKM·TTF·HH 등 시장·상품 약어와 시설·기업 고유명은 description과 Scenario를 포함한 모든\n"
         "  문장에서 원문 표기 그대로 쓰고 `엘엔지`, `제이케이엠`처럼 한글로 음역하지 않습니다.\n"
-        "- Scenario 3~5개를 만들고 생성·제외 결과를 합쳐 다섯 pressure band를 한 번씩 다룹니다.\n"
-        "- 생성하는 Scenario 조합 중 선택한 Dimension 값들의 pressureContribution 합산이 양수(+)인 조합을\n"
-        "  최소 1개, 음수(-)인 조합을 최소 1개 반드시 포함합니다. 모든 조합이 같은 방향(전부 양수 또는\n"
-        "  전부 음수)으로 쏠리지 않도록 양쪽 방향을 모두 탐색하고, 근거가 있는 한 양방향 조합을 만듭니다.\n"
-        "- probabilityScore가 가장 높은 Scenario를 기준으로, 그 Scenario보다 합산이 더 큰 조합과 더\n"
-        "  작은 조합을 각각 최대 2개까지만 만듭니다. 한쪽 방향으로 3개 이상 몰리면 셋 중 가장 구분력이\n"
-        "  낮은 조합을 빼고 반대 방향 조합을 추가합니다.\n"
+        f"{count_rules}"
         "- choices에는 각 D의 V를 정확히 하나씩 `D1.V1` 형식으로 선택합니다.\n"
         "- 제외 후보도 choices에 각 D의 V를 정확히 하나씩 선택해, 제외된 실제 조합을 보존합니다.\n"
-        "- 발생 가능성이 낮아 제외하면 reasonCode는 LOW_PROBABILITY로 작성합니다. 조합이 독립적인 검토 가치가\n"
-        "  없어 제외하는 경우에는 NOT_INDEPENDENT를 사용합니다.\n"
+        f"{exclusion_rules}"
         "- interactions에는 실제로 추가 효과를 적용한 I 번호만 넣습니다.\n"
         "  Interaction은 그 결합 효과를 만드는 두 경로의 상태가 선택한 Choice에서 모두 유지·성립할 때만 적용합니다.\n"
         "  선택한 Choice가 한쪽 경로를 반전·해소시키면(예: 유럽행 중단, 운임 반등으로 상쇄 소멸) 적용하지 않습니다.\n"
@@ -999,6 +1035,61 @@ def build_v4_scenario_synthesis_user_prompt(
         "한 Scenario 안에서 TTF와 HH는 각각 최대 한 번만 작성하고 같은 시장을 중복하지 마십시오.\n"
         f"{feedback}"
     )
+
+
+_BAND_UNIQUE_COUNT_RULES = (
+    "- Scenario 3~5개를 만들고 생성·제외 결과를 합쳐 다섯 pressure band를 한 번씩 다룹니다.\n"
+    "- 생성하는 Scenario 조합 중 선택한 Dimension 값들의 pressureContribution 합산이 양수(+)인 조합을\n"
+    "  최소 1개, 음수(-)인 조합을 최소 1개 반드시 포함합니다. 모든 조합이 같은 방향(전부 양수 또는\n"
+    "  전부 음수)으로 쏠리지 않도록 양쪽 방향을 모두 탐색하고, 근거가 있는 한 양방향 조합을 만듭니다.\n"
+    "- probabilityScore가 가장 높은 Scenario를 기준으로, 그 Scenario보다 합산이 더 큰 조합과 더\n"
+    "  작은 조합을 각각 최대 2개까지만 만듭니다. 한쪽 방향으로 3개 이상 몰리면 셋 중 가장 구분력이\n"
+    "  낮은 조합을 빼고 반대 방향 조합을 추가합니다.\n"
+)
+_BAND_UNIQUE_EXCLUSION_RULES = (
+    "- 발생 가능성이 낮아 제외하면 reasonCode는 LOW_PROBABILITY로 작성합니다. 조합이 독립적인 검토 가치가\n"
+    "  없어 제외하는 경우에는 NOT_INDEPENDENT를 사용합니다.\n"
+)
+_DISTINCT_DRIVER_EXCLUSION_RULES = (
+    "- 검토했지만 만들지 않은 조합은 excluded에 남기고, pressureBand는 Base 대비 상대 위치로 씁니다.\n"
+    "  reasonCode는 다음 중 하나만 씁니다.\n"
+    "  - INSUFFICIENT_EVIDENCE: 관측 사실이나 선택지 근거로 뒷받침되지 않는 조합\n"
+    "  - CONTRADICTION: 선택한 값끼리 논리적으로 충돌하는 조합\n"
+    "  - DUPLICATE: 주도하는 이벤트·Dimension·시점이 기존 Scenario와 사실상 같은 조합\n"
+    "  - LOW_PROBABILITY: 정규화 probability가 5 미만인 조합\n"
+    "  reason에는 어떤 근거가 부족한지, 무엇이 충돌하는지, 어느 Scenario와 겹치는지 구체적으로 씁니다.\n"
+)
+
+
+def _v4_scenario_count_and_exclusion_rules(
+    *,
+    policy: ScenarioSynthesisPolicy,
+    event_count: int,
+    scenario_count_range: tuple[int, int],
+) -> tuple[str, str]:
+    """Return the Scenario count/pressure rules and the exclusion rules for the synthesis policy."""
+    if policy == "band_unique":
+        return _BAND_UNIQUE_COUNT_RULES, _BAND_UNIQUE_EXCLUSION_RULES
+    target_min, max_count = scenario_count_range
+    count_rules = (
+        f"- 선택한 이벤트 {event_count}개를 기준으로 Scenario {target_min}~{max_count}개를 만듭니다. "
+        f"최소 {target_min}개를 우선 목표로 하고,\n"
+        f"  서로 구분되는 근거 있는 조합이 더 있으면 {max_count}개까지 만듭니다. {target_min}개보다 적게 "
+        "만들면 빠진 자리마다\n"
+        "  실제로 검토한 조합을 excluded에 사유와 함께 남깁니다.\n"
+        "- 모든 이벤트가 함께 강해지거나 약해지는 조합뿐 아니라, 일부 이벤트만 지속·완화·반전되는 조합도\n"
+        "  검토합니다.\n"
+        "- probability가 가장 높은 Scenario가 Base입니다. pressure는 실제 JKM 방향이 아니라 Base 대비 상대\n"
+        "  위치입니다. 선택한 값들의 pressureContribution 합산(bullish=+1, balanced=0, bearish=-1)이 Base와\n"
+        "  같으면 balanced, Base보다 1 크면 bullish, 2 이상 크면 strong_bullish, 1 작으면 bearish, 2 이상\n"
+        "  작으면 strong_bearish입니다.\n"
+        "- Base보다 합산이 큰 조합과 작은 조합을 각각 1개 이상 만듭니다.\n"
+        "- 같은 pressure의 Scenario를 여러 개 만들 수 있습니다. 단, 주도하는 이벤트·Dimension·시점이 서로\n"
+        "  달라야 하며 선택지 하나만 바꾼 유사 조합으로 개수를 채우지 않습니다.\n"
+        "- narrative와 explanation의 최종 JKM 압력은 실제 방향으로 쓰고, Base가 아닌 Scenario의 explanation에는\n"
+        "  Base와 무엇이 달라 상방·하방이 되는지 한 번 밝힙니다.\n"
+    )
+    return count_rules, _DISTINCT_DRIVER_EXCLUSION_RULES
 
 
 def _render_group_title_event_cards(events: list[dict[str, Any]]) -> str:

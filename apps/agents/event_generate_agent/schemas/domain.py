@@ -63,17 +63,26 @@ class EvidenceLink(BaseModel):
     relation: EvidenceRelation = Field(description="이 근거가 claim 에 대해 맡는 역할")
 
 
-class ScenarioSeverity(StrEnum):
-    """시나리오가 일어날 가능성의 강도(근거와의 충돌 여부와는 별개 축)."""
+class ReasoningFix(StrEnum):
+    """claim 사이 추론 연결 문제를 재작성에서 고치는 방향. 재작성이 설명을 덧붙이지 않도록 삭제·완화만 둔다."""
 
-    BASE = "BASE"
-    PLAUSIBLE_STRESS = "PLAUSIBLE_STRESS"
-    SEVERE_STRESS = "SEVERE_STRESS"
-    TAIL_RISK = "TAIL_RISK"
+    REMOVE = "REMOVE"  # 결론을 뒷받침하지 못하는 연결(claim·본문 서술)을 삭제
+    QUALIFY = "QUALIFY"  # 연결은 두되 조건부·가정 표시로 단정 수준을 낮춤
+
+
+class ReasoningIssue(BaseModel):
+    """검증기가 찾은 claim 사이 추론 연결 문제 1건."""
+
+    claim_ids: list[str] = Field(default_factory=list, description="연결이 성립하지 않는 claim ID(예: C3, C5)")
+    message: str = Field(description="어떤 연결이 왜 결론을 뒷받침하지 못하는지")
+    fix: ReasoningFix = Field(
+        default=ReasoningFix.QUALIFY,
+        description="REMOVE=그 연결을 삭제, QUALIFY=조건부·가정 표시로 단정 수준을 낮춤",
+    )
 
 
 class FeasibilityStatus(StrEnum):
-    """시나리오가 수집한 근거와 모순 없이 성립하는지(발생 확률과는 별개 축)."""
+    """시나리오가 수집한 근거와 모순 없이 성립하는지."""
 
     CONSISTENT = "CONSISTENT"  # 근거와 충돌하는 claim 없음
     CONFLICTS_WITH_EVIDENCE = "CONFLICTS_WITH_EVIDENCE"  # 근거와 충돌하는 claim 이 있음
@@ -97,10 +106,6 @@ class EventClaim(BaseModel):
     hard_conflict: bool = Field(default=False, description="USER_ASSUMPTION 이 근거·물리·계약 제약과 명백히 모순인지")
     evidence: list[EvidenceLink] = Field(default_factory=list)
     fact_ids: list[str] = Field(default_factory=list, description="참조한 근거 사실 ID(예: T1-F2)")
-    shock_cluster: str = Field(
-        default="",
-        description="이 claim 이 시나리오의 충격(shock) 동인이면 그 충격 묶음 이름. 충격이 아니면 빈 문자열",
-    )
     temporal_ok: bool = Field(default=True, description="이벤트 발생 시점에 claim 이 시점상 성립하는지")
     reason: str = Field(default="", description="판정 이유")
 
@@ -117,6 +122,8 @@ class EventDraft(BaseModel):
     """LLM이 생성한 이벤트 초안 1건(확정 전 상태)."""
 
     one_line_summary: str = ""
+    # tmm_mi_mievent_m.search_text(검색용 요약)에만 저장하고 API 응답에는 넣지 않는다. 비면 one_line_summary 로 대신한다.
+    search_text: str = ""
     detail_analysis: str = ""
     key_bullets: list[str] = Field(default_factory=list)
     tags: list[str] = Field(default_factory=list)
@@ -127,9 +134,8 @@ class EventDraft(BaseModel):
     # 아래 두 필드는 응답으로만 보여주고 DB에는 저장하지 않는다.
     generation_rationale: str = Field(default="", description="이 이벤트를 이렇게 구성한 이유")
     evidence_usages: list[DraftEvidenceUsage] = Field(default_factory=list)
-    # 아래 두 필드는 생성 LLM 의 자기 판정이다. 최종 판정은 validate_claims 의 EventValidation 이 정한다.
+    # 생성 LLM 의 자기 판정이다. 최종 판정은 validate_claims 의 EventValidation 이 정한다.
     claims: list[EventClaim] = Field(default_factory=list, description="생성 LLM 이 밝힌 본문 claim 목록")
-    scenario_severity: ScenarioSeverity | None = Field(default=None, description="생성 LLM 이 밝힌 시나리오 강도")
 
 
 class EventTypeCatalogItem(BaseModel):
@@ -165,9 +171,7 @@ class ValidationIssue(BaseModel):
 class EventValidation(BaseModel):
     """초안 1건의 최종 검증 결과(validate_claims 산출물, DB 미저장)."""
 
-    scenario_severity: ScenarioSeverity = ScenarioSeverity.BASE
     feasibility_status: FeasibilityStatus = FeasibilityStatus.UNVERIFIED
-    shock_clusters: list[str] = Field(default_factory=list, description="근거로 확인되지 않은 독립 충격 묶음")
     claims: list[EventClaim] = Field(default_factory=list, description="검증기가 다시 판정한 claim 목록")
     issues: list[ValidationIssue] = Field(default_factory=list)
 

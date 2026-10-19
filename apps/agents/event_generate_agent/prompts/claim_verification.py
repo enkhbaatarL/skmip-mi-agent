@@ -1,7 +1,7 @@
 """생성 이벤트 claim 검증 프롬프트 및 structured output schema (validate_claims 노드, 생성 후 검증).
 
 생성 LLM 이 스스로 붙인 claim 표시를 믿지 않고, claim 마다 claim_type 별 기준으로 다시 판정한다.
-근거 사실은 직접 지지 여부, 모델 추론은 경제적·물리적 타당성, 사용자 가정은 명백한 모순 여부만 본다. 본문에 있는데 claim 목록에서 빠진 주장,
+근거 사실은 직접 지지 여부, 모델 추론은 경제적·물리적 타당성, 사용자 가정은 명백한 모순 여부만 본다. 본문에 있는데 claim 목록에서 빠진 주장 중 문제가 있는 것,
 연결된 수치 간 산술 불일치, 가정인데 본문에서 가정 표시가 없는 서술, claim 사이의 추론 연결이 성립하지 않는 곳도 함께 찾는다.
 판정 결과를 저장 차단 여부로 바꾸는 규칙은 코드(tools/claim_rules.py)가 정한다.
 프롬프트 빌더는 순수 함수(I/O 없음)로 유지한다.
@@ -24,6 +24,7 @@ from apps.agents.event_generate_agent.schemas.domain import (
     EventDraft,
     EvidenceLink,
     InferencePlausibility,
+    ReasoningIssue,
     SupportStatus,
 )
 
@@ -41,7 +42,13 @@ class ClaimVerdictLLMItem(BaseModel):
     )
     evidence: list[EvidenceLink] = Field(default_factory=list, description="판정에 쓴 근거와 그 역할")
     temporal_ok: bool = Field(description="기준일 시점에 claim 이 시점상 성립하면 true")
-    reason: str = Field(default="", description="판정 이유 한 문장(충돌·시점 불일치면 근거 사실 ID를 밝힐 것)")
+    reason: str = Field(
+        default="",
+        description=(
+            "문제가 있는 판정(SUPPORTED·PLAUSIBLE 이 아님, hard_conflict=true, temporal_ok=false)만 이유 한 문장"
+            "(충돌·시점 불일치면 근거 사실 ID를 밝힐 것). 문제가 없으면 빈 문자열"
+        ),
+    )
 
 
 class UntrackedClaimLLMItem(BaseModel):
@@ -59,7 +66,7 @@ class ClaimVerificationLLMOutput(BaseModel):
     claims: list[ClaimVerdictLLMItem] = Field(default_factory=list, description="[검증할 claim] 전부에 대한 판정")
     untracked_claims: list[UntrackedClaimLLMItem] = Field(
         default_factory=list,
-        description="본문의 사건·상태·수치·가격 방향 주장 중 claim 목록에 빠진 것",
+        description="본문의 주장 중 claim 목록에 빠졌고, 판정하면 문제가 드러나는 것만(문제없는 누락 주장은 적지 말 것)",
     )
     quantitative_issues: list[str] = Field(
         default_factory=list,
@@ -69,9 +76,12 @@ class ClaimVerificationLLMOutput(BaseModel):
         default_factory=list,
         description="가정한 사건·조건·구체 수치인데 본문에 '(가정)' 등 가정 표시 없이 확정 사실처럼 쓴 서술(일반적 시장 인과 서술은 제외)",
     )
-    reasoning_issues: list[str] = Field(
+    reasoning_issues: list[ReasoningIssue] = Field(
         default_factory=list,
-        description="claim 사이의 연결이 성립하지 않는 곳(중복 계산, 반대 방향 효과 누락, 한 줄 요약이 본문보다 단정적 등)과 그 이유",
+        description=(
+            "claim 사이의 연결이 성립하지 않는 곳(중복 계산, 반대 방향 효과 누락, 한 줄 요약이 본문보다 단정적 등)."
+            " 걸린 claim ID·이유·수정 방향(REMOVE|QUALIFY)을 함께 적을 것"
+        ),
     )
 
 
@@ -127,7 +137,10 @@ claim 의 종류(claim_type)마다 아래의 서로 다른 기준으로 판정�
 - 시점과 무관한 claim 은 true
 
 **[누락 claim(untracked_claims)]**
-- 한 줄 요약·bullet·상세분석의 사건·상태·수치·가격 방향 주장 중 [검증할 claim] 어디에도 해당하지 않는 것을 찾아, claim_type 을 정하고 위 기준으로 판정하십시오.
+- [검증할 claim] 은 결론을 좌우하는 핵심 주장만 담으므로, 본문의 모든 주장이 claim 으로 나열되어 있지 않은 것은 정상입니다.
+- 한 줄 요약·bullet·상세분석의 사건·상태·수치·가격 방향 주장 중 [검증할 claim] 어디에도 해당하지 않으면서, 위 기준으로 판정했을 때
+  문제가 드러나는 것(EVIDENCED_FACT 로 볼 서술인데 SUPPORTED 가 아님, MODEL_INFERENCE 인데 WEAK·CONTRADICTED, hard_conflict, temporal_ok=false)만
+  claim_type 을 정해 적으십시오. 문제가 없는 누락 주장은 적지 마십시오.
 
 **[수치 정합성(quantitative_issues)]**
 - 서로 연결된 수치가 산술적으로 맞는지 확인하십시오.
@@ -146,11 +159,19 @@ claim 의 종류(claim_type)마다 아래의 서로 다른 기준으로 판정�
 - 결론이 의존하는 핵심 중간 고리가 가정·약한 추론인데 결론을 확정적으로 서술함
 - 한 줄 요약·bullet 의 단정 수준이 상세분석에서 밝힌 조건·완충 효과보다 강함
 방향이 충분히 뒷받침되는 결론을 명확히 말한 것은 문제가 아닙니다. 모든 결론을 조건부로 만들라는 뜻이 아닙니다.
+사용자 요청이 쓴 용어가 정의상 포함하는 조건은 사용자 전제로 보고, 별도 근거가 필요한 중간 고리로 보지 마십시오.
+(예: 사용자가 "둔켈플라우테(Dunkelflaute)"라고 쓰면 정의상 저풍·저일사 동반이므로, 요청이 풍력 하락만 수치로 밝혔더라도
+태양광 저발전 동반 서술은 추론 공백이 아님. 반대로 용어 정의를 넘어선 규모·기간·지역 확장은 여전히 판정 대상임)
+각 항목에는 재작성이 어디를 어떻게 고칠지 알 수 있도록 아래를 함께 적으십시오.
+- `claim_ids`: 연결이 성립하지 않는 claim ID(결론 claim 과 그 결론이 기대는 중간 고리 claim). 한 줄 요약·bullet 문제면 그 내용을 담은 claim ID
+- `message`: 어떤 연결이 왜 결론을 뒷받침하지 못하는지 한 문장
+- `fix`: REMOVE(그 연결이 시나리오에 꼭 필요하지 않아 삭제하면 해소됨) / QUALIFY(연결은 필요하나 조건부·가정 표시로 단정 수준을 낮추면 해소됨).
+  중간 고리를 새로 덧붙여야만 성립하는 연결은 REMOVE 로 표시하십시오.
 
 **[작성 규칙]**
 - [검증할 claim] 의 모든 claim ID 에 대해 판정을 하나씩 내십시오.
 - `evidence` 에는 입력에 있는 근거 키만 쓰십시오.
-- `reason` 은 개조식 명사형 종결어미(~함, ~임, ~됨, ~음)로 한 문장.
+- `reason` 은 문제가 있는 판정에만 개조식 명사형 종결어미(~함, ~임, ~됨, ~음)로 한 문장 쓰고, 문제가 없으면 빈 문자열로 두십시오.
 """
 
 

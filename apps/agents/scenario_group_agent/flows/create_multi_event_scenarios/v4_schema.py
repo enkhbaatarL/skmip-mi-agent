@@ -14,6 +14,9 @@ from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.schema 
     ScenarioDimensionValues,
 )
 from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.v4_budget import (
+    V4_SCENARIO_HARD_MAX,
+    V4_SCENARIO_HARD_MIN,
+    ScenarioSynthesisPolicy,
     interaction_count_target,
     interaction_question_budget,
 )
@@ -21,6 +24,14 @@ from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.v4_enum
     StateDirection,
 )
 from apps.agents.scenario_group_agent.schemas.base import ApiModel
+from apps.agents.scenario_group_agent.utils.pressure_band import (
+    PRESSURE_CONTRIBUTION_SCORES,
+    relative_pressure_band,
+)
+from apps.agents.scenario_group_agent.utils.scenario_similarity import (
+    ScenarioSimilarityInput,
+    find_similar_scenario_pairs,
+)
 from apps.common.logging.logger_config import logger
 from apps.persistence.model_impact_lever.schema import (
     ModelImpactLeverPayload,
@@ -30,6 +41,13 @@ from apps.persistence.scenario.schema import RelatedMarket
 
 
 MIN_V4_SCENARIO_PROBABILITY_SCORE = 5
+
+# distinct_driver 정책에서 LLM이 쓰는 제외 사유 코드
+DISTINCT_DRIVER_EXCLUSION_REASON_CODES = frozenset(
+    {"INSUFFICIENT_EVIDENCE", "CONTRADICTION", "DUPLICATE", "LOW_PROBABILITY"},
+)
+# distinct_driver 정책에서 최대 개수를 넘은 후보를 서버가 제외할 때 쓰는 사유 코드
+EXCEEDS_MAX_COUNT_REASON_CODE = "EXCEEDS_MAX_COUNT"
 
 
 Materiality = Literal["high", "medium", "low"]
@@ -532,7 +550,7 @@ class V4ScenarioSynthesisResult(ApiModel):
     model_config = ConfigDict(extra="forbid")
 
     group_description: str = Field(min_length=1)
-    scenarios: list[V4ScenarioCandidateDraft] = Field(min_length=3, max_length=5)
+    scenarios: list[V4ScenarioCandidateDraft] = Field(min_length=V4_SCENARIO_HARD_MIN, max_length=V4_SCENARIO_HARD_MAX)
     excluded_scenarios: list[V4ExcludedScenarioCandidate] = Field(default_factory=list)
 
 
@@ -650,8 +668,8 @@ class V4ReadableScenarioSynthesisDraft(ApiModel):
             "약어와 시설·기업 고유명은 원문 표기 그대로 쓰고 한글로 음역하지 않음"
         ),
     )
-    scenarios: list[V4ReadableScenario] = Field(min_length=3, max_length=5)
-    excluded: list[V4ReadableExcludedScenarioCandidate] = Field(default_factory=list, max_length=2)
+    scenarios: list[V4ReadableScenario] = Field(min_length=V4_SCENARIO_HARD_MIN, max_length=V4_SCENARIO_HARD_MAX)
+    excluded: list[V4ReadableExcludedScenarioCandidate] = Field(default_factory=list, max_length=V4_SCENARIO_HARD_MAX)
 
 
 class V4GroupTitleDraft(ApiModel):
@@ -669,16 +687,44 @@ class V4GroupTitleDraft(ApiModel):
     )
 
 
+class V4ScenarioCountRange(ApiModel):
+    target_min: int
+    max: int
+
+
+class V4ScenarioCountShortfall(ApiModel):
+    """생성 목표 최소 개수에 못 미친 결과와 그때의 제외 사유 분포."""
+
+    target_min: int
+    actual: int
+    excluded_reason_counts: dict[str, int] = Field(default_factory=dict)
+
+
+class V4SimilarScenarioPair(ApiModel):
+    """통계용 유사 Scenario 쌍. 생성을 막지 않는다."""
+
+    scenario_titles: list[str] = Field(min_length=2, max_length=2)
+    kinds: list[Literal["same_band_one_dimension", "similar_title"]] = Field(min_length=1)
+    pressure_bands: list[str] = Field(min_length=2, max_length=2)
+    differing_dimension_ids: list[str] = Field(default_factory=list)
+    title_similarity: float
+
+
 class V4GenerationResult(ApiModel):
     group_title: str = Field(min_length=1)
     group_summary: str = Field(min_length=1, max_length=300)
     group_description: str = Field(min_length=1)
     impact_analysis: V4EventImpactAnalysisResult
     dimension_definitions: list[V4DimensionDefinition] = Field(min_length=3, max_length=6)
-    scenarios: list[V4ScenarioCandidate] = Field(min_length=3, max_length=5)
+    scenarios: list[V4ScenarioCandidate] = Field(min_length=V4_SCENARIO_HARD_MIN, max_length=V4_SCENARIO_HARD_MAX)
     excluded_scenarios: list[V4ExcludedScenarioCandidate] = Field(default_factory=list)
     excluded_dimensions: list[str] = Field(default_factory=list)
     validation_warnings: list[V4ValidationWarning] = Field(default_factory=list)
+    scenario_synthesis_policy: ScenarioSynthesisPolicy = "band_unique"
+    scenario_count_range: V4ScenarioCountRange | None = None
+    scenario_count_shortfall: V4ScenarioCountShortfall | None = None
+    direction_coverage_gaps: list[Literal["bullish", "bearish"]] = Field(default_factory=list)
+    similar_scenario_pairs: list[V4SimilarScenarioPair] = Field(default_factory=list)
 
 
 class ParameterCoverage(ApiModel):
@@ -2034,6 +2080,192 @@ def _validate_scenarios(
     scenarios.sort(key=lambda scenario: PRESSURE_RANK[scenario.pressure_band], reverse=True)
 
 
+def _selected_contributions(
+    dimension_values: dict[str, str],
+    dimension_by_id: dict[str, V4DimensionDefinition],
+    *,
+    reference: str,
+) -> list[int]:
+    contributions: list[int] = []
+    for dimension_id, selected_value in dimension_values.items():
+        dimension = dimension_by_id[dimension_id]
+        selected_definition = next(
+            (value for value in dimension.values if selected_value in {value.value_id, value.label}),
+            None,
+        )
+        if selected_definition is None:
+            raise ValueError(f"{reference}: invalid value {selected_value!r} for dimension {dimension_id}")
+        contributions.append(PRESSURE_CONTRIBUTION_SCORES[selected_definition.pressure_contribution])
+    return contributions
+
+
+def _validate_scenarios_distinct_driver(
+    scenarios: list[V4ScenarioCandidate],
+    excluded_scenarios: list[V4ExcludedScenarioCandidate],
+    *,
+    dimension_definitions: list[V4DimensionDefinition],
+    impact_analysis: V4EventImpactAnalysisResult,
+    max_count: int,
+) -> list[Literal["bullish", "bearish"]]:
+    """distinct_driver 정책의 Scenario를 검증하고 Base 대비 band·role을 확정한다.
+
+    band_unique와 달리 같은 band의 Scenario를 여러 개 허용하고 5 band 덮기를 요구하지 않는다.
+    Dimension 선택지로 만들 수 있는데도 Base 대비 상방·하방 Scenario가 없으면 재시도하고,
+    선택지 구조상 만들 수 없는 방향은 반환값으로 기록한다.
+    """
+    dimension_by_id = {dimension.dimension_id: dimension for dimension in dimension_definitions}
+    path_ids = {path.impact_path_id for path in impact_analysis.impact_paths}
+    interaction_ids = {interaction.interaction_id for interaction in impact_analysis.interactions}
+    combination_owners: dict[tuple[tuple[str, str], ...], str] = {}
+    contribution_by_scenario: dict[int, list[int]] = {}
+    for scenario_index, scenario in enumerate(scenarios):
+        scenario_reference = f"scenarios[{scenario_index}] ({scenario.title!r})"
+        if set(scenario.dimension_values) != set(dimension_by_id):
+            raise ValueError("every scenario must provide every dimension value")
+        if set(scenario.common_impact_path_ids) != path_ids:
+            raise ValueError("every Scenario must include all common Impact Paths")
+        unknown_interaction_ids = set(scenario.applied_interaction_ids) - interaction_ids
+        if unknown_interaction_ids:
+            raise ValueError(f"Scenario references unknown interactions: {sorted(unknown_interaction_ids)}")
+        contributions = _selected_contributions(
+            scenario.dimension_values,
+            dimension_by_id,
+            reference=scenario_reference,
+        )
+        combination = tuple(sorted(scenario.dimension_values.items()))
+        if previous_reference := combination_owners.get(combination):
+            raise ValueError(
+                f"{scenario_reference}.dimensionValues duplicates {previous_reference}.dimensionValues: "
+                f"{dict(combination)}"
+            )
+        combination_owners[combination] = scenario_reference
+        contribution_by_scenario[id(scenario)] = contributions
+        if scenario.mixed_factors and not ({-1, 1} <= set(contributions)):
+            raise ValueError(f"mixedFactors requires bullish and bearish dimension contributions: {scenario.title}")
+
+    excluded_sums: dict[int, int] = {}
+    for candidate_index, candidate in enumerate(excluded_scenarios):
+        candidate_reference = f"excludedScenarios[{candidate_index}]"
+        if set(candidate.dimension_values) != set(dimension_by_id):
+            raise ValueError("every excluded Scenario must provide every dimension value")
+        for dimension_id, selected_value in candidate.dimension_values.items():
+            if not any(selected_value == value.value_id for value in dimension_by_id[dimension_id].values):
+                raise ValueError(f"invalid excluded value {selected_value!r} for dimension {dimension_id}")
+        if candidate.reason_code not in DISTINCT_DRIVER_EXCLUSION_REASON_CODES:
+            raise ValueError(
+                f"{candidate_reference}.reasonCode must be one of "
+                f"{sorted(DISTINCT_DRIVER_EXCLUSION_REASON_CODES)}: {candidate.reason_code!r}"
+            )
+        combination = tuple(sorted(candidate.dimension_values.items()))
+        if previous_reference := combination_owners.get(combination):
+            raise ValueError(
+                f"{candidate_reference}.dimensionValues duplicates {previous_reference}.dimensionValues: "
+                f"{dict(combination)}"
+            )
+        combination_owners[combination] = candidate_reference
+        excluded_sums[id(candidate)] = sum(
+            _selected_contributions(candidate.dimension_values, dimension_by_id, reference=candidate_reference),
+        )
+
+    for scenario in scenarios:
+        scenario.scenario_role = None
+        scenario.baseline_yn = False
+    base_scenario = max(scenarios, key=lambda scenario: scenario.probability_score)
+    base_scenario.baseline_yn = True
+    base_sum = sum(contribution_by_scenario[id(base_scenario)])
+    deltas = {id(scenario): sum(contribution_by_scenario[id(scenario)]) - base_sum for scenario in scenarios}
+
+    # Base 대비 상방·하방이 하나도 없을 때, 각 Dimension에서 그 방향으로 가장 극단적인 값을 고른 조합이
+    # Base보다 그 방향으로 더 나아갈 수 있으면 LLM이 놓친 것이므로 재시도한다. 더 나아갈 수 없으면
+    # 선택지 구조상 그 방향이 없는 것이므로 결과를 막지 않고 공백으로 기록한다.
+    direction_gaps: list[Literal["bullish", "bearish"]] = []
+    for direction, sign in (("bullish", 1), ("bearish", -1)):
+        if any(deltas[id(scenario)] * sign > 0 for scenario in scenarios if not scenario.baseline_yn):
+            continue
+        extreme_sum = sum(
+            PRESSURE_CONTRIBUTION_SCORES[value.pressure_contribution]
+            for _dimension, value in _extreme_dimension_selection(dimension_definitions, direction=direction)
+        )
+        if (extreme_sum - base_sum) * sign > 0:
+            label = "상방" if direction == "bullish" else "하방"
+            raise ValueError(
+                f"Base Scenario({base_scenario.title!r}) 대비 {label} Scenario가 없습니다. "
+                f"Dimension 선택지로 Base보다 pressureContribution 합산이 "
+                f"{'큰' if direction == 'bullish' else '작은'} 조합을 만들 수 있으니, "
+                f"근거가 있는 {label} Scenario를 포함하십시오."
+            )
+        direction_gaps.append(direction)
+
+    # 최대 개수를 넘으면 Base와 가장 가깝고(|delta| 작음) 확률이 낮은 후보부터 제외한다.
+    # 한 방향의 마지막 Scenario는 제외하지 않아 Base 대비 방향 구성을 유지한다.
+    if len(scenarios) > max_count:
+        removal_order = sorted(
+            (scenario for scenario in scenarios if not scenario.baseline_yn),
+            key=lambda scenario: (abs(deltas[id(scenario)]), scenario.probability_score),
+        )
+        for candidate in removal_order:
+            if len(scenarios) <= max_count:
+                break
+            candidate_sign = (deltas[id(candidate)] > 0) - (deltas[id(candidate)] < 0)
+            same_direction_count = sum(
+                1
+                for scenario in scenarios
+                if not scenario.baseline_yn
+                and ((deltas[id(scenario)] > 0) - (deltas[id(scenario)] < 0)) == candidate_sign
+            )
+            if candidate_sign != 0 and same_direction_count <= 1:
+                continue
+            scenarios.remove(candidate)
+            logger.warning(
+                f"[SCENARIO][_validate_scenarios_distinct_driver] EXCEEDS_MAX_COUNT | max={max_count} | "
+                f"title={candidate.title!r} | delta={deltas[id(candidate)]}"
+            )
+            excluded = V4ExcludedScenarioCandidate(
+                pressure_band=relative_pressure_band(deltas[id(candidate)]),
+                reason_code=EXCEEDS_MAX_COUNT_REASON_CODE,
+                reason=(
+                    f"최대 {max_count}개를 넘어, Base와 압력 차이가 가장 작고 발생 가능성이 낮은 후보를 "
+                    "제외했습니다."
+                ),
+                dimension_values=dict(candidate.dimension_values),
+            )
+            excluded_scenarios.append(excluded)
+            excluded_sums[id(excluded)] = deltas[id(candidate)] + base_sum
+
+    for scenario in scenarios:
+        scenario.pressure_band = relative_pressure_band(deltas[id(scenario)])
+    for candidate in excluded_scenarios:
+        candidate.pressure_band = relative_pressure_band(excluded_sums[id(candidate)] - base_sum)
+
+    # floor/ceiling은 Base를 제외한 Scenario 중 Base 대비 압력이 가장 낮은/높은 것이다.
+    # 동점이면 발생 가능성이 높은 Scenario를 고른다.
+    non_base_scenarios = [scenario for scenario in scenarios if not scenario.baseline_yn]
+    if len(non_base_scenarios) >= 2:
+        floor_scenario = min(
+            non_base_scenarios,
+            key=lambda scenario: (deltas[id(scenario)], -scenario.probability_score),
+        )
+        ceiling_scenario = max(
+            (scenario for scenario in non_base_scenarios if scenario is not floor_scenario),
+            key=lambda scenario: (deltas[id(scenario)], scenario.probability_score),
+        )
+        floor_scenario.scenario_role = "floor"
+        ceiling_scenario.scenario_role = "ceiling"
+    mixed_candidates = [
+        scenario
+        for scenario in scenarios
+        if scenario.scenario_role is None and {-1, 1} <= set(contribution_by_scenario[id(scenario)])
+    ]
+    if mixed_candidates:
+        min(
+            mixed_candidates,
+            key=lambda scenario: (abs(deltas[id(scenario)]), -scenario.probability_score),
+        ).scenario_role = "mixed"
+
+    scenarios.sort(key=lambda scenario: (deltas[id(scenario)], scenario.probability_score), reverse=True)
+    return direction_gaps
+
+
 def _normalize_v4_probability_scores(scenarios: list[V4ScenarioCandidate]) -> None:
     """v4 Scenario 가중치를 합계 100인 정수 백분율 점수로 정규화한다."""
     if not scenarios:
@@ -2067,7 +2299,10 @@ def finalize_v4_generation_result(
     impact_analysis: V4EventImpactAnalysisResult,
     dimension_design: V4DimensionDesignResult,
     impact_levers: list[ModelImpactLeverPayload],
+    policy: ScenarioSynthesisPolicy = "band_unique",
+    scenario_count_range: tuple[int, int] = (3, 5),
 ) -> tuple[V4GenerationResult, ParameterCoverage]:
+    target_min, max_count = scenario_count_range
     finalized_scenarios = [
         V4ScenarioCandidate(
             **scenario.model_dump(),
@@ -2113,12 +2348,22 @@ def finalize_v4_generation_result(
     # 기존 검증에서 조합을 확인하고 baseline·pressure band·역할을 결정한다.
     # 이 과정에서 fallback이 추가되거나 초과 후보가 제외될 수 있다.
     scenario_count_before_validation = len(finalized_scenarios)
-    _validate_scenarios(
-        finalized_scenarios,
-        excluded_scenarios,
-        dimension_definitions=dimension_design.dimension_definitions,
-        impact_analysis=impact_analysis,
-    )
+    direction_gaps: list[Literal["bullish", "bearish"]] = []
+    if policy == "distinct_driver":
+        direction_gaps = _validate_scenarios_distinct_driver(
+            finalized_scenarios,
+            excluded_scenarios,
+            dimension_definitions=dimension_design.dimension_definitions,
+            impact_analysis=impact_analysis,
+            max_count=max_count,
+        )
+    else:
+        _validate_scenarios(
+            finalized_scenarios,
+            excluded_scenarios,
+            dimension_definitions=dimension_design.dimension_definitions,
+            impact_analysis=impact_analysis,
+        )
 
     # 하나를 추가하고 하나를 제외하면 개수는 같아도 점수 합계가 달라질 수 있다.
     # 개수 또는 합계가 바뀐 경우에만 최종 목록의 점수를 다시 정규화한다.
@@ -2143,8 +2388,33 @@ def finalize_v4_generation_result(
             "relative to the baseline; do not artificially raise probabilities."
         )
 
-    # 최종 생성 개수 3~5개 조건은 기존 결과 스키마에서 검사한다.
+    # 정책별 최대 개수를 넘으면 합성 재시도로 보낸다. 하한 3개는 결과 스키마가 검사한다.
     # 여기서 발생하는 ValidationError도 기존 합성 재시도 경로에서 처리된다.
+    if len(finalized_scenarios) > max_count:
+        raise ValueError(f"Generate at most {max_count} scenarios; got {len(finalized_scenarios)}.")
+    shortfall = None
+    if len(finalized_scenarios) < target_min:
+        reason_counts: dict[str, int] = defaultdict(int)
+        for candidate in excluded_scenarios:
+            reason_counts[candidate.reason_code] += 1
+        shortfall = V4ScenarioCountShortfall(
+            target_min=target_min,
+            actual=len(finalized_scenarios),
+            excluded_reason_counts=dict(sorted(reason_counts.items())),
+        )
+    similar_pairs = [
+        V4SimilarScenarioPair.model_validate(pair)
+        for pair in find_similar_scenario_pairs(
+            [
+                ScenarioSimilarityInput(
+                    title=scenario.title,
+                    pressure_band=scenario.pressure_band,
+                    dimension_values=scenario.dimension_values,
+                )
+                for scenario in finalized_scenarios
+            ],
+        )
+    ]
     result = V4GenerationResult(
         group_title=group_title,
         group_summary=group_summary,
@@ -2158,6 +2428,11 @@ def finalize_v4_generation_result(
             *impact_analysis.validation_warnings,
             *dimension_design.validation_warnings,
         ],
+        scenario_synthesis_policy=policy,
+        scenario_count_range=V4ScenarioCountRange(target_min=target_min, max=max_count),
+        scenario_count_shortfall=shortfall,
+        direction_coverage_gaps=direction_gaps,
+        similar_scenario_pairs=similar_pairs,
     )
     catalog_by_code = _catalog_by_code(impact_levers)
     return result, build_parameter_coverage(result, catalog_by_code)

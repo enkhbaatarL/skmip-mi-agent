@@ -148,7 +148,6 @@ def _to_claims(
                 claim_type=item.claim_type,
                 evidence=known_links(item.evidence, known_keys),
                 fact_ids=[fact_id for fact_id in item.fact_ids if fact_id in known_facts],
-                shock_cluster=item.shock_cluster.strip(),
             ),
         )
     return claims
@@ -167,6 +166,7 @@ def _to_draft(
     is_edit = isinstance(item, edit_prompt.ExistingEventEditLLMItem)
     return EventDraft(
         one_line_summary=item.one_line_summary.strip(),
+        search_text=item.search_text.strip(),
         detail_analysis=item.detail_analysis.strip(),
         key_bullets=[bullet.strip() for bullet in item.key_bullets if bullet.strip()],
         tags=[tag.strip() for tag in item.tags if tag.strip()],
@@ -176,7 +176,6 @@ def _to_draft(
         operation=item.operation if is_edit else None,
         source_mi_event_ids=_to_source_event_ids(item, evidences) if is_edit else [],
         claims=_to_claims(item.claims, evidences, state),
-        scenario_severity=item.scenario_severity,
     )
 
 
@@ -304,7 +303,7 @@ async def draft_events(
             f"[NODE][draft_events] DRAFT | occurred_at={draft.occurred_at!r} "
             f"| operation={draft.operation.value if draft.operation else None} | sources={draft.source_mi_event_ids} "
             f"| bullets={len(draft.key_bullets)} | evidences={[u.evidence_key for u in draft.evidence_usages]} "
-            f"| claims={len(draft.claims)} | severity={draft.scenario_severity.value if draft.scenario_severity else None} "
+            f"| claims={len(draft.claims)} "
             f"| summary={draft.one_line_summary!r}",
         )
 
@@ -375,6 +374,11 @@ async def classify_event_type(
     catalog = await load_event_type_catalog()
     if not catalog:
         logger.warning(f"[NODE][classify_event_type] NO_CATALOG | fallback={FALLBACK_EVENT_TYPE_L2_ID}")
+        if FALLBACK_EVENT_TYPE_L2_ID is None:
+            return {
+                "type_assignment": EventTypeAssignment(rationale="event type 카탈로그 미연결로 분류하지 못함"),
+                "warnings": ["event type 카탈로그를 불러오지 못해 event type 을 분류하지 못했습니다."],
+            }
         return {
             "type_assignment": EventTypeAssignment(
                 event_type_l2_id=FALLBACK_EVENT_TYPE_L2_ID,
@@ -428,8 +432,8 @@ def _log_validation(state: GenerateFromQueryState) -> None:
         return
     logger.info(
         f"[NODE][finalize] VALIDATION | summary={state.draft.one_line_summary!r} | blocked={validation.blocked} "
-        f"| severity={validation.scenario_severity.value} | feasibility={validation.feasibility_status.value} "
-        f"| clusters={validation.shock_clusters} | claims={len(validation.claims)} | issues={len(validation.issues)}",
+        f"| feasibility={validation.feasibility_status.value} "
+        f"| claims={len(validation.claims)} | issues={len(validation.issues)}",
     )
     for issue in validation.issues:
         log = logger.warning if issue.severity is IssueSeverity.ERROR else logger.info

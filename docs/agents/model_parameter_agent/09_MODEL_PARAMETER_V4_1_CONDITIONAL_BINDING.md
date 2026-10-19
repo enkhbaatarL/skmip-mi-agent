@@ -1,5 +1,9 @@
 # Model Parameter v4.1 Conditional Binding
 
+> 이 문서는 v4.1 최초 도입부터 후속 release까지의 역사 계약을 설명한다. 현재 정본은
+> [v4.1 Canal Cost 분리](10_MODEL_PARAMETER_V4_1_CANAL_SPLIT.md)다. v0050은 catalog version `v4.1`을
+> 유지하면서 운하 binding을 개정하고 기존 v4.1 Scenario checksum pin을 같은 transaction에서 이관한다.
+
 ## 1. Release contract
 
 | 항목 | v4.0 보존값 | v4.1 신규값 |
@@ -17,7 +21,7 @@
 
 v4.1은 기존 v4.0 행을 수정하지 않고 `tmm_mi_model_impact_lever_m`에 같은 21개 Lever의 새 version 행을
 side-by-side로 추가한다. 신규 Scenario Group만 설정의 `scenario_group_v4_impact_catalog_version=v4.1`을 사용한다.
-기존 Group은 저장된 v4.0 version/checksum으로 계속 hydrate한다. migration 정본은 sibling mgmt의 0036이다.
+v4.0 version/checksum과 행은 DB 이력으로 남지만 현행 Model Parameter runtime은 v4.1만 허용한다. migration 정본은 sibling mgmt의 0036이다.
 Lever Full Set, code·domain·label·description·parent는 v4.0과 동일하다. 조건부 후보가 실제 모델
 대상·좌표·기간을 남기도록 5개 고빈도 Lever의 `applicability_hint`만 binding과 함께 보강한다.
 
@@ -50,7 +54,7 @@ workbook/LUT와 공개 API/DB schema를 그대로 둔다. 변경 범위는 propo
 - Step1.5 complete all-N/A는 그대로 성공 처리하지 않는다. 다만 parameter별 conditional routing 정책이 허용하고
   선택 branch의 물리 경로·방향·범위·기간이 모두 확인되는 후보만 `BOUNDED_ASSUMPTION`으로 제한 복구한다.
   현재 허용 쌍은 `route_disruption → ShippingCost` 하나다. 이는 항차 시간·선복 가용성에서 전역 LNG charter
-  rate로 이어지는 추론을 명시하며, `ShippingFuelCost`와 `CanalToll`은 직접 근거 없이는 복구하지 않는다.
+  rate로 이어지는 추론을 명시하며, `ShippingFuelCost`와 Suez/Panama Canal Cost는 직접 근거 없이는 복구하지 않는다.
 - 기본 `balanced` mode는 medium 이상 근거의 bounded assumption과 weak/medium 값 variation을 허용한다.
   `strict`는 assumption을 막고, `exploratory`는 low confidence/strong까지 허용하되 catalog·slot 경계는 동일하다.
 - 선택 상한은 dimension별 3개, Scenario 전체 conditional Parameter 4개다. 선택된 Scenario value에서 도달 가능한
@@ -127,8 +131,17 @@ variation factor, fallback 여부를 계속 남긴다.
 - 서버 정책이 LLM 초안값을 재계산한 경우 초안의 숫자 설명은 공개하지 않고 최종 제안값과 서버 계산만 설명한다.
 - 여러 적용 위치에 반복되는 설비명·기간 보정 참고사항은 한 문장으로 합친다.
 
-현재 배포 식별자는 `model_parameter_proposal_flow_release=v4.1.7`이며 catalog version은 계속 `v4.1`이다.
+해당 역사 release의 배포 식별자는 `model_parameter_proposal_flow_release=v4.1.7`이며 catalog version은 `v4.1`이다.
 DB/API JSON shape와 mgmt migration 변경은 없다.
+
+### v4.1.9 운하 파라미터 분리
+
+현행 Proposal Flow 식별자는 `v4.1.9`이다. Scenario API는 `v4`, Impact Lever catalog version은 `v4.1`을
+그대로 유지한다. mgmt v0050은 ID 25 `Suez Canal Cost`와 ID 26 `Panama Canal Cost`를 추가하고,
+v4.1 Lever ID 56~76 중 운하 관련 3행의 `CanalToll` binding을 두 파라미터로 제자리 교체한다.
+hydrated checksum은 `467749ea59c3af7e875669be23da00c0fd8ef7c226256f9518a5945e36e4d7c4`이며,
+기존 v4.1 Group의 checksum pin도 같은 transaction에서 이 값으로 이관한다. v4/v4.0 catalog·pin은 이력으로
+보존하지만 Model Parameter runtime은 지원하지 않으며 legacy dimension mapping은 변경하지 않는다.
 
 ## 2. 확장 binding
 
@@ -136,10 +149,10 @@ DB/API JSON shape와 mgmt migration 변경은 없다.
 
 | Lever | 추가 Parameter | 수 |
 |---|---|---:|
-| `route_disruption` | ShippingCost, ShippingFuelCost, CanalToll | 3 |
+| `route_disruption` | ShippingCost, ShippingFuelCost, Suez Canal Cost, Panama Canal Cost | 4 |
 | `trade_restriction` | SupplyDisruption, RegionalProductionAdjustment, LiqUtilAdjustment, LiqProdAdjustment, PipelineAdjustment, RegasAdjustment, PNG Contract Volume | 7 |
 | `inventory_condition` | GDP, PMI, PowerMix, Temperature, SupplyDisruption, RegionalProductionAdjustment, LiqUtilAdjustment, LiqProdAdjustment, PipelineAdjustment, RegasAdjustment, PNG Contract Volume | 11 |
-| `regional_price_spread` | 위 수요·공급·PNG 11종 + ShippingCost, ShippingFuelCost, CanalToll | 14 |
+| `regional_price_spread` | 위 수요·공급·PNG 11종 + ShippingCost, ShippingFuelCost, Suez Canal Cost, Panama Canal Cost | 15 |
 | `financial_market_sentiment` | GDP, PMI | 2 |
 
 재고·가격·심리 상태 자체를 writable input으로 바꾸지 않는다. Event/Scenario에 그 상태의 원인 또는 직접 영향이
@@ -189,8 +202,8 @@ bounded period만 허용하며, `재가동 지연`, `10월 하순 이후`만으�
 4. DB dry-run에서 master, legacy mapping, v4.0·기타 Lever, Scenario template의 snapshot digest를 lock/read 비교한다.
 5. 승인 후 v4.1 21행만 insert하고 hydrated v4.0/v4.1 checksum을 모두 read-back한다.
 6. local YAML과 Kubernetes ConfigMap의 catalog version, capability release/SHA가 같은지 확인한다.
-7. 같은 Event cohort로 신규 v4.1 Group을 만들고 signpost가 proposal 필수 입력이 아니면 생략한다.
-8. 동일 Scenario 내용의 v4.0/v4.1 matcher 비교와 실제 v4.1 proposal campaign을 구분해 보고한다.
+7. 같은 Event cohort로 현행 v4.1 Group을 만들고 signpost가 proposal 필수 입력이 아니면 생략한다.
+8. 실제 v4.1 proposal campaign에서 capability·slot·값·persistence 증적을 함께 보고한다.
 
 재현 파일:
 

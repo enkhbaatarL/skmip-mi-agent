@@ -118,16 +118,17 @@ uncovered-only runner를 사용한다. 기본은 read-only이며 capability rele
 ```bash
 python tests/manual/model_parameter_agent/run_proposal_only.py \
   --scenario-group-id 123 \
-  --capability-release extend16-v8
+  --capability-release extend17-v10
 ```
 
 명시적인 proposal write 승인 후에만 같은 명령에 `--execute`를 추가한다. 이 runner는 비삭제 proposal 전체
 이력에서 `PROPOSED`/`CONFIRMED` Scenario를 skip하고, `PROCESSING`이 하나라도 있으면 campaign 전체를
 hard-stop한다. lifecycle/capability skip Scenario도 history guard 범위에서 제외하지 않는다. `FAILED` 이력만
 있거나 이력이 없는 실행 가능 Scenario만 대상으로 하며 write 직전에 resource/context/catalog/input fingerprint와
-proposal history를 다시 판정한다. `extend16-v8`은 v4.1 full checksum, 활성 16종 allow-list와
-`new-bc-v7` contract SHA, semantic schema와 실제 resource content fingerprint를 묶은 고정 계약이다. 기존 v4.0
-Group 검증에는 명시적인 `extend16-v8-v4.0-compat` release를 사용한다. 각 write
+proposal history를 다시 판정한다. `extend17-v10`은 v4.1 full checksum
+`467749ea59c3af7e875669be23da00c0fd8ef7c226256f9518a5945e36e4d7c4`, 활성 17종 allow-list와
+`new-bc-v10` contract SHA, semantic schema와 실제 resource content fingerprint를 묶은 고정 계약이다.
+이 release는 v4.1만 허용하며 과거 v4/v4.0 catalog Group은 실행 전 capability gate에서 거절한다. 각 write
 직전에는 현재 Scenario뿐 아니라 명시 cohort 전체의 in-flight 상태를 다시 확인한다. Confirmation, callback,
 outer retry와 임의 uncovered guard 우회는 제공하지 않는다. 단, 사용자가 같은 고정 Scenario cohort에서 새
 Proposal Flow release의 결과를 전건 새로 생성하라고 명시하면 `--execute --replay-covered`를 사용할 수 있다.

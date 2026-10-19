@@ -1,4 +1,4 @@
-"""claim 검증 판정을 저장 차단 여부·시나리오 강도·성립성으로 바꾸는 규칙 엔진(LLM 없음).
+"""claim 검증 판정을 저장 차단 여부·성립성으로 바꾸는 규칙 엔진(LLM 없음).
 
 LLM 검증기는 claim 마다 근거 지지·시점 성립만 판정하고, 무엇을 error 로 막을지는 여기서 결정적으로 정한다.
 - error 가 하나라도 있으면 그 초안은 저장하지 않는다(EventValidation.blocked).
@@ -6,12 +6,10 @@ LLM 검증기는 claim 마다 근거 지지·시점 성립만 판정하고, 무�
   사용자 가정은 명백한 모순 여부만 본다(근거 없는 시나리오 조건은 정상).
 - fixable 인 error 는 초안 재작성으로 고칠 수 있다. 사용자 가정 자체가 명백히 모순인 경우는 재작성해도
   사용자 요청이 바뀌지 않으므로 fixable 이 아니다.
-- 시나리오 강도(일어나기 어려운 정도)와 성립성(근거와 모순 없음)은 별개 축으로 판정한다.
 """
 
 from __future__ import annotations
 
-from apps.agents.event_generate_agent.constants import SEVERE_STRESS_MIN_SHOCK_CLUSTERS
 from apps.agents.event_generate_agent.schemas.domain import (
     ClaimType,
     EventClaim,
@@ -20,18 +18,17 @@ from apps.agents.event_generate_agent.schemas.domain import (
     FeasibilityStatus,
     InferencePlausibility,
     IssueSeverity,
-    ScenarioSeverity,
+    ReasoningFix,
+    ReasoningIssue,
     SupportStatus,
     ValidationIssue,
 )
 
 
-_SEVERITY_ORDER = [
-    ScenarioSeverity.BASE,
-    ScenarioSeverity.PLAUSIBLE_STRESS,
-    ScenarioSeverity.SEVERE_STRESS,
-    ScenarioSeverity.TAIL_RISK,
-]
+_REASONING_FIX_LABEL = {
+    ReasoningFix.REMOVE: "수정 방향: 연결 삭제",
+    ReasoningFix.QUALIFY: "수정 방향: 조건부로 완화",
+}
 
 
 def _issue(
@@ -186,30 +183,6 @@ def _conflicts_with_evidence(claim: EventClaim) -> bool:
     return claim.hard_conflict
 
 
-def _shock_clusters(claims: list[EventClaim]) -> list[str]:
-    """근거로 확인되지 않은 충격 claim 의 독립 충격 묶음(이름 정규화 후 중복 제거, 첫 표기 유지).
-
-    근거로 이미 확인된 사실(EVIDENCED_FACT 이면서 SUPPORTED)은 가정된 충격이 아니므로 세지 않는다.
-    """
-    clusters: dict[str, str] = {}
-    for claim in claims:
-        name = claim.shock_cluster.strip()
-        confirmed = claim.claim_type is ClaimType.EVIDENCED_FACT and claim.support is SupportStatus.SUPPORTED
-        if not name or confirmed:
-            continue
-        clusters.setdefault(" ".join(name.split()).casefold(), name)
-    return list(clusters.values())
-
-
-def severity_floor(cluster_count: int) -> ScenarioSeverity:
-    """독립 충격 묶음 수로 정한 최소 시나리오 강도."""
-    if cluster_count >= SEVERE_STRESS_MIN_SHOCK_CLUSTERS:
-        return ScenarioSeverity.SEVERE_STRESS
-    if cluster_count >= 1:
-        return ScenarioSeverity.PLAUSIBLE_STRESS
-    return ScenarioSeverity.BASE
-
-
 def apply_claim_rules(
     draft: EventDraft,
     *,
@@ -217,24 +190,22 @@ def apply_claim_rules(
     untracked: list[EventClaim],
     quantitative_issues: list[str],
     unmarked_assumptions: list[str],
-    reasoning_issues: list[str] | None = None,
+    reasoning_issues: list[ReasoningIssue] | None = None,
 ) -> EventValidation:
     """초안 1건의 검증 판정에 규칙을 적용해 최종 EventValidation 을 만든다(I/O 없음).
 
     Args:
-        draft: 생성 LLM 이 밝힌 claims·scenario_severity 를 담은 초안.
+        draft: 생성 LLM 이 밝힌 claims 를 담은 초안.
         verdicts: claim_id → 검증기가 다시 판정한 claim. None 이면 검증 자체가 실패한 것이다.
         untracked: 본문에 있으나 claim 목록에 빠져 검증기가 따로 판정한 claim.
         quantitative_issues: 검증기가 찾은 수치 간 산술 불일치.
         unmarked_assumptions: 검증기가 찾은, 가정인데 본문에 가정 표시가 없는 서술.
         reasoning_issues: 검증기가 찾은, claim 사이의 추론 연결이 성립하지 않는 곳(재작성 대상 error).
+            초안에 없는 claim ID 는 버리고, 남은 ID 와 수정 방향을 이슈에 실어 재작성이 고칠 위치를 알게 한다.
 
     """
-    declared = draft.scenario_severity
-
     if verdicts is None:
         return EventValidation(
-            scenario_severity=declared or ScenarioSeverity.BASE,
             feasibility_status=FeasibilityStatus.UNVERIFIED,
             claims=list(draft.claims),
             issues=[
@@ -281,32 +252,22 @@ def apply_claim_rules(
     )
     # 개별 claim 의 WEAK 판정은 warning 이라 재작성을 일으키지 않으므로,
     # claim 간 연결 문제는 고칠 수 있는 error 로 막아 재작성을 유도한다.
+    known_ids = {claim.claim_id for claim in draft.claims}
     issues.extend(
-        _issue("REASONING_GAP", f"추론 연결이 결론을 뒷받침하지 못함: {message}", error=True, fixable=True)
-        for message in reasoning_issues or []
-        if message.strip()
-    )
-
-    clusters = _shock_clusters(claims)
-    floor = severity_floor(len(clusters))
-    severity = declared or floor
-    if _SEVERITY_ORDER.index(severity) < _SEVERITY_ORDER.index(floor):
-        issues.append(
-            _issue(
-                "SEVERITY_RAISED",
-                f"독립 충격 묶음 {len(clusters)}개({', '.join(clusters)})로 시나리오 강도를 "
-                f"{severity.value} → {floor.value} 로 올림",
-                error=False,
-                fixable=False,
-            ),
+        _issue(
+            "REASONING_GAP",
+            f"추론 연결이 결론을 뒷받침하지 못함({_REASONING_FIX_LABEL[issue.fix]}): {issue.message.strip()}",
+            error=True,
+            fixable=True,
+            claim_id=", ".join(claim_id.strip() for claim_id in issue.claim_ids if claim_id.strip() in known_ids),
         )
-        severity = floor
+        for issue in reasoning_issues or []
+        if issue.message.strip()
+    )
 
     conflicted = any(_conflicts_with_evidence(claim) for claim in claims)
     return EventValidation(
-        scenario_severity=severity,
         feasibility_status=FeasibilityStatus.CONFLICTS_WITH_EVIDENCE if conflicted else FeasibilityStatus.CONSISTENT,
-        shock_clusters=clusters,
         claims=claims,
         issues=issues,
     )

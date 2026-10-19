@@ -137,14 +137,20 @@ async def validate_claims(
     errors = [issue for issue in validation.issues if issue.severity is IssueSeverity.ERROR]
     logger.info(
         f"[NODE][validate_claims] RESULT | pass={state.revision_count} "
-        f"| severity={validation.scenario_severity.value} | feasibility={validation.feasibility_status.value} "
-        f"| clusters={validation.shock_clusters} | claims={len(validation.claims)} | errors={[i.code for i in errors]} "
+        f"| feasibility={validation.feasibility_status.value} "
+        f"| claims={len(validation.claims)} | errors={[i.code for i in errors]} "
         f"| warnings={len(validation.issues) - len(errors)}",
     )
 
     fixable = any(issue.fixable for issue in errors)
     if fixable and state.revision_count < MAX_DRAFT_REVISIONS:
         logger.warning(f"[NODE][validate_claims] REVISE | pass={state.revision_count} → {state.revision_count + 1}")
+        # 재작성에 넘기는 error 를 남겨, 재작성 후 같은 이슈가 반복됐는지 새로 생겼는지 로그로 비교할 수 있게 한다.
+        for issue in errors:
+            logger.warning(
+                f"[NODE][validate_claims] REVISE_ISSUE | code={issue.code} | claim={issue.claim_id!r} "
+                f"| fixable={issue.fixable} | message={issue.message!r}",
+            )
         return {
             "validation": validation,
             "fact_timeline": timeline,

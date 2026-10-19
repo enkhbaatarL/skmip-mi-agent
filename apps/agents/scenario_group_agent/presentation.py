@@ -1047,9 +1047,9 @@ def _role_rationale_markdown(
     lines = ["## 대표 Scenario 선택 근거"]
     role_labels = {"ceiling": "Ceiling", "mixed": "Mixed", "floor": "Floor"}
     criteria = {
-        "ceiling": "생성된 Scenario 중 JKM 압력대가 가장 높은 Scenario",
-        "mixed": "상승·하락 기여를 동시에 가진 내부 Scenario 중 Balanced에 가장 가까운 Scenario",
-        "floor": "생성된 Scenario 중 JKM 압력대가 가장 낮은 Scenario",
+        "ceiling": "Baseline을 제외한 Scenario 중 Baseline 대비 JKM 압력이 가장 높은 Scenario",
+        "mixed": "상승·하락 기여를 동시에 가진 Scenario 중 Baseline 대비 압력 차이가 가장 작은 Scenario",
+        "floor": "Baseline을 제외한 Scenario 중 Baseline 대비 JKM 압력이 가장 낮은 Scenario",
     }
     lever_code_pattern = _lever_code_pattern(lever_labels)
     display_order_by_dimension_id = {header.key: header.display_order for header in headers}

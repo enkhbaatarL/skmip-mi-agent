@@ -7,6 +7,10 @@ import hashlib
 import json
 from typing import TYPE_CHECKING, Any, TypedDict
 
+from apps.agents.scenario_group_agent.utils.pressure_band import (
+    assign_relative_pressure_bands,
+    uses_unique_strong_bands,
+)
 from apps.common.exceptions.custom import MIBaseError
 from apps.common.values.error_codes import ErrorCode
 from apps.persistence.enums import ScenarioStatus
@@ -768,6 +772,7 @@ class ScenarioService:
                         active_scenarios,
                         list(group.dimension_definitions or []),
                         user_id=user_id,
+                        generation_diagnostics=dict(getattr(group, "generation_diagnostics", None) or {}),
                     )
                     group_repository.update_group(
                         group,
@@ -844,6 +849,7 @@ class ScenarioService:
         dimension_definitions: list[dict[str, Any]],
         *,
         user_id: int,
+        generation_diagnostics: dict[str, Any] | None = None,
     ) -> None:
         if not scenarios:
             return
@@ -860,13 +866,6 @@ class ScenarioService:
                 )
                 contribution_by_value[(dimension_id, value_id)] = contribution_score.get(contribution, 0)
 
-        pressure_rank = {
-            "strong_bearish": 0,
-            "bearish": 1,
-            "balanced": 2,
-            "bullish": 3,
-            "strong_bullish": 4,
-        }
         scenario_scores: dict[int, tuple[int, set[int]]] = {}
         for scenario in scenarios:
             contributions = {
@@ -890,35 +889,42 @@ class ScenarioService:
             ),
         )
         baseline.baseline_yn = "Y"
-        floor = min(
-            scenarios,
-            key=lambda item: (
-                scenario_scores[int(item.scenario_id)][0],
-                pressure_rank.get(str(item.global_pressure_band), 2),
-                int(item.display_order or 0),
-            ),
+        # pressure band는 Base 대비 pressureContribution 합산 차이다. 편집으로 Base나 조합이 바뀌었을 수
+        # 있으므로 모든 Scenario의 band를 다시 계산한다. band_unique 정책 그룹은 생성 단계와 같은 strong 강등을 적용한다.
+        base_score = scenario_scores[int(baseline.scenario_id)][0]
+        delta_by_id = {
+            scenario_id: score - base_score for scenario_id, (score, _contributions) in scenario_scores.items()
+        }
+        bands = assign_relative_pressure_bands(
+            [delta_by_id[int(scenario.scenario_id)] for scenario in scenarios],
+            unique_strong=uses_unique_strong_bands(generation_diagnostics),
         )
-        ceiling = max(
-            scenarios,
-            key=lambda item: (
-                scenario_scores[int(item.scenario_id)][0],
-                pressure_rank.get(str(item.global_pressure_band), 2),
-                int(item.display_order or 0),
-            ),
-        )
-        floor.scenario_role = "floor"
-        ceiling.scenario_role = "ceiling"
+        for scenario, band in zip(scenarios, bands, strict=True):
+            scenario.global_pressure_band = band
+
+        # floor/ceiling은 Base를 제외한 Scenario 중 Base 대비 압력이 가장 낮은/높은 것이다.
+        non_base = [item for item in scenarios if item is not baseline]
+        if len(non_base) >= 2:
+            floor = min(
+                non_base,
+                key=lambda item: (delta_by_id[int(item.scenario_id)], int(item.display_order or 0)),
+            )
+            ceiling = max(
+                (item for item in non_base if item is not floor),
+                key=lambda item: (delta_by_id[int(item.scenario_id)], int(item.display_order or 0)),
+            )
+            floor.scenario_role = "floor"
+            ceiling.scenario_role = "ceiling"
         mixed_candidates = [
             item
             for item in scenarios
-            if int(item.scenario_id) not in {int(floor.scenario_id), int(ceiling.scenario_id)}
-            and {-1, 1} <= scenario_scores[int(item.scenario_id)][1]
+            if item.scenario_role is None and {-1, 1} <= scenario_scores[int(item.scenario_id)][1]
         ]
         if mixed_candidates:
             min(
                 mixed_candidates,
                 key=lambda item: (
-                    abs(pressure_rank.get(str(item.global_pressure_band), 2) - 2),
+                    abs(delta_by_id[int(item.scenario_id)]),
                     -Decimal(str(item.probability_score or 0)),
                 ),
             ).scenario_role = "mixed"
