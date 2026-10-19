@@ -44,7 +44,7 @@ FALLBACK_EVENT_TYPE_L2_ID: int | None = None
 
 # 분기 판단·검색 계획·근거 정리·유형 분류처럼 판단 범위가 좁은 SPEED 단계의 reasoning effort.
 # SPEED/QUALITY 가 같은 배포 모델을 가리켜도 지연을 줄이도록 단계 단위로 낮춘다.
-# 초안 생성·claim 검증(QUALITY 단계)은 설정값(llm_event_draft/validate_reasoning_effort)을 따른다.
+# 초안 생성·claim 검증(QUALITY 단계)은 전역 설정값(llm_reasoning_effort)을 따른다.
 LIGHT_REASONING_EFFORT: Final = "low"
 
 # claim 검증에서 고칠 수 있는 error 가 나왔을 때 초안을 다시 생성하는 최대 횟수.

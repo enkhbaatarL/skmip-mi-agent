@@ -70,7 +70,7 @@ async def _verify_draft(
             temperature=0.0,
             trace_context=trace_context,
             stream=get_settings().llm_stream_enabled,
-            reasoning_effort=get_settings().llm_event_validate_reasoning_effort,
+            reasoning_effort=get_settings().llm_reasoning_effort,
         )
     except Exception:
         # 검증하지 못한 초안은 근거 정합성을 보장할 수 없으므로 규칙 엔진이 error(VALIDATION_FAILED)로 막는다.
