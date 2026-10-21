@@ -2844,6 +2844,9 @@ def test_v4_prompts_follow_fact_path_uncertainty_contract() -> None:
     assert "[D1.V1]" in scenario
     assert "미리 정한 유형에 맞추지 말고" in scenario
     assert "pressure 단계만 한 칸씩 바꾼" in scenario
+    assert "title은 대체로 22~38자의 서술형 구절이며 40자를 넘지 않습니다" in scenario
+    assert "핵심 주체(누가·무엇이)와 그 상태 변화를 함께 써서" in scenario
+    assert "조사 없이 명사와 동작 명사를 이어 붙이거나" in scenario
     assert "narrative는 80~300자의 한국어 두 문장" in scenario
     assert "상반된 효과가 있으면 우세·상쇄" in scenario
     assert "내부 참조 ID를 노출하지 말고" in scenario
