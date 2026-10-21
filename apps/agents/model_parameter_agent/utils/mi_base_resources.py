@@ -180,11 +180,7 @@ def _fallback_selection(
     )
 
 
-def _classify_inputs(
-    snapshot: MiBaseSnapshot,
-    *,
-    bucket: str,
-) -> tuple[_SelectedInput, ...]:
+def _classify_inputs(snapshot: MiBaseSnapshot) -> tuple[_SelectedInput, ...]:
     selected: dict[str, _SelectedInput] = {}
     for file in snapshot.files_for(MI_BASE_RELATION_CODE):
         original_name = str(file.org_file_nm or "").strip()
@@ -206,7 +202,6 @@ def _classify_inputs(
             file=file,
             location=_parse_object_location(
                 str(file.strg_path_nm or ""),
-                configured_bucket=bucket,
                 file_no=file.file_no,
             ),
         )
@@ -222,11 +217,10 @@ def _classify_inputs(
 def _parse_object_location(
     value: str,
     *,
-    configured_bucket: str,
     file_no: int,
 ) -> _ObjectLocation:
     raw_value = value.strip()
-    if not raw_value or not configured_bucket.strip():
+    if not raw_value:
         message = f"Object Storage location is incomplete: file_no={file_no}"
         raise MiBaseResourceFallbackError(message)
     parsed = urlsplit(raw_value)
@@ -235,14 +229,10 @@ def _parse_object_location(
     if ".." in parts:
         message = f"Object Storage key is unsafe: file_no={file_no}"
         raise MiBaseResourceFallbackError(message)
-    bucket = configured_bucket.strip()
-    if parts and parts[0] == bucket:
-        key_parts = parts[1:]
-    elif not parsed.scheme and not parsed.netloc:
-        key_parts = parts
-    else:
-        message = f"Linked file bucket differs from configured bucket: file_no={file_no}"
+    if not parts:
+        message = f"Object Storage location is incomplete: file_no={file_no}"
         raise MiBaseResourceFallbackError(message)
+    bucket, *key_parts = parts
     if not key_parts:
         message = f"Object Storage key is empty: file_no={file_no}"
         raise MiBaseResourceFallbackError(message)
@@ -604,7 +594,7 @@ async def _prepare_mi_base_release(  # noqa: C901
     fallback_policy: ModelParameterMiBaseFallbackConfig,
     client_factory: Callable[[ModelParameterResourceStorageConfig], ObjectStorageReader],
 ) -> MiBaseResourceSelection:
-    inputs = _classify_inputs(snapshot, bucket=storage.bucket)
+    inputs = _classify_inputs(snapshot)
     cache_root, releases_root = await asyncio.to_thread(
         _prepare_cache_directories,
         storage.local_root,
