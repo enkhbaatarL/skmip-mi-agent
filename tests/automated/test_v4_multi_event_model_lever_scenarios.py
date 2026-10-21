@@ -29,6 +29,7 @@ from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.v4_sche
     V4EventImpactAnalysisDraft,
     V4EventImpactAnalysisResult,
     V4ExcludedScenarioCandidate,
+    V4ForecastClaim,
     V4GenerationResult,
     V4GroupTitleDraft,
     V4LeverStateDraft,
@@ -51,6 +52,8 @@ from apps.agents.scenario_group_agent.prompts.model_lever_scenario_generation im
     build_v4_additional_dimension_user_prompt,
     build_v4_dimension_design_user_prompt,
     build_v4_event_fact_candidates,
+    build_v4_event_impact_analysis_user_prompt,
+    build_v4_forecast_claims,
     build_v4_interaction_analysis_user_prompt,
     build_v4_scenario_synthesis_user_prompt,
     event_open_question_budgets,
@@ -2823,7 +2826,8 @@ def test_v4_prompts_follow_fact_path_uncertainty_contract() -> None:
     assert "두 상태를 `·`로 나열하지 않습니다" in dimension
     assert "rationale은 최대 200자의 구체적인 한국어 한 문장" in dimension
     assert "question은 필요한 관측 정보와 판단 대상을 충분히 포함" in dimension
-    assert "`사실: … | 파생: … | 가정: … | 영향: …` 형식" in dimension
+    assert "`사실: … | 전망: … | 파생: … | 가정: … | 영향: …` 형식" in dimension
+    assert "## 전망·계획 원문 (관측 사실 아님)" in dimension
     assert "Choice끼리 pressure가 겹치지 않게" in dimension
     assert "Impact의 현재 상태가\n  지속·강화되는 Choice는 그 Impact와 같은 방향" in dimension
     assert "같은 상태를 다르게 매기지 않습니다" in dimension
@@ -2993,7 +2997,8 @@ def test_v4_readable_copy_contract_matches_table_density() -> None:
     assert "관측 시점·수치·시장 신호·대상·영향 경로" in rationale_schema["description"]
     assert rationale_schema["maxLength"] == 200
     assert "minLength" not in rationale_schema
-    assert "'사실: 관측 사실 | 파생:" in why_schema["description"]
+    assert "'사실: 관측 사실 | 전망: 원문의 주체·발표일을 붙인 전망·계획 | 파생:" in why_schema["description"]
+    assert "전망 수치는 사실 칸에 쓰지 않음" in why_schema["description"]
     assert "영향: JKM 전달 경로와 방향" in why_schema["description"]
     assert "답·응답·선택으로 표현하지 않음" in why_schema["description"]
     assert all(len(choice.label) <= 30 for dimension in readable.dimensions for choice in dimension.choices)
@@ -3542,3 +3547,215 @@ def test_uses_unique_strong_bands_treats_unrecorded_groups_as_band_unique(
     expected: bool,
 ) -> None:
     assert uses_unique_strong_bands(diagnostics) is expected
+
+
+# --- Event 사실과 전망 구분 ---
+
+_FORECAST_CONSUMPTION = (
+    "같은 전망에서 미국 국내 천연가스 소비는 2025년 91.9 bcfd에서 2026년 92.4 bcfd, 2027년 93.8 bcfd로 늘어 "
+    "사상 최고치를 기록할 것으로 예상됐다."
+)
+
+
+def _forecast_event_payload() -> dict[str, object]:
+    return {
+        "mi_event_id": 32,
+        "one_line_summary": "[미국 가스 공급] 생산·소비 전망 상향",
+        "key_bullets": [
+            (
+                "9월 30일 기준 LSEG는 9월 미국 평균 생산이 112.2 bcfd였지만 "
+                "최근 1주 평균은 약 109.4 bcfd로 낮아졌다고 제시했다."
+            ),
+            _FORECAST_CONSUMPTION,
+        ],
+    }
+
+
+def _analysis_with_forecast() -> V4EventImpactAnalysisResult:
+    return _analysis().model_copy(
+        update={
+            "forecast_claims": [
+                V4ForecastClaim(
+                    event_id=101,
+                    topic="미국 가스 공급",
+                    claim_kind="forecast",
+                    text=_FORECAST_CONSUMPTION,
+                    anchors=["93.8"],
+                ),
+            ],
+        },
+    )
+
+
+def test_v4_forecast_claims_cover_unselected_source_sentences() -> None:
+    claims = build_v4_forecast_claims(_forecast_event_payload(), analysis_as_of="2026-10-14")
+
+    assert claims == [
+        {
+            "event_id": 32,
+            "topic": "미국 가스 공급",
+            "claim_kind": "forecast",
+            "text": _FORECAST_CONSUMPTION,
+            "anchors": ["92.4", "93.8"],
+        },
+    ]
+
+
+def test_v4_event_analysis_prompt_tags_forecast_candidates() -> None:
+    prompt = build_v4_event_impact_analysis_user_prompt(
+        events=[_forecast_event_payload()],
+        impact_levers=[],
+        catalog_version="v4.1",
+        analysis_as_of="2026-10-14",
+    )
+
+    assert f"2. [전망] {_FORECAST_CONSUMPTION}" in prompt
+    assert "`[전망]`·`[계획]` 표시는 서버가 붙인 분류이므로 복사하지 않고" in prompt
+
+
+def test_v4_event_analysis_accepts_tagged_copy_and_classifies_fact() -> None:
+    readable = _readable_event_draft(101)
+    readable.event_facts = ["[전망] 동북아 한파 지속 전망"]
+    readable.impacts[0].evidence = ["[전망] 동북아 한파 지속 전망"]
+    claim = V4ForecastClaim(event_id=101, claim_kind="forecast", text="동북아 한파 지속 전망", anchors=[])
+
+    draft = expand_v4_readable_event_analysis(
+        readable,
+        event_id=101,
+        observed_at="2026-08-05",
+        fact_candidates={"f1": "동북아 한파 지속 전망"},
+        forecast_claims=[claim],
+    )
+
+    assert draft.event_facts[0].observed_basis == "동북아 한파 지속 전망"
+    assert draft.event_facts[0].claim_kind == "forecast"
+    assert draft.forecast_claims == [claim]
+
+
+def test_v4_legacy_event_fact_without_claim_kind_reads_as_observed() -> None:
+    assert all(fact.claim_kind == "observed" for fact in _analysis().event_facts)
+
+
+def test_v4_dimension_rejects_forecast_value_stated_as_fact() -> None:
+    draft = _dimension_draft()
+    value = draft.dimension_definitions[0].values[1]
+    value.assumption_rationale = (
+        "사실: 미국 국내 소비가 2027년 93.8 bcfd로 증가함 | 가정: 추가 수요가 국내에서 흡수됨 | 영향: JKM 상승 압력"
+    )
+
+    with pytest.raises(ValueError, match=r"사실 칸에 전망값 93\.8"):
+        finalize_v4_dimension_design(draft, impact_analysis=_analysis_with_forecast(), impact_levers=_catalog())
+
+    result = finalize_v4_dimension_design(
+        draft,
+        impact_analysis=_analysis_with_forecast(),
+        impact_levers=_catalog(),
+        enforce_forecast_separation=False,
+    )
+    assert [warning.code for warning in result.validation_warnings] == ["FORECAST_STATED_AS_FACT"]
+
+
+def test_v4_dimension_accepts_forecast_value_in_forecast_field() -> None:
+    draft = _dimension_draft()
+    draft.dimension_definitions[0].values[1].assumption_rationale = (
+        "사실: 9월 실적은 확인됨 | 전망: 10월 6일 단기 에너지 전망은 2027년 소비를 93.8 bcfd로 제시 | "
+        "가정: 추가 수요가 국내에서 흡수됨 | 영향: JKM 상승 압력"
+    )
+
+    result = finalize_v4_dimension_design(
+        draft,
+        impact_analysis=_analysis_with_forecast(),
+        impact_levers=_catalog(),
+    )
+
+    assert "FORECAST_STATED_AS_FACT" not in [warning.code for warning in result.validation_warnings]
+
+
+def test_v4_finalizer_warns_when_scenario_states_forecast_value_as_fact() -> None:
+    synthesis = _synthesis()
+    synthesis.scenarios[0].explanation = "미국 국내 소비가 2027년 93.8 bcfd로 늘어 원료가스 여력이 줄어든다."
+
+    finalized, _coverage = finalize_v4_generation_result(
+        synthesis,
+        group_title="테스트 그룹",
+        group_summary=_group_summary(),
+        impact_analysis=_analysis_with_forecast(),
+        dimension_design=_dimensions(),
+        impact_levers=_catalog(),
+    )
+
+    warnings = [warning for warning in finalized.validation_warnings if warning.code == "FORECAST_STATED_AS_FACT"]
+    assert len(warnings) == 1
+    assert warnings[0].stage == "scenario_synthesis"
+
+
+def test_v4_prompts_mark_forecast_based_paths_and_list_forecast_claims() -> None:
+    analysis = _analysis_with_forecast().model_dump()
+    analysis["event_facts"][0]["claim_kind"] = "forecast"
+    analysis["decision_basis"].append("소비 전망치 93.8 bcfd를 감안하면 수출 여력은 제한된다.")
+
+    dimension = build_v4_dimension_design_user_prompt(
+        impact_analysis=analysis,
+        validation_warnings=[],
+        analysis_as_of="2026-10-14",
+    )
+    scenario = build_v4_scenario_synthesis_user_prompt(
+        analysis_as_of="2026-10-14",
+        events=[],
+        impact_analysis=analysis,
+        dimension_definitions=[definition.model_dump() for definition in _dimensions().dimension_definitions],
+        validation_warnings=[],
+    )
+
+    assert f"- [전망] (미국 가스 공급) {_FORECAST_CONSUMPTION}" in dimension
+    assert "Event 101:" not in dimension
+    assert "- [전망 포함] 소비 전망치 93.8 bcfd" in dimension
+    assert "[전망 기반] " in dimension
+    assert "[전망 기반] " in scenario
+    assert "`[전망 기반]` 공통 영향은 주체가 밝힌 전망·계획을 전제로 한 경로입니다." in scenario
+
+
+@pytest.mark.parametrize(
+    "why",
+    [
+        "전망: 주체·발표일이 제시되지 않은 Event 30은 2032년 수요를 284 TWh로 제시 | 가정: 감소 | 영향: JKM 하락",
+        "전망: 발표일이 제시되지 않은 스페인 수요 전망은 284 TWh를 제시 | 가정: 감소 | 영향: JKM 하락",
+    ],
+)
+def test_v4_dimension_rejects_source_meta_phrase_and_event_id(why: str) -> None:
+    draft = _dimension_draft()
+    draft.dimension_definitions[0].values[1].assumption_rationale = why
+
+    with pytest.raises(ValueError, match="출처 부재 설명이나 Event ID"):
+        finalize_v4_dimension_design(draft, impact_analysis=_analysis(), impact_levers=_catalog())
+
+    result = finalize_v4_dimension_design(
+        draft,
+        impact_analysis=_analysis(),
+        impact_levers=_catalog(),
+        enforce_forecast_separation=False,
+    )
+    assert [warning.code for warning in result.validation_warnings] == ["WHY_SOURCE_META_PHRASE"]
+
+
+def test_v4_dimension_accepts_forecast_without_attribution_meta() -> None:
+    draft = _dimension_draft()
+    draft.dimension_definitions[0].values[1].assumption_rationale = (
+        "전망: 스페인 2032년 가스 수요 전망은 284 TWh를 제시 | 가정: 수요가 284 TWh 이하 | 영향: JKM 하락 압력"
+    )
+
+    result = finalize_v4_dimension_design(draft, impact_analysis=_analysis(), impact_levers=_catalog())
+
+    assert result.validation_warnings == []
+
+
+def test_v4_dimension_prompt_forbids_absence_only_fact_and_source_meta() -> None:
+    dimension = build_v4_dimension_design_user_prompt(
+        impact_analysis=_analysis().model_dump(),
+        validation_warnings=[],
+        analysis_as_of="2026-10-14",
+    )
+
+    assert "근거가 없다는 문장만으로 사실 칸을 채우지 않습니다" in dimension
+    assert "`주체·발표일이 제시되지 않은`처럼 출처가 없다는 설명이나" in dimension
+

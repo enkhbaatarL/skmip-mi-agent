@@ -33,6 +33,7 @@ from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.v4_sche
     V4DimensionDesignResult,
     V4EventImpactAnalysisDraft,
     V4EventImpactAnalysisResult,
+    V4ForecastClaim,
     V4GenerationResult,
     V4GroupTitleDraft,
     V4ReadableDimensionDesignDraft,
@@ -60,6 +61,7 @@ from apps.agents.scenario_group_agent.prompts.model_lever_scenario_generation im
     build_v4_dimension_design_user_prompt,
     build_v4_event_fact_candidates,
     build_v4_event_impact_analysis_user_prompt,
+    build_v4_forecast_claims,
     build_v4_group_title_user_prompt,
     build_v4_interaction_analysis_user_prompt,
     build_v4_scenario_synthesis_user_prompt,
@@ -174,6 +176,10 @@ async def _analyze_event_with_retries(
     event_id = int(event.mi_event_id)
     event_payload = event.model_dump()
     fact_candidates = build_v4_event_fact_candidates(event_payload)
+    forecast_claims = [
+        V4ForecastClaim.model_validate({**claim, "event_id": event_id})
+        for claim in build_v4_forecast_claims(event_payload, analysis_as_of=analysis_as_of)
+    ]
     feedback: str | None = None
     for attempt in range(1, MAX_STAGE_ATTEMPTS + 1):
         await _backoff(attempt)
@@ -206,6 +212,7 @@ async def _analyze_event_with_retries(
                 observed_at=event.occurred_at,
                 fact_candidates=fact_candidates,
                 open_question_limit=open_question_budget,
+                forecast_claims=forecast_claims,
             )
             result = finalize_v4_event_impact_analysis(
                 draft,
@@ -276,6 +283,7 @@ class AnalyzeEventImpactsNode(BaseNode):
         local_drafts = [v4_analysis_result_to_draft(outcome.result) for outcome in outcomes if outcome.result]
         merged = V4EventImpactAnalysisDraft(
             event_facts=[fact for draft in local_drafts for fact in draft.event_facts],
+            forecast_claims=[claim for draft in local_drafts for claim in draft.forecast_claims],
             decision_basis=[item for draft in local_drafts for item in draft.decision_basis],
             event_exclusions=[item for draft in local_drafts for item in draft.event_exclusions],
             impact_paths=[path for draft in local_drafts for path in draft.impact_paths],
@@ -519,6 +527,8 @@ def validate_v4_dimensions(state: V4MultiEventGenerationState) -> dict[str, Any]
             state.dimension_draft,
             impact_analysis=state.analysis_draft,
             impact_levers=state.impact_levers,
+            # 마지막 시도에서는 사실·전망 구분 위반으로 생성을 실패시키지 않고 경고로 남긴다.
+            enforce_forecast_separation=state.dimension_attempt < MAX_STAGE_ATTEMPTS,
         )
         return {
             "dimension_draft": finalized_design,
@@ -849,6 +859,7 @@ def persist_v4_generation(state: V4MultiEventGenerationState) -> dict[str, Any]:
         coverage_status=coverage.coverage_status,
         analysis_as_of=state.analysis_as_of,
         event_facts=analysis.event_facts,
+        forecast_claims=analysis.forecast_claims,
         decision_basis=analysis.decision_basis,
         event_exclusions=analysis.event_exclusions,
         impact_paths=analysis.impact_paths,

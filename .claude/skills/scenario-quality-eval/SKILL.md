@@ -160,6 +160,7 @@ Python 코드로 재현 가능하게 검사한다. 의미 판단이 필요한 �
 - `R-07`: scenario별 signpost가 1개 이상이고 id/label/strength가 존재하며 `probabilityImpactScore` 범위와 direction code가 callback 노출 필드 기준으로 유효하다.
 - `R-08`: 동일 signpost label이 모든 scenario에 공통 등장하는 비율을 계산한다. 전 scenario 공통 signpost는 변별력 0점 신호다.
 - `R-09`: validation callback의 stage/isValid 정합성을 확인한다. `isValid=true`면 `scenario_validated`, `isValid=false`면 `scenario_created`가 기대값이다.
+- `R-10`: Choice `assumptionRationale`의 `사실` 칸에 `generationDiagnostics.forecastClaims`의 전망값이 전망 표시 없이 쓰였는지 확인한다. `<mi_event_id>_group_detail.json`(GET `/scenario-groups/{id}`)이 없거나 `forecastClaims` 도입 전 그룹이면 SKIP이다.
 
 Layer 1 FAIL은 구조상 사용 불가능한 결과를 뜻한다. Layer 1 WARN/SKIP은 리포트에 분리해서 표시한다.
 

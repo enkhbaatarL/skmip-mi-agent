@@ -13,6 +13,10 @@ from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.v4_enum
     StateDirection,
 )
 from apps.agents.scenario_group_agent.prompts.event_context import CompactEventContext
+from apps.agents.scenario_group_agent.utils.claim_kind import (
+    classify_claim_kind,
+    extract_forecast_anchors,
+)
 
 
 MODEL_LEVER_SYSTEM_PROMPT = """하나 이상의 MI Event로 JKM 시나리오를 설계합니다. 입력 사실과 가정을 구분하고,
@@ -267,6 +271,53 @@ def build_v4_event_fact_candidates(event: dict[str, Any]) -> dict[str, str]:
     return {f"f{index}": fact for index, fact in enumerate(facts[:5], start=1)}
 
 
+_CLAIM_KIND_LABELS = {"forecast": "전망", "plan": "계획"}
+_CLAIM_KIND_TAGS = {kind: f"[{label}] " for kind, label in _CLAIM_KIND_LABELS.items()}
+
+
+_TOPIC_PATTERN = re.compile(r"^\s*\[([^\]]{1,40})\]")
+
+
+def _event_topic(event: dict[str, Any]) -> str:
+    """Return the '[토픽]' prefix of the Event title or summary so prompts never need the Event ID."""
+    compact = CompactEventContext.from_event(event)
+    for text in (compact.summary, compact.title):
+        match = _TOPIC_PATTERN.match(text)
+        if match:
+            return match.group(1).strip()
+    return compact.title[:30].strip()
+
+
+def build_v4_forecast_claims(event: dict[str, Any], *, analysis_as_of: str) -> list[dict[str, Any]]:
+    """Classify every source sentence and keep forecast/plan claims with their forecast-only values.
+
+    Fact로 선택되지 않은 전망 문장도 decisionBasis를 거쳐 Choice 근거에 들어올 수 있으므로 후보 전체를 판정한다.
+    """
+    sentences = _v4_event_source_sentences(event)
+    kinds = [classify_claim_kind(sentence) for sentence in sentences]
+    observed = [sentence for sentence, kind in zip(sentences, kinds, strict=True) if kind == "observed"]
+    year_text = str(analysis_as_of or "")[:4]
+    # 기준일이 없으면 과거 기준값을 걸러낼 수 없으므로 모든 연도의 전망값을 남긴다.
+    analysis_year = int(year_text) if year_text.isdigit() else 0
+    event_id = int(event.get("mi_event_id") or event.get("event_id") or 0)
+    topic = _event_topic(event)
+    return [
+        {
+            "event_id": event_id,
+            "topic": topic,
+            "claim_kind": kind,
+            "text": sentence,
+            "anchors": (
+                extract_forecast_anchors(sentence, analysis_year=analysis_year, observed_texts=observed)
+                if kind == "forecast"
+                else []
+            ),
+        }
+        for sentence, kind in zip(sentences, kinds, strict=True)
+        if kind != "observed"
+    ]
+
+
 def _v4_event_time_lines(event: dict[str, Any], occurred_at: str) -> str:
     """Render the Event time, falling back to the source record period when occurred_at is missing.
 
@@ -349,7 +400,10 @@ def build_v4_event_impact_analysis_user_prompt(
     )
     compact = CompactEventContext.from_event(events[0])
     fact_candidates = build_v4_event_fact_candidates(events[0])
-    fact_lines = "\n".join(f"{index}. {fact}" for index, fact in enumerate(fact_candidates.values(), start=1))
+    fact_lines = "\n".join(
+        f"{index}. {_CLAIM_KIND_TAGS.get(classify_claim_kind(fact), '')}{fact}"
+        for index, fact in enumerate(fact_candidates.values(), start=1)
+    )
     question_budget = open_question_budget or event_open_question_budgets(selected_event_count)[0]
     detail_analysis = str(events[0].get("detail_analysis") or "").strip()[:V4_DETAIL_ANALYSIS_MAX_CHARS]
     detail_section = (
@@ -385,6 +439,11 @@ def build_v4_event_impact_analysis_user_prompt(
         "3. 사실을 인정한 뒤에도 결과를 바꿀 열린 질문은 무엇입니까?\n\n"
         "## 출력 규칙\n"
         "- eventFacts에는 위 후보 문장을 글자까지 그대로 복사합니다. 새 사실을 작성하지 않습니다.\n"
+        "  `[전망]`·`[계획]` 표시는 서버가 붙인 분류이므로 복사하지 않고 문장 본문만 복사합니다.\n"
+        "- `[전망]`·`[계획]` 후보는 관측된 사실이 아니라 주체가 밝힌 전망·계획입니다. 전제로 쓸 수 있지만\n"
+        "  decisionBasis와 impacts.analysis에 쓸 때는 `전망`·`계획` 표현을 유지하고, 원문에 주체·발표일이 있으면\n"
+        "  `10월 6일 단기 에너지 전망 기준`처럼 함께 씁니다. 전망 수치를 `증가함`, `감소함`처럼 이미 일어난\n"
+        "  일로 쓰지 않습니다.\n"
         "- eventFacts[0]은 Primary Fact이며 반드시 후보 1번(Event 제목·요약의 핵심 문장)을 그대로 복사합니다.\n"
         "  다른 후보가 JKM과 더 직접 연결되더라도 후보 1번을 빼거나 뒤로 보내지 않습니다. 중요한 영향이 있는데\n"
         "  후보 1번을 선택하지 않으면 서버 검증에서 실패합니다.\n"
@@ -616,6 +675,7 @@ def _interaction_aliases(impact_analysis: dict[str, Any]) -> dict[str, str]:
 
 def _render_uncertainty_cards(impact_analysis: dict[str, Any]) -> str:
     paths = {path.get("impact_path_id"): path for path in impact_analysis.get("impact_paths") or []}
+    projected_paths = _forecast_based_path_ids(impact_analysis)
     interactions = {
         interaction.get("interaction_id"): interaction for interaction in impact_analysis.get("interactions") or []
     }
@@ -627,7 +687,11 @@ def _render_uncertainty_cards(impact_analysis: dict[str, Any]) -> str:
     cards = []
     for index, uncertainty in enumerate(uncertainties, start=1):
         path_ids = uncertainty.get("impact_path_ids") or []
-        path_text = " / ".join(str((paths.get(path_id) or {}).get("mechanism") or path_id) for path_id in path_ids)
+        path_text = " / ".join(
+            f"{'[전망 기반] ' if str(path_id) in projected_paths else ''}"
+            f"{(paths.get(path_id) or {}).get('mechanism') or path_id}"
+            for path_id in path_ids
+        )
         interaction = interactions.get(uncertainty.get("interaction_id"))
         interaction_text = str(interaction.get("mechanism") or "") if interaction else ""
         lines = [
@@ -649,9 +713,50 @@ def _render_uncertainty_cards(impact_analysis: dict[str, Any]) -> str:
     return "\n\n".join(cards) or "- Dimension으로 만들 수 있는 열린 질문이 없습니다."
 
 
+def _forecast_anchor_values(impact_analysis: dict[str, Any]) -> list[str]:
+    return list(
+        dict.fromkeys(
+            str(anchor)
+            for claim in impact_analysis.get("forecast_claims") or []
+            if claim.get("claim_kind") == "forecast"
+            for anchor in claim.get("anchors") or []
+        ),
+    )
+
+
+def _forecast_based_path_ids(impact_analysis: dict[str, Any]) -> set[str]:
+    """Return Impact paths whose evidence includes a forecast or plan Fact."""
+    projected_fact_ids = {
+        str(fact.get("fact_id"))
+        for fact in impact_analysis.get("event_facts") or []
+        if fact.get("claim_kind") in {"forecast", "plan"}
+    }
+    return {
+        str(path.get("impact_path_id"))
+        for path in impact_analysis.get("impact_paths") or []
+        if projected_fact_ids.intersection(str(item) for item in path.get("source_fact_ids") or [])
+    }
+
+
+def _render_forecast_claims(impact_analysis: dict[str, Any]) -> str:
+    claims = [
+        f"- [{_CLAIM_KIND_LABELS.get(str(claim.get('claim_kind')), '계획')}] "
+        f"{f'({claim.get("topic")}) ' if claim.get('topic') else ''}{claim.get('text')}"
+        for claim in impact_analysis.get("forecast_claims") or []
+    ]
+    return "\n".join(claims) or "- 없음"
+
+
 def _render_decision_basis(impact_analysis: dict[str, Any]) -> str:
     basis = [str(item).strip() for item in impact_analysis.get("decision_basis") or [] if str(item).strip()]
-    return "\n".join(f"- {item}" for item in basis) or "- 없음"
+    anchors = _forecast_anchor_values(impact_analysis)
+    lines = []
+    for item in basis:
+        projected = classify_claim_kind(item) != "observed" or any(
+            re.search(rf"(?<![\d.]){re.escape(anchor)}(?!\d)", item) for anchor in anchors
+        )
+        lines.append(f"- {'[전망 포함] ' if projected else ''}{item}")
+    return "\n".join(lines) or "- 없음"
 
 
 # Group 238: 2032년 수요 수준(284 TWh)을 "수요 감소 폭" label 아래 두어 감소량으로 오독된 사례를 막는다.
@@ -713,6 +818,10 @@ def build_v4_dimension_design_user_prompt(
         f"## 분석 기준일\n- {analysis_as_of}\n\n"
         "## 숫자·시점 판단 근거\n"
         f"{_render_decision_basis(impact_analysis)}\n\n"
+        "## 전망·계획 원문 (관측 사실 아님)\n"
+        f"{_render_forecast_claims(impact_analysis)}\n"
+        "- 위 문장과 `[전망 포함]`·`[전망 기반]` 표시 항목의 수치·변화는 주체가 밝힌 전망·계획입니다.\n"
+        "  전제나 Choice 경계로 쓸 수 있지만 관측 사실로 쓰지 않습니다.\n\n"
         "## Dimension 후보가 되는 열린 질문\n"
         f"{_render_uncertainty_cards(impact_analysis)}\n\n"
         "## 이벤트 간 Interaction (참고)\n"
@@ -762,9 +871,17 @@ def build_v4_dimension_design_user_prompt(
         "  상태를 Choice로 사용합니다. 날짜가 지났다는 이유만으로 관측 결과를 추정하지 않습니다.\n"
         "- states는 `lever|direction|level|scope|timeWindow` 형식입니다.\n"
         f"  direction은 {StateDirection.prompt_values()} 중 하나이며 나머지는 짧은 자연어입니다.\n"
-        "- why는 Choice의 근거이며 한 줄 안에서 `사실: … | 파생: … | 가정: … | 영향: …` 형식으로 320자 이내로\n"
-        "  작성하고, 해당하지 않는 항목은 생략합니다. 사실·가정·영향은 반드시 씁니다.\n"
-        "  - 사실: 제공된 Event 사실과 숫자·시점 판단 근거 중 이 Choice를 뒷받침하는 관측 내용\n"
+        "- why는 Choice의 근거이며 한 줄 안에서 `사실: … | 전망: … | 파생: … | 가정: … | 영향: …` 형식으로\n"
+        "  320자 이내로 작성하고, 해당하지 않는 항목은 생략합니다. 가정·영향은 반드시 씁니다.\n"
+        "  - 사실: 제공된 Event 사실과 숫자·시점 판단 근거 중 이 Choice를 뒷받침하는 관측 내용이 있을 때만 씁니다.\n"
+        "    `[전망]`·`[계획]`·`[전망 포함]`·`[전망 기반]` 항목의 전망 수치와 예상 변화는 사실에 쓰지 않습니다.\n"
+        "    뒷받침할 관측이 없으면 사실 칸을 생략합니다. `…자료는 제시되지 않음`, `…는 확인되지 않음`처럼\n"
+        "    근거가 없다는 문장만으로 사실 칸을 채우지 않습니다. 미확인 상태가 Choice를 가르는 핵심이면 가정에서\n"
+        "    다룹니다. 관측 내용 뒤에 지속 여부 미확인을 덧붙이는 것은 허용합니다.\n"
+        "  - 전망: 이 Choice가 전제로 삼는 전망·계획을 씁니다. 원문에 주체·발표일이 있으면 함께 쓰고(예:\n"
+        "    `10월 6일 단기 에너지 전망은 2027년 소비를 93.8 bcfd로 제시`), 없으면 `스페인 2032년 가스 수요 전망은\n"
+        "    284 TWh를 제시`처럼 대상으로 시작합니다. `주체·발표일이 제시되지 않은`처럼 출처가 없다는 설명이나\n"
+        "    `Event 30` 같은 ID는 쓰지 않습니다. 전망 수치를 `증가함`처럼 이미 일어난 일로 쓰지 않습니다.\n"
         "  - 파생: 제공된 수치·날짜와 분석 기준일로 계산한 내용(예: 경과 일수, 변화 폭). 계산할 것이 없으면 생략\n"
         "  - 가정: 분석 기준일 이후 이 Choice가 나타내는 미래 날짜·기간·범위·운영 상태와 구체적 경계\n"
         "  - 영향: LNG 수급·거래를 거쳐 JKM에 미치는 방향\n"
@@ -828,6 +945,8 @@ def build_v4_additional_dimension_user_prompt(
         "의미 있는 질문만 후보로 만들며 후보 개수를 맞추기 위해 약한 질문을 사용하지 않습니다.\n\n"
         "## 아직 사용되지 않은 열린 질문\n"
         f"{_render_uncertainty_cards(impact_analysis)}\n\n"
+        "## 전망·계획 원문 (관측 사실 아님)\n"
+        f"{_render_forecast_claims(impact_analysis)}\n\n"
         "## 개수 권장\n"
         f"- 실제 unused question 수: {unused_question_count}개\n"
         f"- Additional Dimension 후보 권장 범위: {candidate_recommendation}\n"
@@ -863,18 +982,23 @@ def build_v4_additional_dimension_user_prompt(
         "- 잘못된 Group 441 형태: `LNG 수출 설비로의 가스 유입 증가가 실제 액화설비 가동률과 수출 가능 물량 "
         "증가로 이어지는 상태`처럼 자연어 문장만 작성하면 안 됩니다.\n"
         "- 서로 다른 Choice는 label과 states 조합이 중복되면 안 됩니다.\n"
-        "- why는 한 줄 안에서 `사실: … | 파생: … | 가정: … | 영향: …` 형식으로 320자 이내로 작성하고 해당하지 않는\n"
-        "  항목은 생략합니다. 사실은 제공된 관측 사실, 파생은 제공된 수치·날짜와 분석 기준일로 계산한 내용,\n"
-        "  가정은 분석 기준일 이후 Choice의 미래 상태, 영향은 JKM 전달 경로와 방향입니다. `답`, `응답`,\n"
-        "  `선택`이라는 말이나 새 사실을 만들지 않습니다.\n"
+        "- why는 한 줄 안에서 `사실: … | 전망: … | 파생: … | 가정: … | 영향: …` 형식으로 320자 이내로 작성하고\n"
+        "  해당하지 않는 항목은 생략합니다. 사실은 이 Choice를 뒷받침하는 관측이 있을 때만 쓰고 근거가 없다는\n"
+        "  문장으로 채우지 않습니다. 전망은 전망·계획을 쓰되 원문에 있는 주체·발표일만 붙이고 출처가 없다는 설명이나\n"
+        "  Event ID는 쓰지 않습니다. 파생은 제공된 수치·날짜와 분석 기준일로 계산한 내용, 가정은 분석 기준일\n"
+        "  이후 Choice의 미래 상태,\n"
+        "  영향은 JKM 전달 경로와 방향입니다. `[전망]`·`[전망 기반]` 항목의 전망 수치는 사실에 쓰지 않습니다.\n"
+        "  `답`, `응답`, `선택`이라는 말이나 새 사실을 만들지 않습니다.\n"
         "- 한 후보 안의 Choice끼리 pressure가 겹치지 않게 하고, 수치·월 단위 시점 같은 구체적 경계로 구분합니다.\n"
         f"{feedback}"
     )
 
 
 def _render_common_impact_cards(impact_analysis: dict[str, Any]) -> str:
+    projected_paths = _forecast_based_path_ids(impact_analysis)
     cards = [
-        f"- [P{index}] {path.get('mechanism')}"
+        f"- [P{index}] {'[전망 기반] ' if str(path.get('impact_path_id')) in projected_paths else ''}"
+        f"{path.get('mechanism')}"
         for index, path in enumerate(impact_analysis.get("impact_paths") or [], start=1)
     ]
     return "\n".join(cards) or "- 없음"
@@ -978,7 +1102,10 @@ def build_v4_scenario_synthesis_user_prompt(
         "- 대상 지역에서 이미 시작되거나 지난 올해의 계절·기간을 앞으로 도래할 것처럼 표현하지 않습니다.\n"
         "  혼동 가능성이 있으면 연도·월을 명시합니다.\n"
         "- Dimension에서 정한 대상 기간과 관측 사실을 유지하며, 날짜가 지났다는 이유만으로 예정된 일이\n"
-        "  실제로 발생했다고 단정하지 않습니다.\n\n"
+        "  실제로 발생했다고 단정하지 않습니다.\n"
+        "- `[전망 기반]` 공통 영향은 주체가 밝힌 전망·계획을 전제로 한 경로입니다. narrative·explanation에서\n"
+        "  이 경로를 쓸 때는 `○○ 전망을 전제로`, `○○ 전망대로`처럼 전망임을 밝히고, `관측된`, `이미`,\n"
+        "  `확인된`으로 서술하지 않습니다. Scenario가 고른 Choice 값은 이 Scenario의 미래 가정으로 서술합니다.\n\n"
         "## 그룹 설명의 근거가 되는 이벤트\n"
         f"{_render_group_metadata_event_cards(events)}\n\n"
         "## 모든 Scenario에 공통인 영향\n"
@@ -1168,6 +1295,7 @@ __all__ = [
     "build_v4_dimension_design_user_prompt",
     "build_v4_additional_dimension_user_prompt",
     "build_v4_event_fact_candidates",
+    "build_v4_forecast_claims",
     "build_v4_event_impact_analysis_user_prompt",
     "build_v4_group_title_user_prompt",
     "event_open_question_budgets",

@@ -22,6 +22,7 @@ from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.v4_sche
     V4EventFact,
     V4EventImpactPath,
     V4EventInteraction,
+    V4ForecastClaim,
     V4InteractionUncertainty,
     V4PathUncertainty,
     V4ScenarioCountRange,
@@ -155,6 +156,8 @@ class GenerationDiagnostics(ApiModel):
     analysis_as_of: str | None = None
     event_shocks: list[V3EventShock | EventShock] = Field(default_factory=list)
     event_facts: list[V4EventFact] = Field(default_factory=list)
+    # 내부 진단: Event 원문에서 서버가 전망·계획으로 판정한 문장과 전망 고유값.
+    forecast_claims: list[V4ForecastClaim] = Field(default_factory=list)
     decision_basis: list[str] = Field(default_factory=list)
     event_exclusions: list[V4EventAnalysisExclusion] = Field(default_factory=list)
     impact_paths: list[V4EventImpactPath] = Field(default_factory=list)

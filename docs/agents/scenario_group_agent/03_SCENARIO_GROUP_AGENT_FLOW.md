@@ -161,11 +161,29 @@ flowchart TD
 재시도는 성공한 다른 Event 결과를 다시 만들지 않는다.
 
 여기서 Event는 하나의 일관된 사실 묶음으로 가정하지 않는다. LNG 뉴스·리포트에는 확정 과거, 현재 관측,
-운영사 예상, 기관별 미래 View가 섞일 수 있고 같은 대상·기간의 전망도 서로 충돌할 수 있다. `eventFacts`에는
-확정·관측된 기준점만 넣고 미래 예상·기관 View를 현재 사실로 승격하지 않는다. 미래 주장은 출처·발표시점·
-적용기간을 유지한 채 `pathUncertainties` 또는 `interactionUncertainties`의 근거로 전달하며, 상충 전망은
-평균·최신값 덮어쓰기 없이 서로 다른 Dimension value 후보로 표현한다. 상세 출력 필드와 전환 규칙은
-[Event 구조화 → Model Parameter 증적 가이드](06_EVENT_STRUCTURING_FOR_MODEL_PARAMETER.md)의
+운영사 예상, 기관별 미래 View가 섞일 수 있고 같은 대상·기간의 전망도 서로 충돌할 수 있다. 전망·계획은
+Scenario 전제로 쓸 수 있지만 결과물 끝까지 관측 사실과 구분해야 한다.
+
+현재 구현은 Event 원문(`keyBullets`) 문장을 서버가 서술어 기준으로 `observed`·`plan`·`forecast`로 판정한다
+(`apps/agents/scenario_group_agent/utils/claim_kind.py`). 판정은 LLM이 아니라 결정적 규칙이며 다음을 따른다.
+
+- `할 것으로 예상됐다`, `증가할 전망임`, `낮아질 수 있음`처럼 미래형 서술어가 있으면 `forecast`,
+  `발효될 예정`, `목표로 한다`, `검토 중`이면 `plan`이다.
+- `감소한 것으로 제시됨`처럼 과거형 보도, `…전망 속에 하락 마감했다`처럼 전망이 배경으로만 쓰인 관측,
+  `하역할 수 있는 조건이었다`처럼 조건을 설명하는 문장은 `observed`다.
+- 전망 문장에서는 전망 고유값(anchor)을 뽑는다. 분석 기준일보다 이전 연도 기준값, `~에서 ~로`의 출발값,
+  같은 Event 관측 문장에도 나오는 값은 제외한다(예: Event 32의 9월 실적 112.2 bcfd).
+
+LLM에 보여주는 핵심 사실 후보에는 `[전망]`·`[계획]` 표시를 붙인다. LLM은 표시를 빼고 본문만 `eventFacts`로
+복사하며, 서버는 표시를 붙여 복사해도 받아들인다. 선택된 Fact는 `eventFacts[].claimKind`에, Fact로 선택되지
+않은 문장을 포함한 Event의 모든 전망·계획 문장은 `forecastClaims[]`(`topic`, `claimKind`, `text`, `anchors`)에
+기록한다. `topic`은 Event 요약·제목의 `[토픽]`이며 프롬프트에 Event ID 대신 표시한다.
+`decisionBasis`처럼 Fact를 거치지 않고 전망이 전달되는 경로가 있으므로 검증은 `forecastClaims` 기준으로 한다.
+두 값은 `generationDiagnostics` 내부 진단이며 Presentation section에는 노출하지 않는다. 이 값이 도입되기 전에
+저장된 Fact는 `claimKind=observed`로 읽는다.
+
+상충 전망은 평균·최신값 덮어쓰기 없이 서로 다른 Dimension value 후보로 표현한다. 출처·발표시점·적용기간까지
+갖춘 구조화 증적의 목표 계약은 [Event 구조화 → Model Parameter 증적 가이드](06_EVENT_STRUCTURING_FOR_MODEL_PARAMETER.md)의
 `Scenario Group Agent Output 설계 가이드`를 따른다.
 
 Event open question은 요청 Event 순서대로 다음 목표·상한을 적용한다. Interaction open question은
@@ -209,7 +227,28 @@ Interaction이나 질문이 없으면 실제 생성 수는 표의 최대치보�
 
 기관 이름 자체를 Dimension value로 기계적으로 만들지 않는다. 같은 미래 상태를 가리키는 View는 하나의
 의미 상태로 묶고, 복구 시점·가동 수준·물량처럼 시장 영향을 실제로 갈라놓는 가정으로 value를 설계한다.
-각 `assumptionRationale`에는 관측 기준점과 채택한 미래 주장, 출처, 적용기간을 구분해 설명한다.
+
+`assumptionRationale`(LLM 출력 `why`, 320자 이내)은 `사실: … | 전망: … | 파생: … | 가정: … | 영향: …`
+형식이며 `가정`·`영향`은 필수다.
+
+- `사실`: 이 Choice를 뒷받침하는 관측 내용이 있을 때만 쓴다. `…자료는 제시되지 않음`처럼 근거가 없다는
+  문장만으로 채우지 않고 생략한다. 관측 내용 뒤에 지속 여부 미확인을 덧붙이는 것은 허용한다.
+- `전망`: 전제로 삼는 전망·계획을 쓴다. 원문에 주체·발표일이 있으면 함께 쓰고(`10월 6일 단기 에너지 전망은 …`),
+  없으면 `스페인 2032년 가스 수요 전망은 …`처럼 대상으로 시작한다. 출처가 없다는 설명이나 Event ID는 쓰지 않는다.
+
+전망값은 Choice 경계로 쓸 수 있다. Dimension 프롬프트는 `forecastClaims`를 `전망·계획 원문 (관측 사실 아님)`
+섹션에 `- [전망] (토픽) 원문` 형식으로 보여주고, 전망값이나 전망 서술을 담은 `decisionBasis` 항목에
+`[전망 포함]`, 근거 Fact에 전망·계획이 있는 Impact Path에 `[전망 기반]` 표시를 붙인다.
+
+서버는 다음 경우 Dimension 단계를 재시도하고, 마지막 시도에서는 생성을 실패시키지 않고 warning으로 남긴다.
+
+| 조건 | warning code |
+| --- | --- |
+| `사실` 칸에 전망 anchor가 전망 표시(`전망`, `예상`, `제시`, `계획` 등) 없이 나옴 | `FORECAST_STATED_AS_FACT` |
+| why에 `Event 30` 같은 Event ID나 `주체·발표일이 제시되지 않은` 같은 출처 부재 설명이 있음 | `WHY_SOURCE_META_PHRASE` |
+
+근거 부재만 말하는 `사실` 칸은 관측과 부재가 섞인 유효한 문장과 규칙으로 구분하기 어려워 프롬프트 규칙으로만 다룬다.
+Additional Dimension 후보는 위반 후보를 버리지 않고 warning만 남긴다.
 
 `pressureContribution`은 모든 Dimension에 동일하게 `bearish=-1`, `balanced=0`, `bullish=+1`로 계산하는
 ordinal 지표이며 Dimension별 별도 weight를 두지 않는다.
@@ -256,6 +295,12 @@ Dimension value 조합, JKM `pressureBand`, 근거, role, 상대 확률 가중�
 
 두 정책 모두 같은 band이면서 Dimension 값이 1개만 다른 쌍과 제목이 비슷한 쌍(문자 2-gram Jaccard 0.6 이상)을
 `similarScenarioPairs`에 통계로 남긴다. 생성 결과는 바꾸지 않는다.
+
+Scenario 프롬프트의 공통 영향 카드도 `[전망 기반]` Path를 표시하며, narrative·explanation에서 이 경로를
+`관측된`, `이미`로 서술하지 말고 `○○ 전망을 전제로`처럼 쓰도록 요구한다. 서버는 Scenario가 고른 Choice
+값에 없는 전망 anchor가 narrative·pressureRationale에 전망 표시 없이 나오면 `FORECAST_STATED_AS_FACT`
+warning을 남긴다. 수치 없는 전망(예: `지중해 공급 감소 예상`)은 서버 규칙으로 정확히 판정하기 어려워
+warning 대상에서 제외하고 프롬프트 규칙으로만 다룬다.
 
 `baselineYn=Y`는 미래 사실 확정이나 기관 합의를 의미하지 않는다. 생성 기준시점에서 가장 지지되는 작업
 가정이며, 대안 View의 lineage를 제거하는 해소 판정으로 사용하지 않는다.

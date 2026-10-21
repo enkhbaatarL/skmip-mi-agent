@@ -90,7 +90,34 @@ def _result(run: RunArtifacts, check_id: str) -> CheckResult:
 def test_layer1_happy_path_passes_all_deterministic_checks() -> None:
     results = {result.check_id: result.status for result in run_layer1_checks(_run())}
 
-    assert results == {f"R-{number:02d}": "PASS" for number in range(1, 10)}
+    assert results == {**{f"R-{number:02d}": "PASS" for number in range(1, 10)}, "R-10": "SKIP"}
+
+
+def _group_detail(why: str, *, with_claims: bool = True) -> dict[str, Any]:
+    diagnostics: dict[str, Any] = {}
+    if with_claims:
+        diagnostics["forecastClaims"] = [
+            {"eventId": 32, "claimKind": "forecast", "text": "소비 93.8 bcfd 예상", "anchors": ["93.8"]},
+        ]
+    return {
+        "scenarioGroup": {
+            "dimensionDefinitions": [{"values": [{"valueId": "d1_v1", "assumptionRationale": why}]}],
+            "generationDiagnostics": diagnostics,
+        },
+    }
+
+
+def test_r10_warns_when_forecast_value_is_stated_as_fact() -> None:
+    dropped = "사실: 국내 소비가 2027년 93.8 bcfd로 증가함 | 가정: 국내 흡수 | 영향: JKM 상승"
+    attributed = "사실: 9월 실적 확인 | 전망: 10월 6일 전망은 2027년 소비를 93.8 bcfd로 제시 | 가정: 흡수 | 영향: 상승"
+
+    warned = _result(replace(_run(), group_detail=_group_detail(dropped)), "R-10")
+    passed = _result(replace(_run(), group_detail=_group_detail(attributed)), "R-10")
+    legacy = _result(replace(_run(), group_detail=_group_detail(dropped, with_claims=False)), "R-10")
+
+    assert (warned.status, warned.offenders) == ("WARN", ["d1_v1: 93.8"])
+    assert passed.status == "PASS"
+    assert legacy.status == "SKIP"
 
 
 def test_r01_requires_every_generation_callback_shape() -> None:

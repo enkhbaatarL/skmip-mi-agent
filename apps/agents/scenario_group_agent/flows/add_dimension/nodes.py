@@ -77,6 +77,7 @@ def build_unused_impact_analysis(
     return V4EventImpactAnalysisResult.model_validate(
         {
             "event_facts": _field(diagnostics, "event_facts", "eventFacts") or [],
+            "forecast_claims": _field(diagnostics, "forecast_claims", "forecastClaims") or [],
             "decision_basis": _field(diagnostics, "decision_basis", "decisionBasis") or [],
             "event_exclusions": _field(diagnostics, "event_exclusions", "eventExclusions") or [],
             "impact_paths": _field(diagnostics, "impact_paths", "impactPaths") or [],
