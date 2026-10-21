@@ -318,13 +318,13 @@ class MiEventSnapshotModel(MiEventContentColumnsMixin, ORMBase):
         nullable=True,
         comment="직전 MI Event Snapshot ID",
     )
-    snapshot_crt_usr_logn_id: Mapped[str] = mapped_column(
+    crt_usr_logn_id: Mapped[str] = mapped_column(
         sqlalchemy.String(100, collation="utf8mb4_bin"),
         nullable=False,
         server_default=sqlalchemy.text("'system'"),
         comment="스냅샷 생성 사용자 ID",
     )
-    snapshot_crt_dtm: Mapped[datetime] = mapped_column(
+    crt_dtm: Mapped[datetime] = mapped_column(
         mysql_types.DATETIME(fsp=6),
         nullable=False,
         server_default=sqlalchemy.text("CURRENT_TIMESTAMP(6)"),
@@ -400,7 +400,7 @@ class MiEventSnapshotModel(MiEventContentColumnsMixin, ORMBase):
         server_default=sqlalchemy.text("'Y'"),
         comment="신규생성 여부 (Y: 신규생성, N: 갱신)",
     )
-    del_yn: Mapped[str] = mapped_column(
+    event_del_yn: Mapped[str] = mapped_column(
         sqlalchemy.CHAR(1, collation="utf8mb4_bin"),
         nullable=False,
         server_default=sqlalchemy.text("'N'"),
@@ -434,7 +434,7 @@ class MiEventSnapshotModel(MiEventContentColumnsMixin, ORMBase):
 
     __table_args__ = (
         UniqueConstraint("mi_event_id", "snapshot_version_no", name="uk_tmm_mi_mievent_snapshot_m_01"),
-        Index("idx_tmm_mi_mievent_snapshot_m_01", "mi_event_id", "snapshot_crt_dtm"),
+        Index("idx_tmm_mi_mievent_snapshot_m_01", "mi_event_id", "crt_dtm"),
         Index("idx_tmm_mi_mievent_snapshot_m_02", "previous_mi_event_snapshot_id"),
         {"mysql_engine": "InnoDB", "mysql_charset": "utf8mb4", "mysql_collate": "utf8mb4_bin"},
     )
