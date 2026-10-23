@@ -472,9 +472,12 @@ projection된다. 공개 응답에 nested `impactAnalysis`가 이미 존재한�
 | `validationWarnings[]` | `stage`, `code`, `message`, `referenceIds`로 attribution·기간·metric 의미 누락, fact 승격, 미표현 conflict를 경고한다. claim ID가 도입되면 `referenceIds`에 연결한다. |
 | `generationDiagnostics` | 현재 fact/path/uncertainty, 제외, warning, catalog/coverage와 Additional Dimension 상태를 저장·응답하는 진단 경계다. claim 전용 필드는 아직 없으므로 lossless conflict snapshot을 넣으려면 아래 추가안에 맞춰 이 schema도 명시적으로 확장해야 한다. |
 
-현재 `V4EventFact`에는 `factId`, `eventId`, `observedBasis`, `observedAt`만 있고 claim type, attribution,
-conflict group을 직접 담는 필드는 없다. 따라서 추가 스키마가 구현되기 전에도 미래 예상·기관 View를
-`eventFacts`에 밀어 넣어 손실을 감추면 안 된다. upstream `structuredEvidence`, uncertainty lineage,
+현재 `V4EventFact`에는 `factId`, `eventId`, `observedBasis`, `observedAt`과 서버 규칙으로 판정한 내부 진단값
+`claimKind`(`observed`·`plan`·`forecast`)가 있다. Event의 모든 전망·계획 문장과 전망 고유값은
+`generationDiagnostics.forecastClaims`에 남는다. 이는 이 문서의 `claimType`·`certaintyStatus` 중 전망 여부만
+원문 서술어로 먼저 구분한 것이며, attribution·적용기간·conflict group을 담는 필드는 아직 없다(판정 규칙은
+[Scenario Group Agent Flow](03_SCENARIO_GROUP_AGENT_FLOW.md)의 Event impact 분석 참고). 따라서 추가 스키마가
+구현되기 전에도 미래 예상·기관 View를 `eventFacts`에 밀어 넣어 손실을 감추면 안 된다. upstream `structuredEvidence`, uncertainty lineage,
 `assumptionRationale`, validation warning을 호환 경로로 사용한다. 다만 이것만으로 claim-level lineage가 완전히
 보존되지는 않는다. lossless 처리는 다음 추가 필드와 `generationDiagnostics` schema 확장이 구현돼야 완성된다.
 

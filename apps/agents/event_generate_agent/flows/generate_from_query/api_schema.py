@@ -6,9 +6,10 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from datetime import date
+from typing import Literal, Self
 
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from apps.agents.event_generate_agent.schemas.api.event import GeneratedEventOut
 from apps.agents.event_generate_agent.schemas.base import ApiModel
@@ -18,8 +19,27 @@ class GenerateFromQueryIn(ApiModel):
     """사용자 입력 문장 기반 이벤트 생성 요청 body."""
 
     user_query: str = Field(description="이벤트를 만들고 싶은 주제를 담은 사용자 입력 문장")
-    date_from: str | None = Field(default=None, description="조회 시작일(YYYY-MM-DD)")
-    date_to: str | None = Field(default=None, description="조회 종료일(YYYY-MM-DD)")
+    date_from: str | None = Field(default=None, description="조회 시작일(YYYY-MM-DD, dateTo보다 늦을 수 없음)")
+    date_to: str | None = Field(default=None, description="조회 종료일(YYYY-MM-DD, dateFrom과 같거나 이후)")
+
+    @model_validator(mode="after")
+    def validate_date_range(self) -> Self:
+        if self.date_from is None or self.date_to is None:
+            return self
+
+        date_from_value = self.date_from.strip()
+        date_to_value = self.date_to.strip()
+        try:
+            date_from = date.fromisoformat(date_from_value)
+            date_to = date.fromisoformat(date_to_value)
+        except ValueError:
+            # 날짜 형식 오류는 기존 plan_search 정규화 정책에 따라 기간 필터에서 제외한다.
+            return self
+
+        if date_from.isoformat() == date_from_value and date_to.isoformat() == date_to_value and date_from > date_to:
+            msg = "dateFrom must be earlier than or equal to dateTo"
+            raise ValueError(msg)
+        return self
 
 
 class GeneratedEventEvidenceOut(ApiModel):

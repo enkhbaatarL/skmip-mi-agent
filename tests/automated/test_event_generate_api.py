@@ -53,6 +53,67 @@ def test_create_event_generation_accepts_string_user_id_header(user_id: str) -> 
     )
 
 
+@pytest.mark.parametrize(
+    ("date_from", "date_to"),
+    [
+        ("2026-10-20", "2026-10-01"),
+        (" 2026-10-20 ", "2026-10-01"),
+    ],
+)
+def test_create_event_generation_rejects_inverted_date_range(date_from: str, date_to: str) -> None:
+    run_generate = AsyncMock()
+    with patch(
+        "apps.agents.event_generate_agent.api.run_generate_from_query",
+        new=run_generate,
+    ):
+        response = _client().post(
+            "/events/generations",
+            headers={"X-User-ID": "employee-a"},
+            json={
+                "userQuery": "LNG 시장 이벤트",
+                "dateFrom": date_from,
+                "dateTo": date_to,
+            },
+        )
+
+    assert response.status_code == 422
+    assert "dateFrom must be earlier than or equal to dateTo" in response.json()["detail"][0]["msg"]
+    run_generate.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    ("date_from", "date_to"),
+    [
+        ("2026-10-01", "2026-10-20"),
+        ("2026-10-20", "2026-10-20"),
+    ],
+)
+def test_create_event_generation_accepts_non_inverted_date_range(date_from: str, date_to: str) -> None:
+    result = GenerateFromQueryResult(meta=GenerateFromQueryMetaOut(), events=[])
+    run_generate = AsyncMock(return_value=result)
+    with patch(
+        "apps.agents.event_generate_agent.api.run_generate_from_query",
+        new=run_generate,
+    ):
+        response = _client().post(
+            "/events/generations",
+            headers={"X-User-ID": "employee-a"},
+            json={
+                "userQuery": "LNG 시장 이벤트",
+                "dateFrom": date_from,
+                "dateTo": date_to,
+            },
+        )
+
+    assert response.status_code == 200
+    run_generate.assert_awaited_once_with(
+        user_query="LNG 시장 이벤트",
+        date_from=date_from,
+        date_to=date_to,
+        user_id="employee-a",
+    )
+
+
 def test_generate_from_query_state_preserves_text_user_id() -> None:
     state = GenerateFromQueryState(user_id="employee-a")
 

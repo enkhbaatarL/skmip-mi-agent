@@ -3,6 +3,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
 
+from apps.agents.scenario_group_agent.utils.claim_kind import (
+    forecast_values_stated_as_fact,
+    split_rationale_fields,
+)
+
 if TYPE_CHECKING:
     from quality_eval.artifacts import RunArtifacts
 
@@ -36,6 +41,7 @@ def run_layer1_checks(run: RunArtifacts) -> list[CheckResult]:
         _check_signposts(signpost_table),
         _check_common_signposts(signpost_table),
         _check_validation_stage(run.step2),
+        _check_forecast_stated_as_fact(run.group_detail),
     ]
 
 
@@ -222,6 +228,34 @@ def _check_validation_stage(payload: dict[str, Any] | None) -> CheckResult:
     if stage == expected:
         return _pass("R-09", f"isValid={is_valid} matches stage={stage}.")
     return _fail("R-09", f"isValid={is_valid} requires stage={expected}, got {stage!r}.", ["stage"])
+
+
+def _check_forecast_stated_as_fact(group_detail: dict[str, Any] | None) -> CheckResult:
+    """R-10: Choice why의 사실 칸에 Event 전망값이 전망 표시 없이 들어갔는지 확인한다."""
+    group = _group_from(group_detail) or group_detail or {}
+    definitions = _field(group, "dimensionDefinitions", "dimension_definitions")
+    diagnostics = _field(group, "generationDiagnostics", "generation_diagnostics")
+    if not isinstance(definitions, list) or not isinstance(diagnostics, dict):
+        return _skip("R-10", "missing group detail dimensionDefinitions/generationDiagnostics")
+    claims = _field(diagnostics, "forecastClaims", "forecast_claims")
+    if not isinstance(claims, list):
+        return _skip("R-10", "generationDiagnostics.forecastClaims missing (generated before claim classification)")
+    anchors = [
+        str(anchor)
+        for claim in claims
+        if isinstance(claim, dict) and _field(claim, "claimKind", "claim_kind") == "forecast"
+        for anchor in _field(claim, "anchors") or []
+    ]
+    offenders = []
+    for definition in definitions:
+        for value in _field(definition, "values") or []:
+            why = str(_field(value, "assumptionRationale", "assumption_rationale") or "")
+            stated = forecast_values_stated_as_fact(split_rationale_fields(why).get("사실", ""), anchors)
+            if stated:
+                offenders.append(f"{_field(value, 'valueId', 'value_id')}: {', '.join(stated)}")
+    if offenders:
+        return _warn("R-10", "Forecast values are stated as facts in Choice why.", offenders)
+    return _pass("R-10", f"No forecast value stated as fact ({len(anchors)} forecast anchors checked).")
 
 
 def _template_enums(event_detail: dict[str, Any] | None) -> dict[str, set[Any]]:

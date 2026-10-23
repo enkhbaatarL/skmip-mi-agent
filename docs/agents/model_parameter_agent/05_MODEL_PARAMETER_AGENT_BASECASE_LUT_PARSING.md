@@ -130,8 +130,10 @@ background는 이 값을 다시 읽어 활성 Base 변경에 영향받지 않는
 있는지로 판별하며 `Model_Input`, `플랫폼입력` 같은 추가 문구는 요구하지 않는다. 한 파일명에 서로 다른
 역할 토큰이 함께 있거나 같은 역할의 `.xlsm`이 둘 이상이면 임의로 선택하지 않고 실패한다.
 
-입력 3종은 기존 `model_parameter_resource_storage` endpoint·bucket·credential·timeout·local cache
-설정을 그대로 사용한다. 요청별 immutable cache에 받은 뒤 기존 v1/v3 경로와 v4
+입력 3종의 bucket과 object key는 `tcm_filel.strg_path_nm` URL 경로의 첫 구간과 나머지 구간에서 각각
+추출한다. 예를 들어 `/sk-mi-p-osb-03/SCNRCASE/file.xlsm`은 bucket `sk-mi-p-osb-03`, object key
+`SCNRCASE/file.xlsm`로 해석한다. 접속에는 기존 `model_parameter_resource_storage` endpoint·credential·timeout·
+local cache 설정을 사용한다. 요청별 immutable cache에 받은 뒤 기존 v1/v3 경로와 v4
 `new-bc-v10` contract에 동일하게 연결한다. 활성 Base가 있지만 현재 Object Storage metadata를
 확인할 수 없는 경우에는 같은 `case_id`·`SCNRCASE` 파일 식별자의 cache만 찾는다.
 cache의 workbook SHA-256과 contract를 다시 검증하고, 같은 identity에 서로 다른 내용이 둘 이상이면
@@ -176,7 +178,7 @@ record에는 선택된 workbook root와 dynamic contract를 명시적으로 전�
 | tmm_mi_model_param_dimension_map | v1/v3 event type·dimension에서 허용되는 direct/routing 후보와 comment, indirect 보조정보 |
 | tmm_mi_model_impact_lever_m | v4 selected Lever state에서 허용되는 primary/alternative parameter binding과 applicability |
 | tmm_mi_model_param_m | parameter 이름·hint, 모델 target, Basecase Sheet·행·열 규칙 |
-| tmd_mdl_scnrcasem / tcm_filel | 요청별 활성 `case_id`와 `SCNRCASE` 입력 파일 연결 |
+| tmd_mdl_scnrcasem / tcm_filel | 요청별 활성 `case_id`, `SCNRCASE` 입력 파일 연결, `strg_path_nm`의 bucket·object key |
 | proposal capability gate | raw source matching 뒤 실제 신규 proposal에 전달할 v1/v3 5종 또는 현행 v4.1 `extend17-v10` 17종 |
 | config.yaml > model_parameter_resources.basecase | workbook local path와 Object Storage key |
 | config.yaml > model_parameter_resources.workbook_contract | v4 `new-bc-v10` repo-side contract path |
@@ -190,7 +192,8 @@ limit은 동일해야 한다. 로컬 검토용 Neuro 사본은 `devops/k8s/model
 Git에서 제외하며, 자동화가 그 파일의 존재를 요구해서는 안 된다. 공용 `devops/k8s/configmap.yaml`은 여러
 Agent용 예시이므로 이 전용 설정을 맞추기 위해 수정하지 않는다. `model_parameter_resource_storage`는 두
 설정에 같은 field set을 유지하고 bucket·region·timeout·cache·retry 계약을 맞춘다. endpoint·region·credential
-값은 각 배포 환경에서 승인된 값을 그대로 사용하고 코드 기본값을 근거로 임의 변경하지 않는다. MI Base는
+값은 각 배포 환경에서 승인된 값을 그대로 사용하고 코드 기본값을 근거로 임의 변경하지 않는다. 설정의 bucket은
+config 기반 Basecase/LUT resource에 사용하고, MI Base는 `tcm_filel.strg_path_nm`에서 bucket을 정한다. MI Base도
 같은 Object Storage credential을 사용하고 fallback 정책만 별도 설정으로 둔다.
 resource schema v9의 semantic hash에는 workbook contract hash와 packaged baseline 고정 digest가 포함된다. Workbook reference
 cache는 contract hash와 실제 파일 signature를 포함해 다른 release를 재사용하지 않는다. 기존 LUT adapter

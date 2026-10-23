@@ -59,7 +59,7 @@ from apps.persistence.scenario_group.schema import (
 from apps.persistence.scenario_group_operation.schema import ScenarioGroupOperationPayload
 
 
-PRESENTATION_RENDERER_VERSION = "v6"
+PRESENTATION_RENDERER_VERSION = "v7"
 
 
 def build_presentation_follow_up_request_bodies(
@@ -922,9 +922,11 @@ def _v4_event_markdown(events: list[dict[str, Any]], diagnostics: dict[str, Any]
     paths = _field(diagnostics, "impact_paths", default=[]) or []
     uncertainties = _field(diagnostics, "path_uncertainties", default=[]) or []
     lines = ["## Event 분석"]
-    for event in events:
+    event_labels: dict[int, str] = {}
+    for display_order, event in enumerate(events, start=1):
         event_id = int(_field(event, "mi_event_id"))
         title = _field(event, "event_title_ko") or f"Event {event_id}"
+        event_labels[event_id] = f"Event {display_order} · {_escape(title)}"
         event_facts = [
             item for item in facts if isinstance(item, dict) and _optional_int(_field(item, "event_id")) == event_id
         ]
@@ -943,7 +945,9 @@ def _v4_event_markdown(events: list[dict[str, Any]], diagnostics: dict[str, Any]
             if isinstance(item, dict)
             and path_ids.intersection(str(path_id) for path_id in (_field(item, "impact_path_ids", default=[]) or []))
         ]
-        lines.extend(["", f"### {_escape(title)}", "", "#### 확인된 사실"])
+        if display_order > 1:
+            lines.extend(["", "---"])
+        lines.extend(["", f"### Event {display_order} · {_escape(title)}", "", "### 확인된 사실"])
         if event_facts:
             for item in sorted(event_facts, key=lambda value: str(_field(value, "fact_id") or "")):
                 lines.append(f"- {_escape(_field(item, 'observed_basis') or '')}")
@@ -954,30 +958,72 @@ def _v4_event_markdown(events: list[dict[str, Any]], diagnostics: dict[str, Any]
                 lines.append(f"- {_exclusion_label(item)}: {_escape(_field(item, 'reason') or '')}")
             if not event_exclusions:
                 lines.append("- 저장된 사실 없음")
-        lines.extend(["", "#### LNG·JKM 영향 경로"])
+        lines.extend(["", "### LNG·JKM 영향 경로"])
         if event_paths:
             for item in sorted(event_paths, key=lambda value: str(_field(value, "impact_path_id") or "")):
                 lines.append(f"- {_escape(_field(item, 'mechanism') or '')}")
         else:
             lines.append("- 저장된 영향 경로 없음")
-        lines.extend(["", "#### 주요 불확실성"])
+        lines.extend(["", "### 주요 불확실성"])
         if event_uncertainties:
             for item in sorted(event_uncertainties, key=lambda value: str(_field(value, "uncertainty_id") or "")):
                 lines.append(f"- {_escape(_field(item, 'subject') or _field(item, 'reason') or '')}")
         else:
             lines.append("- 저장된 주요 불확실성 없음")
-    lines.extend(["", "## Event 간 상호작용"])
+    lines.extend(["", "---", "", "## Event 간 상호작용"])
     interactions = _field(diagnostics, "event_interactions", default=[]) or []
+    interaction_uncertainties = _field(diagnostics, "interaction_uncertainties", default=[]) or []
+    rendered_uncertainty_ids: set[str] = set()
     if interactions:
-        for item in sorted((item for item in interactions if isinstance(item, dict)), key=_interaction_sort_key):
-            lines.append(f"- {_escape(_field(item, 'mechanism') or _field(item, 'rationale') or '')}")
+        for display_order, item in enumerate(
+            sorted((item for item in interactions if isinstance(item, dict)), key=_interaction_sort_key),
+            start=1,
+        ):
+            event_ids = [
+                event_id
+                for raw_event_id in (_field(item, "event_ids", default=[]) or [])
+                if (event_id := _optional_int(raw_event_id)) is not None
+            ]
+            mechanism = _escape(_field(item, "mechanism") or _field(item, "rationale") or "")
+            lines.extend(
+                [
+                    "",
+                    f"### Interaction {display_order}",
+                    "",
+                ]
+            )
+            if event_ids:
+                lines.append("#### 관련 Event")
+                for event_id in event_ids:
+                    lines.append(f"- **{event_labels.get(event_id, f'Event ID {event_id}')}**")
+                lines.append("")
+            lines.extend(["#### 상호작용 내용", f"- {mechanism}"])
+            interaction_id = str(_field(item, "interaction_id") or "")
+            related_uncertainties = [
+                uncertainty
+                for uncertainty in interaction_uncertainties
+                if isinstance(uncertainty, dict)
+                and str(_field(uncertainty, "interaction_id") or "") == interaction_id
+            ]
+            if related_uncertainties:
+                lines.extend(["", "#### 상호작용 불확실성"])
+                for uncertainty in sorted(
+                    related_uncertainties,
+                    key=lambda value: str(_field(value, "uncertainty_id") or ""),
+                ):
+                    lines.append(f"- {_escape(_field(uncertainty, 'subject') or _field(uncertainty, 'reason') or '')}")
+                    rendered_uncertainty_ids.add(str(_field(uncertainty, "uncertainty_id") or ""))
     else:
         lines.append("- 저장된 Event 상호작용 없음")
-    interaction_uncertainties = _field(diagnostics, "interaction_uncertainties", default=[]) or []
-    if interaction_uncertainties:
-        lines.extend(["", "### 상호작용 불확실성"])
+    unlinked_uncertainties = [
+        item
+        for item in interaction_uncertainties
+        if isinstance(item, dict) and str(_field(item, "uncertainty_id") or "") not in rendered_uncertainty_ids
+    ]
+    if unlinked_uncertainties:
+        lines.extend(["", "### 기타 상호작용 불확실성"])
         for item in sorted(
-            (item for item in interaction_uncertainties if isinstance(item, dict)),
+            unlinked_uncertainties,
             key=lambda value: str(_field(value, "uncertainty_id") or ""),
         ):
             lines.append(f"- {_escape(_field(item, 'subject') or _field(item, 'reason') or '')}")

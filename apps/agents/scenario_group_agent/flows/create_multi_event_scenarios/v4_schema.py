@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections import defaultdict
 from decimal import ROUND_FLOOR, Decimal
 import hashlib
+import re
 from typing import Any, Literal
 
 from pydantic import ConfigDict, Field, field_validator, model_validator
@@ -24,6 +25,12 @@ from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.v4_enum
     StateDirection,
 )
 from apps.agents.scenario_group_agent.schemas.base import ApiModel
+from apps.agents.scenario_group_agent.utils.claim_kind import (
+    ClaimKind,
+    classify_claim_kind,
+    forecast_values_stated_as_fact,
+    split_rationale_fields,
+)
 from apps.agents.scenario_group_agent.utils.pressure_band import (
     PRESSURE_CONTRIBUTION_SCORES,
     relative_pressure_band,
@@ -94,6 +101,8 @@ class V4EventFact(ApiModel):
     event_id: int = Field(gt=0)
     observed_basis: str = Field(min_length=1)
     observed_at: str | None = None
+    # 서버가 원문 서술어로 판정한 내부 진단값. 이 값이 도입되기 전에 저장된 Fact는 observed로 읽는다.
+    claim_kind: ClaimKind = "observed"
 
     @model_validator(mode="before")
     @classmethod
@@ -111,6 +120,20 @@ class V4EventFact(ApiModel):
         ):
             normalized.pop(key, None)
         return normalized
+
+
+class V4ForecastClaim(ApiModel):
+    """Event 원문에서 전망·계획으로 판정된 문장. Fact로 선택되지 않아도 사실·전망 구분 검증에 쓴다."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    event_id: int = Field(gt=0)
+    # 프롬프트에 Event ID 대신 보여줄 '[토픽]' 이름. 이 값 도입 전에 저장된 진단은 빈 문자열이다.
+    topic: str = ""
+    claim_kind: Literal["plan", "forecast"]
+    text: str = Field(min_length=1)
+    # 전망 고유값(예: '93.8'). 관측값·과거 기준값과 겹치는 숫자는 서버가 제외한다.
+    anchors: list[str] = Field(default_factory=list)
 
 
 class V4EventAnalysisExclusion(ApiModel):
@@ -368,6 +391,7 @@ class V4EventImpactAnalysisDraft(ApiModel):
     model_config = ConfigDict(extra="forbid")
 
     event_facts: list[V4EventFact] = Field(default_factory=list)
+    forecast_claims: list[V4ForecastClaim] = Field(default_factory=list)
     decision_basis: list[str] = Field(default_factory=list)
     event_exclusions: list[V4EventAnalysisExclusion] = Field(default_factory=list)
     impact_paths: list[V4EventImpactPathDraft] = Field(default_factory=list)
@@ -381,6 +405,7 @@ class V4EventImpactAnalysisResult(ApiModel):
     model_config = ConfigDict(extra="forbid")
 
     event_facts: list[V4EventFact] = Field(default_factory=list)
+    forecast_claims: list[V4ForecastClaim] = Field(default_factory=list)
     decision_basis: list[str] = Field(default_factory=list)
     event_exclusions: list[V4EventAnalysisExclusion] = Field(default_factory=list)
     impact_paths: list[V4EventImpactPath] = Field(default_factory=list)
@@ -572,8 +597,9 @@ class V4ReadableDimensionChoice(ApiModel):
         min_length=10,
         max_length=320,
         description=(
-            "'사실: 관측 사실 | 파생: 수치·날짜와 분석 기준일로 계산한 내용 | 가정: 분석 기준일 이후 Choice의 "
-            "미래 상태와 구체적 경계 | 영향: JKM 전달 경로와 방향' 형식의 한국어 근거. 해당 없는 항목은 생략하고 "
+            "'사실: 관측 사실 | 전망: 원문의 주체·발표일을 붙인 전망·계획 | 파생: 수치·날짜와 분석 기준일로 계산한 내용 | "
+            "가정: 분석 기준일 이후 Choice의 미래 상태와 구체적 경계 | 영향: JKM 전달 경로와 방향' 형식의 한국어 근거. "
+            "전망 수치는 사실 칸에 쓰지 않음. 해당 없는 항목은 생략하고 "
             "Choice를 답·응답·선택으로 표현하지 않음"
         ),
     )
@@ -792,6 +818,14 @@ def _ensure_distinct_event_impacts(paths: list[V4EventImpactPathDraft]) -> None:
                 )
 
 
+_CLAIM_KIND_TAG_PATTERN = re.compile(r"^\s*\[(?:전망|계획)\]\s*")
+
+
+def strip_claim_kind_tag(statement: str) -> str:
+    """Remove the '[전망]'/'[계획]' prompt tag when the LLM copies a tagged Fact candidate."""
+    return _CLAIM_KIND_TAG_PATTERN.sub("", statement, count=1)
+
+
 def expand_v4_readable_event_analysis(
     readable: V4ReadableEventAnalysisDraft,
     *,
@@ -799,13 +833,14 @@ def expand_v4_readable_event_analysis(
     observed_at: str | None,
     fact_candidates: dict[str, str],
     open_question_limit: int | None = None,
+    forecast_claims: list[V4ForecastClaim] | None = None,
 ) -> V4EventImpactAnalysisDraft:
     """Validate natural-language Fact selection and hydrate server-owned v4 lineage."""
     candidates_by_text = {text: (ref, text) for ref, text in fact_candidates.items()}
     selected: list[tuple[str, str]] = []
     selected_keys: set[str] = set()
     for statement in readable.event_facts:
-        key = statement
+        key = strip_claim_kind_tag(statement)
         candidate = candidates_by_text.get(key)
         if candidate is None:
             raise ValueError(f"Event analysis returned a Fact outside the provided candidates: {statement!r}")
@@ -830,6 +865,7 @@ def expand_v4_readable_event_analysis(
             event_id=event_id,
             observed_basis=text,
             observed_at=observed_at or None,
+            claim_kind=classify_claim_kind(text),
         )
         for _ref, text in selected
     ]
@@ -856,10 +892,10 @@ def expand_v4_readable_event_analysis(
     used_fact_ids: set[str] = set()
     path_id_by_number: dict[int, str] = {}
     for index, path in enumerate(readable.impacts, start=1):
-        evidence_keys = list(path.evidence)
+        evidence_keys = [strip_claim_kind_tag(statement) for statement in path.evidence]
         if len(evidence_keys) != len(set(evidence_keys)):
             raise ValueError(f"Impact {index} contains duplicate evidence sentences")
-        unknown_evidence = [statement for statement in path.evidence if statement not in fact_id_by_text]
+        unknown_evidence = [statement for statement in evidence_keys if statement not in fact_id_by_text]
         if unknown_evidence:
             raise ValueError(f"Impact {index} references unselected Event facts: {unknown_evidence}")
         source_fact_ids = [fact_id_by_text[key] for key in evidence_keys]
@@ -910,6 +946,7 @@ def expand_v4_readable_event_analysis(
         )
     return V4EventImpactAnalysisDraft(
         event_facts=facts,
+        forecast_claims=list(forecast_claims or []),
         decision_basis=readable.decision_basis,
         event_exclusions=exclusions,
         impact_paths=paths,
@@ -936,6 +973,7 @@ def v4_analysis_result_to_draft(result: V4EventImpactAnalysisResult) -> V4EventI
     """Remove server-hydrated IDs so the stable validator can re-check a merged analysis."""
     return V4EventImpactAnalysisDraft(
         event_facts=result.event_facts,
+        forecast_claims=result.forecast_claims,
         decision_basis=result.decision_basis,
         event_exclusions=result.event_exclusions,
         impact_paths=[
@@ -1362,10 +1400,12 @@ def finalize_v4_additional_dimension_candidates(
                 dimension_definitions=[draft],
                 excluded_dimensions=[],
             )
+            # 후보 단위 검증 실패는 후보를 조용히 버리므로, 사실·전망 구분 위반은 후보를 버리지 않고 경고로만 남긴다.
             result = finalize_v4_dimension_design(
                 design,
                 impact_analysis=impact_analysis,
                 impact_levers=impact_levers,
+                enforce_forecast_separation=False,
             )
         except ValueError:
             continue
@@ -1641,6 +1681,7 @@ def finalize_v4_event_impact_analysis(
 
     return V4EventImpactAnalysisResult(
         event_facts=draft.event_facts,
+        forecast_claims=draft.forecast_claims,
         decision_basis=draft.decision_basis,
         event_exclusions=draft.event_exclusions,
         impact_paths=hydrated_paths,
@@ -1651,13 +1692,32 @@ def finalize_v4_event_impact_analysis(
     )
 
 
+# Choice why에 출처가 없다는 설명이나 내부 Event ID를 쓴 경우("주체·발표일이 제시되지 않은 Event 30은").
+_WHY_META_PATTERN = re.compile(
+    r"(?:Event|이벤트)\s*\d+|(?:주체|발표일|발표\s*시점|출처)[^|]{0,8}?(?:제시|확인|명시|공개)되지\s*않은",
+)
+
+
+def _forecast_anchors(impact_analysis: V4EventImpactAnalysisResult) -> list[str]:
+    return list(
+        dict.fromkeys(
+            anchor
+            for claim in impact_analysis.forecast_claims
+            if claim.claim_kind == "forecast"
+            for anchor in claim.anchors
+        ),
+    )
+
+
 def finalize_v4_dimension_design(
     design: V4DimensionDesignDraft,
     *,
     impact_analysis: V4EventImpactAnalysisResult,
     impact_levers: list[ModelImpactLeverPayload],
+    enforce_forecast_separation: bool = True,
 ) -> V4DimensionDesignResult:
     catalog_by_code = _catalog_by_code(impact_levers)
+    forecast_anchors = _forecast_anchors(impact_analysis)
     path_by_id = {path.impact_path_id: path for path in impact_analysis.impact_paths}
     uncertainty_by_id = {
         item.uncertainty_id: item
@@ -1764,6 +1824,31 @@ def finalize_v4_dimension_design(
                             f"{value.pressure_contribution} despite {primary_lever.domain} "
                             f"{primary_state.direction}; retained because a contextual rationale was provided."
                         ),
+                        reference_ids=[dimension.dimension_id, value.value_id],
+                    ),
+                )
+            stated_as_fact = forecast_values_stated_as_fact(
+                split_rationale_fields(value.assumption_rationale).get("사실", ""),
+                forecast_anchors,
+            )
+            meta_phrase = _WHY_META_PATTERN.search(value.assumption_rationale)
+            if stated_as_fact or meta_phrase:
+                message = (
+                    f"dimension {dimension.dimension_id} value {value.value_id} why의 사실 칸에 전망값 "
+                    f"{', '.join(stated_as_fact)}을 전망 표시 없이 썼습니다. 전망 수치는 `전망:` 칸에 쓰고, "
+                    "사실 칸에는 관측 내용만 쓰십시오."
+                    if stated_as_fact
+                    else f"dimension {dimension.dimension_id} value {value.value_id} why에 "
+                    f"`{meta_phrase.group(0)}` 같은 출처 부재 설명이나 Event ID를 썼습니다. 원문에 주체·발표일이 "
+                    "없으면 `스페인 2032년 가스 수요 전망은`처럼 대상으로 시작하십시오."
+                )
+                if enforce_forecast_separation:
+                    raise ValueError(message)
+                warnings.append(
+                    V4ValidationWarning(
+                        stage="dimension_design",
+                        code="FORECAST_STATED_AS_FACT" if stated_as_fact else "WHY_SOURCE_META_PHRASE",
+                        message=message,
                         reference_ids=[dimension.dimension_id, value.value_id],
                     ),
                 )
@@ -2291,6 +2376,51 @@ def _normalize_v4_probability_scores(scenarios: list[V4ScenarioCandidate]) -> No
         scenario.probability_score = probability_score
 
 
+_SENTENCE_SPLIT_PATTERN = re.compile(r"(?<=[.다])\s+")
+
+
+def _scenario_forecast_warnings(
+    scenarios: list[V4ScenarioCandidate],
+    impact_analysis: V4EventImpactAnalysisResult,
+    dimension_design: V4DimensionDesignResult,
+) -> list[V4ValidationWarning]:
+    """Warn when a Scenario states a forecast value as fact outside the branch values it selected."""
+    anchors = _forecast_anchors(impact_analysis)
+    if not anchors:
+        return []
+    value_text: dict[tuple[str, str], str] = {}
+    for definition in dimension_design.dimension_definitions:
+        for value in definition.values:
+            assumption = split_rationale_fields(value.assumption_rationale).get("가정", "")
+            value_text[definition.dimension_id, value.value_id] = f"{value.label} {assumption}"
+    warnings: list[V4ValidationWarning] = []
+    for scenario in scenarios:
+        branch_text = " ".join(value_text.get(item, "") for item in scenario.dimension_values.items())
+        fields = (("narrative", scenario.narrative), ("pressure_rationale", scenario.pressure_rationale))
+        for field_name, text in fields:
+            for sentence in _SENTENCE_SPLIT_PATTERN.split(text or ""):
+                stated = [
+                    anchor
+                    for anchor in forecast_values_stated_as_fact(sentence, anchors)
+                    # 시나리오가 고른 Choice 값(분기 가정)에 있는 수치는 미래 상태 서술이므로 제외한다.
+                    if not re.search(rf"(?<![\d.]){re.escape(anchor)}(?!\d)", branch_text)
+                ]
+                if not stated:
+                    continue
+                warnings.append(
+                    V4ValidationWarning(
+                        stage="scenario_synthesis",
+                        code="FORECAST_STATED_AS_FACT",
+                        message=(
+                            f"Scenario '{scenario.title}' {field_name}에 전망값 {', '.join(stated)}이 "
+                            f"전망 표시 없이 사실처럼 쓰였습니다: {sentence[:120]}"
+                        ),
+                        reference_ids=[scenario.title, field_name],
+                    ),
+                )
+    return warnings
+
+
 def finalize_v4_generation_result(
     synthesis: V4ScenarioSynthesisResult,
     *,
@@ -2427,6 +2557,7 @@ def finalize_v4_generation_result(
         validation_warnings=[
             *impact_analysis.validation_warnings,
             *dimension_design.validation_warnings,
+            *_scenario_forecast_warnings(finalized_scenarios, impact_analysis, dimension_design),
         ],
         scenario_synthesis_policy=policy,
         scenario_count_range=V4ScenarioCountRange(target_min=target_min, max=max_count),
@@ -2504,6 +2635,7 @@ __all__ = [
     "V4EventImpactPath",
     "V4EventImpactPathDraft",
     "V4ExcludedScenarioCandidate",
+    "V4ForecastClaim",
     "V4GenerationResult",
     "V4GroupTitleDraft",
     "V4InteractionUncertainty",
@@ -2526,5 +2658,6 @@ __all__ = [
     "finalize_v4_event_impact_analysis",
     "finalize_v4_generation_result",
     "merge_v4_readable_interactions",
+    "strip_claim_kind_tag",
     "v4_analysis_result_to_draft",
 ]

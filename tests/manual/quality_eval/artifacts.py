@@ -18,6 +18,8 @@ class RunArtifacts:
     step3: dict[str, Any] | None
     step4: dict[str, Any] | None
     event_detail: dict[str, Any] | None
+    # GET /scenario-groups/{id} 응답. dimensionDefinitions·generationDiagnostics가 필요한 검사(R-10)에서만 쓴다.
+    group_detail: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -42,6 +44,7 @@ def load_batch(output_root: Path, batch_id: str | None) -> BatchArtifacts:
             step3=_read_json_dict(batch_dir / f"{event_id}_step3_signposts_response.json"),
             step4=_read_json_dict(batch_dir / f"{event_id}_step4_confirmation_response.json"),
             event_detail=_read_json_dict(batch_dir / f"{event_id}_event_detail.json"),
+            group_detail=_read_json_dict(batch_dir / f"{event_id}_group_detail.json"),
         )
         for event_id in event_ids
     ]

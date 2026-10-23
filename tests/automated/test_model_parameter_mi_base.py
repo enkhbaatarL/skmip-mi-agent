@@ -303,6 +303,7 @@ def _storage_config(
 
 
 def test_scnrcase_workbooks_are_classified_by_role_token_only() -> None:
+    bucket = "sk-mi-p-osb-03"
     snapshot = MiBaseSnapshot(
         case_id=219,
         files=[
@@ -311,45 +312,50 @@ def test_scnrcase_workbooks_are_classified_by_role_token_only() -> None:
                 relation_code="SCNRCASE",
                 destination_no=219,
                 name="복호화_Trade_v11_플랫폼입력_최종_v8_플랫폼전달.xlsm",
-                path="https://storage.example/mi-bucket/SCNRCASE/trade.xlsm",
+                path=f"https://zskc.object.ncpstorage.com/{bucket}/SCNRCASE/trade.xlsm",
             ),
             _file(
                 file_no=2,
                 relation_code="SCNRCASE",
                 destination_no=219,
                 name="Demand_v5_플랫폼입력_최종_v8_플랫폼전달.xlsm",
-                path="https://storage.example/mi-bucket/SCNRCASE/demand.xlsm",
+                path=f"https://zskc.object.ncpstorage.com/{bucket}/SCNRCASE/7726440c-1f4c-4631-afe3-44f76a1fd9a1.xlsm",
             ),
             _file(
                 file_no=3,
                 relation_code="SCNRCASE",
                 destination_no=219,
                 name="Output_v3_플랫폼입력_최종_v8_플랫폼전달.xlsm",
-                path="https://storage.example/mi-bucket/SCNRCASE/output.xlsm",
+                path=f"https://zskc.object.ncpstorage.com/{bucket}/SCNRCASE/output.xlsm",
             ),
             _file(
                 file_no=4,
                 relation_code="SCNRCASE",
                 destination_no=219,
                 name="Supply_v14_플랫폼입력_최종_v6_플랫폼전달.xlsm",
-                path="https://storage.example/mi-bucket/SCNRCASE/supply.xlsm",
+                path=f"https://zskc.object.ncpstorage.com/{bucket}/SCNRCASE/supply.xlsm",
             ),
             _file(
                 file_no=5,
                 relation_code="SCNRCASE",
                 destination_no=219,
                 name="result_trade.csv",
-                path="https://storage.example/mi-bucket/SCNRCASE/result_trade.csv",
+                path=f"https://zskc.object.ncpstorage.com/{bucket}/SCNRCASE/result_trade.csv",
             ),
         ],
     )
 
-    selected = mi_base_resources._classify_inputs(snapshot, bucket="mi-bucket")
+    selected = mi_base_resources._classify_inputs(snapshot)
 
     assert [(item.role, item.file.file_no) for item in selected] == [
         ("demand", 2),
         ("supply", 4),
         ("trade", 1),
+    ]
+    assert [(item.location.bucket, item.location.object_key) for item in selected] == [
+        (bucket, "SCNRCASE/7726440c-1f4c-4631-afe3-44f76a1fd9a1.xlsm"),
+        (bucket, "SCNRCASE/supply.xlsm"),
+        (bucket, "SCNRCASE/trade.xlsm"),
     ]
 
 
@@ -371,7 +377,7 @@ def test_scnrcase_workbook_role_tokens_must_be_unambiguous() -> None:
         mi_base_resources.MiBaseResourceFallbackError,
         match="Ambiguous SCNRCASE workbook role",
     ):
-        mi_base_resources._classify_inputs(snapshot, bucket="mi-bucket")
+        mi_base_resources._classify_inputs(snapshot)
 
 
 def test_auxiliary_sources_are_materialized_inside_request_release(
@@ -415,7 +421,7 @@ def test_workbook_contract_failure_logs_case_release_and_root_cause(
         (bucket, "SCNRCASE/trade.xlsm"): b"trade-current-base",
     }
     snapshot = _complete_snapshot(bucket=bucket, objects=objects)
-    inputs = mi_base_resources._classify_inputs(snapshot, bucket=bucket)
+    inputs = mi_base_resources._classify_inputs(snapshot)
     client = _FakeStorageClient(objects)
     first_metadata = asyncio.run(mi_base_resources._head_inputs(client, inputs))
     configured_paths = _configured_resource_paths()
@@ -512,7 +518,7 @@ def test_only_scnrcase_workbooks_are_downloaded_for_calculation(
     storage = ModelParameterResourceStorageConfig(
         enabled=True,
         endpoint_url="https://storage.example",
-        bucket=bucket,
+        bucket="configured-static-resource-bucket",
         access_key_id="test-access",
         secret_access_key="test-secret",
         local_root=str(tmp_path),

@@ -348,8 +348,8 @@ Scenario Group 수정 시각, 현재 Lever label mapping과 `hide_price_pressure
 `If-None-Match`를 보내고 내용이 같으면 body 없는 304를 반환한다. `section_ready`의 revision이 증가할 때
 조회하되 `completed` 뒤에는 최종 조회를 한 번 더 한다.
 
-현재 renderer version은 `v6`다. `dimensionSelected`를 Presentation 순서의 정본으로 통일한 변경으로 기존
-renderer version의 ETag는 더 이상 304 조건을 충족하지 않는다.
+현재 renderer version은 `v7`이다. Event 분석 Markdown의 Event·Interaction 구분과 제목 계층을 개선한
+변경으로 기존 renderer version의 ETag는 더 이상 304 조건을 충족하지 않는다.
 
 ### Presentation에서 후속 API로 매핑
 
