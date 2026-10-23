@@ -358,6 +358,9 @@ async def run_v4_create_operation(prepared: dict[str, Any], operation_id: str) -
                     operation_id,
                     exc,
                 )
+        from apps.agents.scenario_group_agent.flows.evaluate_scenarios.flow import submit_automatic_evaluation
+
+        await submit_automatic_evaluation(scenario_group_id, operation_id)
     except asyncio.CancelledError:
         await asyncio.shield(
             asyncio.to_thread(

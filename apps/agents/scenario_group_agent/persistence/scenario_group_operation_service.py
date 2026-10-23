@@ -507,6 +507,12 @@ class ScenarioGroupOperationService:
                 now=_db_now(),
                 status="succeeded",
             )
+            if result_payload.mode == "changed" and result_payload.validation_result.can_proceed:
+                from apps.agents.scenario_group_agent.persistence.scenario_quality_evaluation_service import (
+                    ScenarioQualityEvaluationService,
+                )
+
+                ScenarioQualityEvaluationService().prepare_automatic_in_session(session, operation)
             session.commit()
             return group_repository.model_to_dict(group)
         except Exception:
@@ -667,6 +673,12 @@ class ScenarioGroupOperationService:
                 retry_summary=retry_summary,
                 mlflow_trace_id=mlflow_trace_id,
             )
+            if operation.operation_type == "create" and status == "succeeded" and event_type == "completed":
+                from apps.agents.scenario_group_agent.persistence.scenario_quality_evaluation_service import (
+                    ScenarioQualityEvaluationService,
+                )
+
+                ScenarioQualityEvaluationService().prepare_automatic_in_session(session, operation)
             session.commit()
             event_payload = self._event_payload(event)
             from apps.agents.scenario_group_agent.runtime import get_scenario_group_operation_event_hub

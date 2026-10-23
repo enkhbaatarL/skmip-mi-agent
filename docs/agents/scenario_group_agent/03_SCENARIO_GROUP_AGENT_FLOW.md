@@ -391,6 +391,11 @@ SSE consumer와 producer 수명은 분리된다. owner worker는 process-local E
 
 ## 2. Validate Scenarios
 
+canonical v4 create 완료 및 변경된 Validation 저장 후에는 `quality_evaluation` operation을 접수하고
+기존 TaskRunner에서 시나리오 집합 평가를 실행한다. unchanged/BLOCK은 자동 평가하지 않는다.
+평가 중에는 기존 활성 작업 검사로 편집을 차단한다.
+API·저장·실행 경로는 [시나리오 품질 평가](07_SCENARIO_QUALITY_EVALUATION.md)를 참조한다.
+
 ### 실행 구조
 
 ```mermaid

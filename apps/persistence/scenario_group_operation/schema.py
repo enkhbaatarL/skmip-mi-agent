@@ -8,7 +8,7 @@ from pydantic import Field
 from apps.persistence.schema_base import ApiModel
 
 
-OperationType = Literal["create", "validation", "signpost", "confirmation"]
+OperationType = Literal["create", "validation", "signpost", "confirmation", "quality_evaluation"]
 OperationStatus = Literal["queued", "running", "succeeded", "failed", "interrupted"]
 OperationHeartbeatState = Literal["queued", "running", "succeeded", "failed", "interrupted", "missing"]
 TERMINAL_OPERATION_STATUSES = frozenset({"succeeded", "failed", "interrupted"})

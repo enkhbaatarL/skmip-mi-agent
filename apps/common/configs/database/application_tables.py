@@ -27,6 +27,7 @@ from apps.persistence.scenario_group_operation.models import (
     MiScenarioGroupOperationEventModel,
     MiScenarioGroupOperationModel,
 )
+from apps.persistence.scenario_quality_evaluation.models import MiScenarioQualityEvaluationModel
 from apps.persistence.signpost.models import MiSignpostModel
 
 
@@ -40,6 +41,7 @@ APPLICATION_TABLES: tuple[Table, ...] = (
     MiScenarioGroupEventModel.__table__,
     MiScenarioGroupOperationModel.__table__,
     MiScenarioGroupOperationEventModel.__table__,
+    MiScenarioQualityEvaluationModel.__table__,
     MiScenarioModel.__table__,
     MiDimensionValueMappingModel.__table__,
     MiModelImpactLeverModel.__table__,

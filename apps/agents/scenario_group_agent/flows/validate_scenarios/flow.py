@@ -208,7 +208,12 @@ async def run_validate_scenarios_inline(
                     error=exc,
                 )
             raise
-        return _bg_to_output(final_state)
+        output = _bg_to_output(final_state)
+        if operation_id is not None:
+            from apps.agents.scenario_group_agent.flows.evaluate_scenarios.flow import submit_automatic_evaluation
+
+            await submit_automatic_evaluation(scenario_group_id, operation_id)
+        return output
 
     operation = execute()
     if operation_id is None:

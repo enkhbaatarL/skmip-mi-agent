@@ -32,6 +32,10 @@ Scenario Agent API를 실제로 호출해 정상 동작하는지 확인한다.
 
 ### `scenario-quality-eval`
 
+서버의 시나리오 전용 평가 API·생성/수정 후 자동 평가는
+[시나리오 품질 평가](07_SCENARIO_QUALITY_EVALUATION.md)를 따른다.
+아래 Skill은 offline batch 평가이며 서버 평가 API와 별도로 동작한다.
+
 이미 실행한 pipeline 결과를 읽고 Scenario 내용의 품질을 평가한다.
 
 다음과 같은 질문에 답한다.
