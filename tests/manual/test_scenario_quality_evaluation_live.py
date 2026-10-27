@@ -20,7 +20,7 @@ sys.path.insert(0, str(ROOT))
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Live create/edit + quality evaluation test. Keeps all DB rows.")
+    parser = argparse.ArgumentParser(description="Live validation/edit + quality evaluation test. Keeps all DB rows.")
     parser.add_argument("--event-ids", type=int, nargs="+", required=True)
     parser.add_argument("--user-id", type=int, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
@@ -31,6 +31,9 @@ def main() -> None:
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
 
+    from apps.agents.scenario_group_agent.persistence.scenario_group_operation_service import (
+        ScenarioGroupOperationService,
+    )
     from apps.agents.scenario_group_agent.persistence.scenario_group_service import ScenarioGroupService
     from apps.agents.scenario_group_agent.persistence.scenario_quality_evaluation_service import (
         ScenarioQualityEvaluationService,
@@ -153,7 +156,19 @@ def main() -> None:
             if not any(message.get("eventType") == "completed" for message in messages):
                 msg = "Create operation did not complete; inspect create.sse"
                 raise RuntimeError(msg)
+            assert ScenarioQualityEvaluationService().automatic_operation_id(group_id, source_id) is None
             table = request_table(group_id)
+            validated = client.post(
+                f"/scenario-groups/{group_id}/validation", json={"userId": args.user_id, "table": table},
+            )
+            validated.raise_for_status()
+            save("initial_validation_response.json", validated.json())
+            validation = ScenarioGroupOperationService().get_latest_internal_by_type(group_id, "validation")
+            assert validation is not None
+            save("initial_validation_result.json", validation.model_dump(mode="json", by_alias=True))
+            assert validation.result_payload.validation_result.can_proceed, "Initial validation blocked evaluation"
+            summary["initialValidationOperationId"] = validation.operation_id
+            checkpoint()
             blocked = client.post(
                 f"/scenario-groups/{group_id}/validation", json={"userId": args.user_id, "table": table},
             )
@@ -162,10 +177,10 @@ def main() -> None:
             if blocked.status_code != 409:
                 msg = "Edit was not blocked while evaluation was active"
                 raise RuntimeError(msg)
-            created = wait_quality(client, group_id, source_id, "create")
+            created = wait_quality(client, group_id, validation.operation_id, "initial_validation")
             presentation = client.get(f"/scenario-groups/{group_id}/presentation")
             presentation.raise_for_status()
-            save("presentation_after_create.json", presentation.json())
+            save("presentation_after_validation.json", presentation.json())
 
             table = request_table(group_id)
             old_title = table["rows"][0]["title"]

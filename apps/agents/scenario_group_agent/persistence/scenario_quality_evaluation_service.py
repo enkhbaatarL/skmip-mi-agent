@@ -153,11 +153,21 @@ class ScenarioQualityEvaluationService:
         repository.insert(row)
         return row
 
-    def prepare_automatic_in_session(self, session: Session, source_operation: MiScenarioGroupOperationModel) -> None:
+    def prepare_automatic_in_session(
+        self, session: Session, source_operation: MiScenarioGroupOperationModel, *, changed: bool,
+    ) -> None:
+        if source_operation.operation_type != "validation" or source_operation.status != "succeeded":
+            return
         group = ScenarioGroupRepository(session=session).fetch_by_id(
             source_operation.scenario_group_id, for_update=True,
         )
         if group is not None and str(group.api_version) == "v4":
+            if not changed:
+                latest = ScenarioGroupOperationRepository(session=session).fetch_latest_by_type(
+                    group.scenario_group_id, "quality_evaluation",
+                )
+                if latest is not None and latest.status == "succeeded":
+                    return
             self.prepare_in_session(
                 session,
                 group=group,
@@ -173,9 +183,9 @@ class ScenarioQualityEvaluationService:
                 raise MIBaseError(ErrorCode.ENTITY_NOT_FOUND, detail="Scenario group not found")
             if group.request_usr_id is not None and int(group.request_usr_id) != user_id:
                 raise MIBaseError(ErrorCode.SCENARIO_GROUP_OWNERSHIP_CONFLICT)
-            if group.stage not in {"scenario_created", "scenario_validated", "signpost_created", "completed"}:
+            if group.stage not in {"scenario_validated", "signpost_created", "completed"}:
                 raise MIBaseError(
-                    ErrorCode.SCENARIO_GROUP_OPERATION_CONFLICT, detail="시나리오 생성 완료 후 평가하세요.",
+                    ErrorCode.SCENARIO_GROUP_OPERATION_CONFLICT, detail="Validation 통과 후 평가하세요.",
                 )
             existing = ScenarioQualityEvaluationRepository(session=session).fetch_by_request_id(request_id)
             row = self.prepare_in_session(session, group=group, user_id=user_id, request_id=request_id)

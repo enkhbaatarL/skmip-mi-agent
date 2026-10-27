@@ -23,10 +23,12 @@ from apps.agents.scenario_group_agent.persistence import (
 from apps.agents.scenario_group_agent.prompts.scenario_quality_evaluation import summarize, validate_targets
 from apps.agents.scenario_group_agent.routers import scenario_groups
 from apps.common.exceptions.custom import MIBaseError
+from apps.common.middleware.exception_handler import register_exception_handlers
 from apps.persistence.scenario_group_operation.models import (
     MiScenarioGroupOperationEventModel,
     MiScenarioGroupOperationModel,
 )
+from apps.persistence.scenario_group_operation.schema import ValidationOperationResultPayload
 from apps.persistence.scenario_quality_evaluation.models import MiScenarioQualityEvaluationModel
 from apps.persistence.scenario_quality_evaluation.schema import JUDGE_IDS, ScenarioQualityJudgment
 
@@ -88,7 +90,7 @@ def db(monkeypatch):
     from apps.common.configs.database.sync_database import connection
 
     monkeypatch.setattr(connection, "get_sync_session", factory)
-    group = SimpleNamespace(scenario_group_id=103, request_usr_id=42, api_version="v4", stage="scenario_created")
+    group = SimpleNamespace(scenario_group_id=103, request_usr_id=42, api_version="v4", stage="scenario_validated")
     monkeypatch.setattr(
         persistence.ScenarioGroupRepository,
         "fetch_by_id",
@@ -148,7 +150,7 @@ def test_completion_and_late_result_guard(db):
         )
 
 
-def test_automatic_prepare_uses_source_operation_once(db):
+def test_create_completion_does_not_prepare_evaluation(db):
     source_id = operations.new_operation_id()
     with db.factory.begin() as session:
         operations.ScenarioGroupOperationService().create_accepted_in_session(
@@ -165,21 +167,98 @@ def test_automatic_prepare_uses_source_operation_once(db):
         message_markdown="생성 완료",
         status="succeeded",
     )
-    child_id = db.service.automatic_operation_id(103, source_id)
-    assert child_id != source_id
+    assert db.service.automatic_operation_id(103, source_id) is None
+
+
+@pytest.fixture
+def complete_validation(db, monkeypatch):
+    from apps.agents.scenario_group_agent.flows.validate_scenarios.v4_validation import (
+        dimension_definition_fingerprint,
+        scenario_fingerprint,
+    )
+    from apps.agents.scenario_group_agent.persistence.scenario_service import ScenarioService
+
+    db.group.dimension_definitions = []
+    db.group.dimension_selected = []
+    monkeypatch.setattr(operations.ScenarioRepository, "fetch_models_by_group_id", lambda *args, **kw: [])
+    monkeypatch.setattr(ScenarioService, "_apply_v4_baseline_and_roles", lambda *args, **kw: None)
+    monkeypatch.setattr(operations.ScenarioGroupRepository, "model_to_dict", lambda self, group: vars(group))
+
+    def update_group(self, group, payload):
+        for key, value in payload.items():
+            setattr(group, key, value)
+
+    monkeypatch.setattr(operations.ScenarioGroupRepository, "update_group", update_group)
+
+    def complete(*, mode="unchanged", can_proceed=True):
+        source_id = operations.new_operation_id()
+        with db.factory.begin() as session:
+            operations.ScenarioGroupOperationService().create_accepted_in_session(
+                session, scenario_group_id=103, operation_id=source_id, operation_type="validation", user_id=42,
+            )
+        payload = ValidationOperationResultPayload(
+            mode=mode,
+            base_scenario_fingerprint=scenario_fingerprint([]),
+            dimension_definition_fingerprint=dimension_definition_fingerprint([]),
+            validation_result={
+                "verdict": "PASS" if can_proceed else "BLOCK",
+                "is_valid": can_proceed,
+                "can_proceed": can_proceed,
+                "reason_markdown": "검증 결과",
+            },
+        )
+        operations.ScenarioGroupOperationService().complete_validation(
+            scenario_group_id=103, operation_id=source_id, result_payload=payload, user_id=42,
+        )
+        return source_id, db.service.automatic_operation_id(103, source_id)
+
+    return complete
+
+
+def test_first_unchanged_validation_evaluates_once(db, complete_validation):
+    db.group.stage = "scenario_created"
+    source_id, child_id = complete_validation()
     assert child_id is not None
     child = db.service.get(103, child_id)
-    assert child.input_snapshot["sourceOperationId"] == source_id
     assert child.source == "automatic"
-    operations.ScenarioGroupOperationService().append_event(
-        103,
-        source_id,
-        event_type="completed",
-        title="완료",
-        message_markdown="생성 완료",
-        status="succeeded",
-    )
+    assert child.input_snapshot["sourceOperationId"] == source_id
+    assert db.group.stage == "scenario_validated"
+    with db.factory.begin() as session:
+        source = session.get(MiScenarioGroupOperationModel, source_id)
+        db.service.prepare_automatic_in_session(session, source, changed=False)
     assert db.service.automatic_operation_id(103, source_id) == child_id
+    db.service.complete(103, child_id, result=judgment(), verdict="PASS", average_score=4, llm_metadata={})
+    _, repeated_id = complete_validation()
+    assert repeated_id is None
+    _, changed_id = complete_validation(mode="changed")
+    assert changed_id is not None
+    assert changed_id != child_id
+
+
+def test_blocked_validation_does_not_evaluate(db, complete_validation):
+    _, child_id = complete_validation(mode="blocked", can_proceed=False)
+    assert child_id is None
+    assert db.group.stage == "scenario_created"
+
+
+def test_unchanged_validation_retries_after_failed_evaluation(db, complete_validation):
+    _, child_id = complete_validation()
+    db.service.fail(103, child_id, code="TEST_FAILURE")
+    _, retry_id = complete_validation()
+    assert retry_id is not None
+    assert retry_id != child_id
+
+
+def test_manual_api_rejects_evaluation_before_validation(db):
+    db.group.stage = "scenario_created"
+    app = FastAPI()
+    app.include_router(scenario_groups.router)
+    register_exception_handlers(app)
+    with TestClient(app) as client:
+        response = client.post(
+            "/scenario-groups/103/quality-evaluations", json={"userId": 42, "requestId": str(uuid4())},
+        )
+    assert response.status_code == 409
 
 
 def test_seven_rubrics_and_evidence_required():

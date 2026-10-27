@@ -38,6 +38,7 @@ sequenceDiagram
     API->>BG: FastAPI background task 등록
     API-->>PB: 즉시 접수 응답
     BG->>BG: 검증 graph 실행·결과 저장
+    BG->>BG: 통과 시 최초 또는 변경 결과의 품질 평가 접수·비동기 실행
     BG-->>PB: Validation 완료 callback
 
     PB->>API: POST /scenario-groups/{id}/signposts
@@ -391,8 +392,9 @@ SSE consumer와 producer 수명은 분리된다. owner worker는 process-local E
 
 ## 2. Validate Scenarios
 
-canonical v4 create 완료 및 변경된 Validation 저장 후에는 `quality_evaluation` operation을 접수하고
-기존 TaskRunner에서 시나리오 집합 평가를 실행한다. unchanged/BLOCK은 자동 평가하지 않는다.
+canonical v4 create 완료 시에는 평가하지 않는다. Validation 통과 후 최초 평가 또는 변경된 결과의 평가를
+`quality_evaluation` operation으로 접수하고 기존 TaskRunner에서 실행한다. 변경 없는 반복 Validation은
+최신 평가가 succeeded이면 건너뛰며, 최신 평가가 실패·중단된 경우 다시 평가한다. BLOCK은 평가하지 않는다.
 평가 중에는 기존 활성 작업 검사로 편집을 차단한다.
 API·저장·실행 경로는 [시나리오 품질 평가](07_SCENARIO_QUALITY_EVALUATION.md)를 참조한다.
 

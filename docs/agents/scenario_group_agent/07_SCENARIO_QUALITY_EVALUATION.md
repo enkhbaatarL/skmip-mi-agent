@@ -28,9 +28,9 @@ Content-Type: application/json
 }
 ```
 
-그룹 소유자와 생성 완료 상태를 확인한다. requestId는 전역 UUID이고 같은 요청의 재전송은 기존 operation을 반환한다.
+그룹 소유자와 Validation 통과 상태를 확인한다. requestId는 전역 UUID이고 같은 요청의 재전송은 기존 operation을 반환한다.
 다른 그룹에 이미 사용한 UUID는 재사용할 수 없다. 새 평가에는 새 UUID를 사용한다.
-생성 중이거나 queued/running 그룹 작업이 있으면 409다. 기존 API의 userId 전달·조회 접근 관례를 따른다.
+Validation 통과 전이거나 queued/running 그룹 작업이 있으면 409다. 기존 API의 userId 전달·조회 접근 관례를 따른다.
 
 POST는 HTTP 202, `data.operationId`와 `data.status`를 반환한다.
 
@@ -46,13 +46,15 @@ GET은 operation과 평가 상세를 조합한 `data`를 반환한다.
 
 ## 자동 평가와 실행 수명
 
-canonical v4 SSE 생성의 completed 저장 transaction에서 평가 operation과 입력을 접수한다.
-`run_v4_create_operation()`이 완료 이벤트를 기록한 후 기존 TaskRunner에 평가를 제출한다.
+canonical v4 SSE 생성 완료 시에는 평가를 실행하지 않는다.
 생성 시나리오의 실제 DB ID와 생성에 연결된 Event snapshot을 입력에 고정한다.
 snapshot 없는 구형 그룹의 수동 평가는 평가 시점 Event를 고정하고 source에 명시한다.
 
-v4 `complete_validation()`에서 변경 내용이 적용되고 `mode=changed`, `canProceed=true`이면 같은 transaction에서
-평가를 접수한다. Validation flow가 완료 후 제출한다. unchanged/BLOCK에는 새 평가를 만들지 않는다.
+v4 `complete_validation()`에서 `canProceed=true`이면 평가 접수 여부를 결정한다.
+최초 Validation은 변경이 없어도 평가하며, `mode=changed`이면 수정 반영 후 새 평가를 접수한다.
+변경 없는 반복 Validation은 최신 평가 operation이 succeeded이면 건너뛴다. 최신 평가가 실패·중단된 경우 다시 평가한다.
+BLOCK에는 평가를 만들지 않는다. 평가 입력과 operation은 Validation 완료와 같은 transaction에서 저장하고,
+Validation flow가 완료 후 기존 TaskRunner에 제출한다.
 자동 requestId는 원본 operation ID에서 UUID5로 생성하며 입력의 sourceOperationId에 원본 작업을 기록한다.
 inputHash에는 sourceOperationId·작업 상태·감사 시각을 포함하지 않는다.
 
@@ -73,7 +75,7 @@ $env:DEBUG = 'false'
 .venv/Scripts/python.exe -X utf8 -m pytest tests/automated/test_scenario_quality_evaluation.py -q
 ```
 
-실제 DB·LLM으로 생성/수정 및 수동 POST/GET을 확인하고 데이터를 보존하려면:
+실제 DB·LLM으로 생성 → 최초 Validation·평가 → 수정 Validation·평가 및 수동 POST/GET을 확인하고 데이터를 보존하려면:
 
 ```powershell
 .venv/Scripts/python.exe -X utf8 tests/manual/test_scenario_quality_evaluation_live.py `
