@@ -5,6 +5,10 @@ description: MI Scenario Group Agent의 create/validation/signpost sync 결과�
 
 # Scenario Quality Eval
 
+서버의 시나리오 전용 평가 API와 자동 평가는
+`docs/agents/scenario_group_agent/07_SCENARIO_QUALITY_EVALUATION.md`를 따른다.
+이 Skill의 Agent-runtime Judge는 offline batch 작업이며 서버 LLM 호출 경로와 별도다.
+
 이 skill은 `scenario-sync-pipeline`의 성공/실패/수행시간 평가를 넘어, 생성된 scenario group 내용의 품질을 평가한다. 먼저 `scenario-sync-pipeline`으로 batch를 실행해 JSON 증적과 SQLite 지표를 만든 뒤 이 skill을 적용한다.
 
 ## 관련 문서

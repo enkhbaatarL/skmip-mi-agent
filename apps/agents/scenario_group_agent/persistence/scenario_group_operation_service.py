@@ -507,6 +507,14 @@ class ScenarioGroupOperationService:
                 now=_db_now(),
                 status="succeeded",
             )
+            if result_payload.validation_result.can_proceed:
+                from apps.agents.scenario_group_agent.persistence.scenario_quality_evaluation_service import (
+                    ScenarioQualityEvaluationService,
+                )
+
+                ScenarioQualityEvaluationService().prepare_automatic_in_session(
+                    session, operation, changed=result_payload.mode == "changed",
+                )
             session.commit()
             return group_repository.model_to_dict(group)
         except Exception:

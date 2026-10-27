@@ -154,7 +154,7 @@ Signpost 재생성이 필요한 Scenario의 기존 row는 soft delete하고 새 
 
 ### `tmm_mi_scenario_group_operation_m`
 
-create, validation, signpost, confirmation 작업의 master다.
+create, validation, signpost, confirmation, quality_evaluation 작업의 master다.
 
 | 컬럼 | 역할 |
 | --- | --- |
@@ -181,6 +181,10 @@ Scenario Group, create operation, 첫 `accepted` event는 같은 transaction으�
 `section_ready`도 같은 transaction에서 revision을 맞춘다.
 
 ## 5. Dimension value mapping
+
+`tmm_mi_scenario_quality_eval_m`은 평가 operation과 operation_id PK/FK로 연결되는 1:1 상세다.
+requestId UUID는 전역 unique이며 입력 snapshot/hash, prompt version, 점수·위반 JSON, 모델 사용량을 저장한다.
+실행 상태·heartbeat·오류는 operation이 소유한다. 상세: [품질 평가](07_SCENARIO_QUALITY_EVALUATION.md).
 
 `tmm_mi_dimension_value_mapping_m`은 legacy v2/v3 자유값을 model parameter source에 연결하는 proposal과
 승인 상태를 저장한다. 주요 값은 `dimension_value_id`, `dimension_id`, `display_value`,

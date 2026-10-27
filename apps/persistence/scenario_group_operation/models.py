@@ -12,7 +12,7 @@ from apps.common.configs.database.sync_database.base import ORMBase
 from apps.persistence.scenario_group.models import BIN, TABLE_ARGS, AuditColumnsMixin
 
 
-_OPERATION_TYPES = "'create','validation','signpost','confirmation'"
+_OPERATION_TYPES = "'create','validation','signpost','confirmation','quality_evaluation'"
 _OPERATION_STATUSES = "'queued','running','succeeded','failed','interrupted'"
 
 

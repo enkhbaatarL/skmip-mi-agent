@@ -23,6 +23,8 @@
 | `GET` | `/scenario-groups/{id}/operations/{operationId}` | operation polling |
 | `GET` | `/scenario-groups/{id}/operations/{operationId}/stream` | SSE replay·재연결 |
 | `POST` | `/scenario-groups/{id}/validation` | Scenario table 검증 접수 |
+| `POST` | `/scenario-groups/{id}/quality-evaluations` | Validation 통과 후 시나리오 집합 품질 평가 접수 (202) |
+| `GET` | `/scenario-groups/{id}/quality-evaluations/{operationId}` | 평가 상태·입력·결과 조회 |
 | `POST` | `/scenario-groups/{id}/signposts` | Signpost 생성 접수 |
 | `POST` | `/scenario-groups/{id}/confirmation` | 최종 확정 |
 | `POST` | `/scenario-groups/{id}/dimension-mapping-approvals` | legacy 자유값 mapping 승인·거절 |

@@ -1106,7 +1106,13 @@ def test_scenario_fingerprint_ignores_workflow_status_but_detects_content_change
     assert scenario_fingerprint(title_changed) != original
 
 
-def test_changed_validation_refreshes_decimals_before_signpost_stale_check() -> None:
+def test_changed_validation_refreshes_decimals_before_signpost_stale_check(monkeypatch: pytest.MonkeyPatch) -> None:
+    prepare_evaluation = Mock()
+    monkeypatch.setattr(
+        "apps.agents.scenario_group_agent.persistence.scenario_quality_evaluation_service."
+        "ScenarioQualityEvaluationService.prepare_automatic_in_session",
+        prepare_evaluation,
+    )
     analysis = _analyze(_table())
     result_payload = ValidationOperationResultPayload(
         mode="changed",
@@ -1243,6 +1249,7 @@ def test_changed_validation_refreshes_decimals_before_signpost_stale_check() -> 
             user_id=101,
         )
 
+    prepare_evaluation.assert_called_once_with(session, validation_operation, changed=True)
     stored = ValidationOperationResultPayload.model_validate(validation_operation.result_payload)
     assert stored.application is not None
     assert scenarios[0].probability_score == Decimal("23.00")

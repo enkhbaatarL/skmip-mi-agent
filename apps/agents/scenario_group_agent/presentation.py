@@ -1131,7 +1131,11 @@ def _v4_interaction_is_ready(
     operation: ScenarioGroupOperationPayload | None,
     diagnostics: dict[str, Any],
 ) -> bool:
-    if operation is None or operation.status in {"succeeded", "failed", "interrupted"}:
+    if (
+        operation is None
+        or operation.operation_type == "quality_evaluation"
+        or operation.status in {"succeeded", "failed", "interrupted"}
+    ):
         return True
     sections = operation.presentation_snapshot.get("sections") or {}
     interaction = sections.get("interaction") or sections.get("eventInteraction") or {}

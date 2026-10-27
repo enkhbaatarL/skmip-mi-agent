@@ -68,6 +68,10 @@ apps/agents/<agent_name>/
 
 ## Persistence 경계
 
+Scenario 품질 평가는 `scenario_group_agent/flows/evaluate_scenarios`와
+`persistence/scenario_quality_evaluation_service.py`가 실행·transaction을 담당하고,
+공유 ORM/repository/DTO는 `apps/persistence/scenario_quality_evaluation`에 둔다.
+
 ```text
 router / flow / node
   → apps/agents/<agent_name>/persistence/*_service.py

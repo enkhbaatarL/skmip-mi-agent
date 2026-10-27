@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 from typing import Annotated, Any, Literal
@@ -23,6 +24,11 @@ from apps.agents.scenario_group_agent.flows.create_signposts.flow import (
     prepare_create_signposts,
     run_create_signposts_background,
 )
+from apps.agents.scenario_group_agent.flows.evaluate_scenarios.api_schema import (
+    CreateQualityEvaluationIn,
+    QualityEvaluationOut,
+)
+from apps.agents.scenario_group_agent.flows.evaluate_scenarios.flow import submit_quality_evaluation
 from apps.agents.scenario_group_agent.flows.validate_scenarios.api_schema import ValidateScenariosIn
 from apps.agents.scenario_group_agent.flows.validate_scenarios.flow import (
     prepare_validate_scenarios,
@@ -32,6 +38,9 @@ from apps.agents.scenario_group_agent.persistence.scenario_group_operation_servi
     new_operation_id,
 )
 from apps.agents.scenario_group_agent.persistence.scenario_group_service import ScenarioGroupService
+from apps.agents.scenario_group_agent.persistence.scenario_quality_evaluation_service import (
+    ScenarioQualityEvaluationService,
+)
 from apps.agents.scenario_group_agent.presentation import (
     PRESENTATION_RENDERER_VERSION,
     build_common_scenario_group_query_data,
@@ -70,6 +79,41 @@ from apps.common.configs.config import get_settings
 
 
 router = APIRouter(tags=["scenario-groups"])
+
+
+@router.post(
+    "/scenario-groups/{scenario_group_id}/quality-evaluations",
+    response_model=QualityEvaluationOut,
+    status_code=202,
+    summary="시나리오 집합 품질 평가 접수",
+)
+async def create_quality_evaluation(
+    scenario_group_id: int,
+    payload: CreateQualityEvaluationIn,
+) -> QualityEvaluationOut:
+    record, created = await asyncio.to_thread(
+        ScenarioQualityEvaluationService().prepare, scenario_group_id, payload.user_id, str(payload.request_id),
+    )
+    if created:
+        try:
+            submit_quality_evaluation(scenario_group_id, record.operation_id)
+        except Exception:
+            await asyncio.to_thread(
+                ScenarioQualityEvaluationService().fail,
+                scenario_group_id, record.operation_id, code="EVALUATION_SUBMIT_FAILED",
+            )
+            raise
+    return QualityEvaluationOut(data=record)
+
+
+@router.get(
+    "/scenario-groups/{scenario_group_id}/quality-evaluations/{operation_id}",
+    response_model=QualityEvaluationOut,
+    summary="시나리오 평가 상태 및 결과 조회",
+)
+async def get_quality_evaluation(scenario_group_id: int, operation_id: str) -> QualityEvaluationOut:
+    record = await asyncio.to_thread(ScenarioQualityEvaluationService().get, scenario_group_id, operation_id)
+    return QualityEvaluationOut(data=record)
 
 
 @router.post(
@@ -221,7 +265,7 @@ async def get_scenario_group_presentation(
             updated_at.isoformat() if hasattr(updated_at, "isoformat") else str(updated_at or ""),
             json.dumps(lever_labels, ensure_ascii=False, sort_keys=True, separators=(",", ":")),
             str(hide_price_pressure),
-        ]
+        ],
     )
     etag = f'"{hashlib.sha256(etag_material.encode("utf-8")).hexdigest()}"'
     if request.headers.get("if-none-match") == etag:
