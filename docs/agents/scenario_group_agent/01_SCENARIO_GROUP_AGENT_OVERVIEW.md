@@ -232,6 +232,8 @@ Validation을 통과하면 Agent가 각 Scenario의 Signpost를 만든다. 사�
 | 어떤 DB table에 무엇이 저장되는지 | [DB Spec](04_SCENARIO_GROUP_AGENT_DB_SPEC.md) |
 | 자연어로 테스트를 요청하고 결과를 읽는 방법 | [테스트와 품질 평가](05_SCENARIO_GROUP_AGENT_TEST_AND_QUALITY.md) |
 | Scenario 이전 Event의 사실·미래 예상·기관 View·상충 전망을 어떻게 나누고 어떤 대상·기간·수치 근거를 보존할지 | [Event 구조화 → Model Parameter 증적 가이드](06_EVENT_STRUCTURING_FOR_MODEL_PARAMETER.md) |
+| RAG 후보에서 함께 분석할 Event를 선정하는 기준과 서버 검증 계약 (API 연결 전) | [Event 추천 기준](08_EVENT_RECOMMENDATION_CRITERIA.md) |
+| MySQL Event를 임베딩 전 검색 문서로 구성하고 로컬 JSONL을 검토하는 방법 | [Event 검색 문서 구성](09_EVENT_SEARCH_DOCUMENTS.md) |
 | 공통 프로젝트 폴더와 코드 배치 원칙 | [Project Directory Structure](../../architectures/project_directory_structure.md) |
 
 ## 코드를 맡은 사람이 처음 볼 위치

@@ -8,7 +8,6 @@ import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from apps.agents.model_parameter_agent.api import router as model_parameter_router  # noqa: F401
 from apps.agents.scenario_group_agent.api import router as scenario_group_router
 from apps.agents.scenario_group_agent.constants import AGENT_NAME
 from apps.common.configs.config import get_settings

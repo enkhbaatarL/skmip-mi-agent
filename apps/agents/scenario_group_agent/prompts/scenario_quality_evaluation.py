@@ -3,10 +3,10 @@ from __future__ import annotations
 # ruff: noqa: CPY001
 from pydantic import JsonValue
 
-from apps.persistence.scenario_quality_evaluation.schema import QualityVerdict, ScenarioQualityJudgment
+from apps.persistence.scenario_quality_evaluation.schema import QualityIssue, QualityVerdict, ScenarioQualityJudgment
 
 
-PROMPT_VERSION = "scenario-set-v1"
+PROMPT_VERSION = "scenario-set-v2"
 SYSTEM_PROMPT = """시나리오 그룹의 전체 시나리오 집합을 아래 7개 기준으로 평가하고 한국어로 답하라.
 J-01 Event grounding: Event의 핵심 driver, 수치, 지역 반영과 근거 없는 사실 생성.
 J-02 Baseline validity: baseline이 극단이 아닌 개연성 높은 기준 경로인지.
@@ -25,7 +25,28 @@ Event는 근거로 사용하며 Event 자체와 Signpost를 채점하지 않는�
 외부 사실 확인이 반드시 필요한 문제는 EXTERNAL_FACT_REQUIRED,
 입력 Event로 확인 가능한 문제는 EVENT_PAYLOAD_ONLY, 논리/표현 문제는 NONE으로 표시한다.
 입력 밖의 추가 자료가 없다는 이유만으로 위반을 만들지 않는다.
+각 violation의 factDependency가 EXTERNAL_FACT_REQUIRED이면 factCheck 객체를 반드시 생성한다.
+그 외에는 factCheck를 null로 반환한다.
+factCheck 작성 규칙:
+- claim: evidence와 관련 입력 문맥에서 외부 자료로 검증할 주장을 추출한다.
+- verificationQuestion: 해당 주장을 확인할 구체적인 질문을 작성한다. 대상과 입력에 명시된 기간·수치를 보존한다.
+- entity: 입력에서 확인되는 대상 설비·기업·기관 등을 기재한다. 불명확하면 null이다.
+- region: 입력에서 확인되는 대상 지역을 기재한다. 불명확하면 null이다.
+- targetPeriod: 입력에서 확인되는 주장의 대상 기간을 기재한다. 불명확하면 null이다.
+- 입력에 없는 대상, 날짜, 수치 또는 기준 시점을 추정하지 않는다.
+- 전망·계획·조건부 표현과 주장 주체를 보존한다. 미래 가정을 이미 발생한 사실로 바꾸지 않는다.
+- 검증 계획만 작성하며, 검색 수행 또는 외부 사실 확인이 완료된 것처럼 서술하지 않는다.
 """
+
+
+def _validate_fact_check(issue: QualityIssue) -> None:
+    requires_fact = issue.fact_dependency == "EXTERNAL_FACT_REQUIRED"
+    if requires_fact and issue.fact_check is None:
+        msg = "EXTERNAL_FACT_REQUIRED requires factCheck"
+        raise ValueError(msg)
+    if not requires_fact and issue.fact_check is not None:
+        msg = "factCheck is only allowed for EXTERNAL_FACT_REQUIRED"
+        raise ValueError(msg)
 
 
 def validate_targets(result: ScenarioQualityJudgment, snapshot: dict[str, JsonValue]) -> None:
@@ -36,6 +57,7 @@ def validate_targets(result: ScenarioQualityJudgment, snapshot: dict[str, JsonVa
     ids = {item["scenario_id"] for item in scenarios if isinstance(item, dict)}
     for item in result.items:
         for issue in item.violations:
+            _validate_fact_check(issue)
             if len(set(issue.scenario_ids)) != len(issue.scenario_ids) or not set(issue.scenario_ids) <= ids:
                 msg = "Judge referenced unknown or duplicated scenario IDs"
                 raise ValueError(msg)

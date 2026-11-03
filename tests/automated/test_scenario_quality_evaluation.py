@@ -58,6 +58,13 @@ def judgment(*, fact=False):
                     "reason": "기준 경로 근거 확인 필요",
                     "suggestedFix": "근거 보완",
                     "factDependency": "EXTERNAL_FACT_REQUIRED",
+                    "factCheck": {
+                        "claim": "기준 경로의 근거가 성립한다.",
+                        "verificationQuestion": "기준 경로의 근거가 성립하는가?",
+                        "entity": None,
+                        "region": None,
+                        "targetPeriod": None,
+                    },
                 },
             ],
         )
@@ -144,6 +151,12 @@ def test_completion_and_late_result_guard(db):
     assert saved.status == "succeeded"
     assert saved.verdict == "NEEDS_FACT"
     assert saved.result.items[1].violations[0].scenario_ids == [417]
+    assert saved.result.items[1].violations[0].fact_check.verification_question == "기준 경로의 근거가 성립하는가?"
+    with db.factory() as session:
+        row = session.get(MiScenarioQualityEvaluationModel, record.operation_id)
+        fact_check = row.result_payload["items"][1]["violations"][0]["factCheck"]
+        assert fact_check["verificationQuestion"] == "기준 경로의 근거가 성립하는가?"
+        assert fact_check["targetPeriod"] is None
     with pytest.raises(operations.OperationAlreadyTerminalError):
         db.service.complete(
             103, record.operation_id, result=judgment(), verdict="PASS", average_score=4, llm_metadata={},
@@ -270,6 +283,83 @@ def test_seven_rubrics_and_evidence_required():
     data["items"][0]["verdict"] = "WARN"
     with pytest.raises(ValidationError):
         ScenarioQualityJudgment.model_validate(data)
+
+
+def test_legacy_external_fact_result_is_readable_but_new_result_requires_fact_check():
+    data = judgment(fact=True).model_dump(mode="json", by_alias=True)
+    del data["items"][1]["violations"][0]["factCheck"]
+    legacy = ScenarioQualityJudgment.model_validate(data)
+    assert legacy.items[1].violations[0].fact_check is None
+    with pytest.raises(ValueError, match="requires factCheck"):
+        validate_targets(legacy, SNAPSHOT)
+
+
+@pytest.mark.parametrize("dependency", ["NONE", "EVENT_PAYLOAD_ONLY"])
+def test_fact_check_is_rejected_for_non_external_issue(dependency):
+    result = judgment(fact=True)
+    result.items[1].violations[0].fact_dependency = dependency
+    with pytest.raises(ValueError, match="only allowed"):
+        validate_targets(result, SNAPSHOT)
+
+
+@pytest.mark.parametrize("field", ["claim", "verificationQuestion"])
+@pytest.mark.parametrize("value", ["", "   "])
+def test_fact_check_rejects_empty_claim_and_question(field, value):
+    data = judgment(fact=True).model_dump(mode="json", by_alias=True)
+    data["items"][1]["violations"][0]["factCheck"][field] = value
+    with pytest.raises(ValidationError):
+        ScenarioQualityJudgment.model_validate(data)
+
+
+def test_external_fact_check_validates_with_unknown_scope():
+    result = judgment(fact=True)
+    validate_targets(result, SNAPSHOT)
+    assert result.items[1].violations[0].fact_check.target_period is None
+
+
+def test_worker_rejects_missing_fact_check_before_persisting_result(db, monkeypatch):
+    record, _ = prepare(db)
+    legacy = judgment(fact=True)
+    legacy.items[1].violations[0].fact_check = None
+    monkeypatch.setattr(
+        flow,
+        "invoke_llm_structured_output",
+        AsyncMock(return_value=SimpleNamespace(result=legacy, model="test-model", usage=None)),
+    )
+    asyncio.run(flow.run_quality_evaluation(103, record.operation_id))
+    saved = db.service.get(103, record.operation_id)
+    assert saved.status == "failed"
+    assert saved.result is None
+
+
+def test_api_returns_fact_check_and_reads_legacy_payload(db):
+    record, _ = prepare(db)
+    result = judgment(fact=True)
+    verdict, score = summarize(result)
+    db.service.complete(
+        103,
+        record.operation_id,
+        result=result,
+        verdict=verdict,
+        average_score=score,
+        llm_metadata={},
+    )
+    app = FastAPI()
+    app.include_router(scenario_groups.router)
+    path = f"/scenario-groups/103/quality-evaluations/{record.operation_id}"
+    with TestClient(app) as client:
+        response = client.get(path)
+        assert response.status_code == 200
+        issue = response.json()["data"]["result"]["items"][1]["violations"][0]
+        assert issue["factCheck"]["verificationQuestion"] == "기준 경로의 근거가 성립하는가?"
+        with db.factory.begin() as session:
+            row = session.get(MiScenarioQualityEvaluationModel, record.operation_id)
+            payload = deepcopy(row.result_payload)
+            del payload["items"][1]["violations"][0]["factCheck"]
+            row.result_payload = payload
+        response = client.get(path)
+        assert response.status_code == 200
+        assert response.json()["data"]["result"]["items"][1]["violations"][0]["factCheck"] is None
 
 
 @pytest.mark.parametrize(

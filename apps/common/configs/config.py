@@ -135,6 +135,7 @@ class Settings(BaseSettings):
         env_prefix="",
         env_nested_delimiter="__",
         yaml_file=str(CONFIG_FILE_PATH),
+        yaml_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",
         env_parse_none_str="null",

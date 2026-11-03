@@ -8,12 +8,33 @@ from typing import Any
 from apps.common.exceptions.custom import MIBaseError
 from apps.common.values.error_codes import ErrorCode
 from apps.persistence.event.repository import EventRepository
+from apps.persistence.event.schema import EventSearchSource
 from apps.persistence.scenario.repository import ScenarioRepository
 from apps.persistence.scenario_group.repository import ScenarioGroupRepository
 from apps.persistence.signpost.repository import SignpostRepository
 
 
 class EventService:
+    def load_search_sources(
+        self,
+        *,
+        limit: int = 200,
+        event_ids: list[int] | None = None,
+    ) -> list[EventSearchSource]:
+        """Bounded internal export, not a user-authorized search endpoint."""
+        from apps.common.configs.database.sync_database.connection import get_sync_session
+
+        if not 1 <= limit <= 200 or (
+            event_ids is not None and (len(event_ids) > limit or any(event_id <= 0 for event_id in event_ids))
+        ):
+            raise MIBaseError(
+                ErrorCode.INVALID_REQUEST,
+                detail="검색 문서 조회는 양의 Event ID와 limit 1~200이 필요합니다.",
+            )
+        with get_sync_session() as session:
+            rows = EventRepository(session=session).list_search_sources(limit=limit, event_ids=event_ids)
+            return [EventSearchSource.model_validate(row) for row in rows]
+
     def list_events(
         self,
         *,

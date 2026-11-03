@@ -13,6 +13,16 @@ JUDGE_IDS = ("J-01", "J-02", "J-03", "J-04", "J-05", "J-06", "J-11")
 QualityVerdict = Literal["PASS", "WARN", "FAIL", "NEEDS_FACT"]
 
 
+class QualityFactCheck(ApiModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    claim: str = Field(min_length=1, description="입력에서 추출한 검증 대상 주장. 전망·조건·주장 주체를 보존한다.")
+    verification_question: str = Field(min_length=1, description="외부 자료로 확인할 구체적인 질문")
+    entity: str | None = Field(description="입력에서 확인되는 대상 설비·기업·기관 등. 불명확하면 null")
+    region: str | None = Field(description="입력에서 확인되는 대상 지역. 불명확하면 null")
+    target_period: str | None = Field(description="입력에서 확인되는 주장의 대상 기간. 불명확하면 null")
+
+
 class QualityIssue(ApiModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -22,6 +32,10 @@ class QualityIssue(ApiModel):
     reason: str = Field(min_length=1)
     suggested_fix: str = Field(min_length=1)
     fact_dependency: Literal["NONE", "EVENT_PAYLOAD_ONLY", "EXTERNAL_FACT_REQUIRED"]
+    fact_check: QualityFactCheck | None = Field(
+        default=None,
+        description="EXTERNAL_FACT_REQUIRED인 신규 평가에서 생성하는 검증 계획. 그 외에는 null",
+    )
 
 
 class QualityItem(ApiModel):

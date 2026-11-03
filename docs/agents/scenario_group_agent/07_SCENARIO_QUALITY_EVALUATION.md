@@ -44,6 +44,14 @@ GET은 operation과 평가 상세를 조합한 `data`를 반환한다.
 `result.items[].violations[].evidencePath`는 inputSnapshot 기준 JSON pointer다.
 그룹·시나리오 필드는 persistence snake_case, Event payload는 camelCase다.
 
+`scenario-set-v2`부터 `result.items[].violations[].factDependency=EXTERNAL_FACT_REQUIRED`이면
+평가 LLM이 같은 violation에 `factCheck`를 생성한다. `claim`, `verificationQuestion`은 비어 있지 않은
+문자열이며 `entity`, `region`, `targetPeriod`는 입력에서 확인할 수 없으면 null이다. 전망·계획·조건과
+주장 주체를 보존하고 입력에 없는 기준 시점·대상·수치를 추정하지 않는다. 다른 factDependency에서는
+`factCheck=null`이다. 이는 후속 검색용 검증 계획이며 외부 검색 결과나 사실 확인 완료를 의미하지 않는다.
+신규 LLM 결과는 저장 전에 생성 조건을 검증한다. 기존 이력은 factCheck 필드가 없어도 조회할 수 있다.
+DB는 기존 `result_payload` JSON에 저장하므로 컬럼 변경은 없다.
+
 ## 자동 평가와 실행 수명
 
 canonical v4 SSE 생성 완료 시에는 평가를 실행하지 않는다.
@@ -86,3 +94,15 @@ $env:DEBUG = 'false'
 envs/.env를 프로세스에 로드한다. 신규 그룹과 평가 결과를 삭제하지 않으며 외부 프런트엔드 callback만 생략한다.
 기존 그룹을 삭제하지 않으므로 Event 조합은 테스트 대상 환경의 점유 상태에 맞게 선택한다.
 출력은 summary.json, 생성 SSE, 요청/응답, 평가 JSON, 최종 그룹 snapshot이다.
+
+여러 Event를 각각 새 그룹으로 생성하고 최초 Validation·평가의 factCheck 저장과 조회를 확인하려면:
+
+```powershell
+.venv/Scripts/python.exe -X utf8 tests/manual/test_scenario_fact_check_live.py `
+  --event-ids 47 70 --user-id 10603 `
+  --output-dir local/output/fact_check_live/run_name
+```
+
+Event별 입력·SSE·생성 그룹·평가 API 응답·DB 원본 result_payload·factCheck 항목을 보존한다.
+DB와 LLM은 실제 연결을 사용하며 외부 프런트엔드 callback만 생략한다. 자연 생성 결과에
+EXTERNAL_FACT_REQUIRED가 없으면 factCheck 목록은 정상적으로 비어 있을 수 있다.

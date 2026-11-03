@@ -63,6 +63,10 @@ Event가 여러 Group에 선택될 수 있고, 하나의 Group도 여러 Event�
 v4 create는 Event Type Template을 생성 기준으로 사용하지 않지만 Event 상세 조회와 legacy v1~v3 복원에는
 Event Type 관계가 필요하다.
 
+검색 문서 샘플 export는 `EventRepository.list_search_sources`로 `del_yn='N'`, `publish_status='PUBLISHED'`
+Event와 활성 Record 연결을 읽는다. 신규 컬럼이나 테이블을 만들지 않는다. 사용자별 권한을 평가하는
+운영 검색 API는 아니며, 문서 변환 계약은 [Event 검색 문서 구성](09_EVENT_SEARCH_DOCUMENTS.md)을 따른다.
+
 ### Dimension Template과 Impact Lever
 
 | Table | 역할 |

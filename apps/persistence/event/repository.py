@@ -21,6 +21,51 @@ def _optional_int(value: Any) -> int | None:  # noqa: ANN401
 
 
 class EventRepository(BaseSyncSQLRepository):
+    def list_search_sources(
+        self,
+        *,
+        limit: int,
+        event_ids: list[int] | None = None,
+    ) -> list[dict[str, Any]]:
+        """Read published, non-deleted source columns without legacy type joins."""
+        columns = (
+            "mi_event_id",
+            "event_type_l2_id",
+            "one_line_summary",
+            "search_text",
+            "key_bullets_json",
+            "tags_json",
+            "detail_analysis",
+            "numeric_facts_md",
+            "institution_view_synthesis",
+            "occurred_at",
+            "crt_dtm",
+            "mod_dtm",
+            "publish_status",
+            "del_yn",
+        )
+        stmt = select(*(getattr(MiEventModel, column) for column in columns)).where(
+            MiEventModel.del_yn == "N",
+            MiEventModel.publish_status == "PUBLISHED",
+        )
+        if event_ids is not None:
+            stmt = stmt.where(MiEventModel.mi_event_id.in_(event_ids))
+        stmt = stmt.order_by(MiEventModel.mod_dtm.desc(), MiEventModel.mi_event_id.desc()).limit(limit)
+        rows = [dict(row) for row in self.session.execute(stmt).mappings().all()]
+        if not rows:
+            return []
+        record_stmt = select(MiEventRecordMapModel.mi_event_id, MiEventRecordMapModel.mi_record_id).where(
+            MiEventRecordMapModel.mi_event_id.in_([row["mi_event_id"] for row in rows]),
+            MiEventRecordMapModel.del_yn == "N",
+        )
+        record_ids: dict[int, set[int]] = {}
+        for event_id, record_id in self.session.execute(record_stmt).all():
+            if record_id is not None:
+                record_ids.setdefault(int(event_id), set()).add(int(record_id))
+        for row in rows:
+            row["source_record_ids"] = sorted(record_ids.get(int(row["mi_event_id"]), set()))
+        return rows
+
     def insert_event(self, payload: dict[str, Any]) -> int:
         """tmm_mi_mievent_m 에 Event 1건을 insert하고 발급된 PK를 돌려준다.
 
