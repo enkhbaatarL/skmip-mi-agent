@@ -18,6 +18,17 @@ Agent 테스트를 요청하려는 Skill 사용자를 위한 문서다.
 
 ## 어떤 Skill을 사용하나요?
 
+Event 사전 웹 검증 API의 독립 회귀 테스트는 다음 명령으로 실행한다(DB·외부 검색·LLM은 mock).
+
+```bash
+python -m pytest tests/automated/test_event_verification_api.py tests/automated/test_web_search_citations.py -q
+```
+
+입력·응답 계약, 입력 순서, 판정 집계, 근거 없음, 허위 출처, 부분 실패·timeout·취소를 검증한다.
+실제 검색 품질은 `POST /events/verifications`에 현재 게시 Event ID를 넣고 `checks`와 인용 원문을 대조한다.
+장소·기간·단위가 다른 자료, 정정·복구된 현재 상태, 역사적 사실, 상충 기관 전망, 검색 근거 없는 Event를
+포함해야 한다. 자동 테스트는 실제 뉴스 검색이나 LLM의 의미 판정 정확도를 보장하지 않는다.
+
 ### `scenario-sync-pipeline`
 
 Scenario Agent API를 실제로 호출해 정상 동작하는지 확인한다.

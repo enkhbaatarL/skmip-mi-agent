@@ -5,11 +5,22 @@ from typing import Annotated
 
 from fastapi import APIRouter, Query
 
+from apps.agents.scenario_group_agent.persistence.event_verification_service import EventVerificationService
+from apps.agents.scenario_group_agent.schemas.api.event_verifications import EventVerificationsIn, EventVerificationsOut
 from apps.agents.scenario_group_agent.schemas.endpoint import EventDetailOut, EventListOut
 from apps.persistence.event.service import EventService
 
 
 router = APIRouter(tags=["events"])
+
+
+@router.post(
+    "/events/verifications",
+    response_model=EventVerificationsOut,
+    summary="시나리오 설계 전 Event 사실·최신성 웹 검증",
+)
+async def verify_events(body: EventVerificationsIn) -> EventVerificationsOut:
+    return await EventVerificationService().verify(body.mi_event_ids)
 
 
 @router.get(

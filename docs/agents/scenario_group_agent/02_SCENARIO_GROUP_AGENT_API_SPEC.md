@@ -30,6 +30,7 @@
 | `POST` | `/scenario-groups/{id}/dimension-mapping-approvals` | legacy 자유값 mapping 승인·거절 |
 | `DELETE` | `/scenario-groups/{id}` | 소유자 soft delete |
 | `GET` | `/events` | Event 목록 |
+| `POST` | `/events/verifications` | 시나리오 설계 전 Event 사실·최신성 웹 검증 |
 | `GET` | `/events/{miEventId}` | Event 상세와 Scenario Template |
 
 ### 개발·테스트·호환 API
@@ -47,6 +48,75 @@
 | deprecated | `POST /v4/scenario-groups` | background callback 호환 경로 |
 
 ## 1. Scenario Group 생성
+
+### Event 웹 검증 (생성 전 사실·최신성 확인)
+
+`POST /events/verifications`, `Content-Type: application/json`으로 호출한다.
+
+```json
+{"miEventIds": [5, 12]}
+```
+
+- `miEventIds`: 중복 없는 양의 정수 1~5개. 문자열·boolean·소수 ID와 알 수 없는 필드는 422다.
+- 게시(`PUBLISHED`)·미삭제 Event를 일괄 조회한다. 누락·삭제·미게시 Event가 하나라도 있으면 검색 전에 404다.
+- HTTP 200 JSON으로 완료 결과를 반환한다. 요청 ID 순서를 유지하며 callback/SSE는 사용하지 않는다.
+- Event별 검색·비교 실패는 해당 항목의 `warning`으로 반환하여 다른 Event의 검증을 계속한다.
+- DB 접근 오류는 기존 공통 오류 처리를 따른다. 호출 백엔드가 사용자 인증을 담당하는 기존 공유 Event 범위다.
+
+근거가 없을 때의 응답 예시:
+
+```json
+{
+  "checkedAt": "2026-11-03T01:00:00Z",
+  "items": [{
+    "miEventId": 5,
+    "title": "Event 제목",
+    "sourceUpdatedAt": "2026-11-02T09:00:00",
+    "status": "warning",
+    "reasonCode": "no_evidence",
+    "review": "비교 가능한 웹 근거를 찾지 못해 사실과 최신성을 확인할 수 없습니다.",
+    "links": [],
+    "checks": []
+  }]
+}
+```
+
+| 필드 | 의미 |
+| --- | --- |
+| `checkedAt` | 검증 기준 시각(조회 직후 UTC). 요청 처리 완료 시각이 아님 |
+| `sourceUpdatedAt` | 조회한 Event의 DB 수정 시각. DB 값의 timezone 유무를 그대로 보존 |
+| `status` | `pass`: 해당 핵심 주장 일치, `warning`: 고려 사항·근거 부족·검증 불가, `fail`: 명확한 불일치·대체된 정보 |
+| `reasonCode` | `verified`, `review_required`, `contradicted`, `outdated`, `no_evidence`, `search_error`, `verification_error` |
+| `review` | 한국어 한 줄 비교 후기(최대 300자) |
+| `links` | 실제 검색 근거에서 가져온 HTTP(S) URL 배열. 근거가 없으면 `[]` |
+| `checks` | 비교가 완료되면 6개 항목, 검색·비교를 완료하지 못한 경우 `[]` |
+
+각 `checks[]`는 `aspect`, `verdict`, `eventClaim`, `finding`, `sourceUrls`를 가진다.
+`aspect`는 대상(`entity`), 장소(`location`), 시기(`time`), 수치(`quantity`), 최신성(`freshness`),
+기관·전망 귀속(`attribution`)이다. `verdict`는 `matched | caution | contradicted | outdated | unverified |
+not_applicable`이다. 해당 주장이 Event에 없을 때만 `not_applicable`을 사용한다.
+
+판정은 비교 항목에서 결정한다. 근거가 연결된 `contradicted`가 있으면 `fail/contradicted`, 그다음
+`outdated`가 있으면 `fail/outdated`다. 적어도 하나가 `matched`이고 나머지가 모두 `matched` 또는
+`not_applicable`일 때만 `pass/verified`다. 미확인·주의 항목이 있으면 `warning/review_required`다.
+없는 출처 ID 또는 출처 없는 일치·불일치 판정은 `warning/verification_error`로 처리한다.
+정상 비교 결과의 `links`는 비교에 인용된 URL만 담는다. 비교 실패 시에는 이미 확보한 검색 링크를 제공한다.
+
+검증 입력은 제목(`one_line_summary`), 검색 요약, 핵심 bullet, 태그, 상세 분석, 수치 근거(`numeric_facts_md`),
+기관 전망(`institution_view_synthesis`), 발생·생성·수정 시각과 source record ID다. DB 조회는 기존
+`apps/persistence/event/service.py`의 `load_search_sources`를 사용하며 불필요한 Scenario Template은 조회하지 않는다.
+
+웹 검색은 설정된 첫 사용 가능 provider를 사용한다. 원래 사건과 최신 후속 뉴스·공식 발표를 함께 찾고,
+하한 날짜를 강제하지 않는다. 검색의 종료일은 기준일을 전달하는 soft constraint다. 비교 모델에는 검색
+connector의 실제 인용 문맥만 전달하며 URL을 생성하게 하지 않는다. 인용 문맥은 검색 모델이 추출한 내용이므로
+원문 전체 검증을 보장하지 않는다. 기관별 상충 전망·서로 다른 기간이나 단위·과거 사실을 단순히 오류로
+취급하지 않는다. `outdated`는 현재 유효하다고 적힌 상태·계획이 날짜와 후속 관계가 확인된 근거로 대체된 경우다.
+
+`web_search_*`, `llm_*` 설정을 재사용하되 이 호출의 검색은 `tool_choice=required`, 최대 인용 8개다.
+요청 내 최대 3개 Event를 동시에 처리한다. `event_verification_timeout_sec`(기본 180초)는 각 항목의
+대기·검색·비교 전체 제한이다. HTTP 클라이언트/gateway timeout은 DB 조회 시간과 이 제한을 고려해 설정한다.
+이 API는 검증 결과를 DB에 저장하거나 Event를 수정하지 않으며 Scenario 생성의 강제 차단 조건이 아니다.
+`checkedAt`과 `sourceUpdatedAt`을 함께 표시하고 Event 수정 후에는 다시 검증한다.
 
 ### Request
 

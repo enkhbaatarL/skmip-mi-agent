@@ -279,6 +279,9 @@ class Settings(BaseSettings):
     web_search_timeout_sec: float | None = Field(default=None, gt=0)
     web_search_max_retries: int = Field(default=2, ge=0)
 
+    # Event verification: queue + web search + comparison deadline per item.
+    event_verification_timeout_sec: float = Field(default=180.0, gt=0)
+
 
     # MI MCP server
     # MI Platform next-gen API 를 MCP tool 로 감싼 `mi-next-gen-mcp-server` 의 엔드포인트.

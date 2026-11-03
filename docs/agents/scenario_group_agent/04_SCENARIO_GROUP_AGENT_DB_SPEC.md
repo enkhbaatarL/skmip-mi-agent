@@ -209,6 +209,10 @@ v4 closed enum Dimension과 `leverStates`는 이 자유값 mapping을 생성 경
 
 ## Transaction 경계
 
+- Event 사전 웹 검증(`POST /events/verifications`): 기존 게시·미삭제 Event 조회 DTO를 읽고 세션을 닫은 뒤
+  웹 검색·비교를 수행한다. 결과 저장·Event 수정·새 테이블·migration은 없으며 조회 시점의 `mod_dtm`을
+  `sourceUpdatedAt`으로 반환한다. 실행 중 수정된 Event를 자동 재조회하거나 잠그지는 않는다.
+
 - canonical create 접수: Group + Event 관계 + operation + `accepted`
 - Presentation 중간 갱신: operation projection + revision + `section_ready`
 - create 완료: Group/Scenario 일괄 저장 후 operation terminal event

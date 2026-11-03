@@ -68,6 +68,13 @@ apps/agents/<agent_name>/
 
 ## Persistence 경계
 
+Event 사전 웹 검증은 `routers/events.py`의 `POST /events/verifications`에서
+`persistence/event_verification_service.py`를 호출하는 flow-less read-only 유스케이스다.
+HTTP 스키마는 `schemas/api/event_verifications.py`, 검색·비교 지침 및 structured output은
+`prompts/event_verification.py`가 소유한다. 현재 게시된 Event 조회는
+`apps/persistence/event/service.py`, 외부 검색·비교는 기존 `apps/connectors/web/`와
+`apps/connectors/llm/`를 재사용한다. 검증 결과는 요청에 반환하며 DB에 저장하지 않는다.
+
 Scenario 품질 평가는 `scenario_group_agent/flows/evaluate_scenarios`와
 `persistence/scenario_quality_evaluation_service.py`가 실행·transaction을 담당하고,
 공유 ORM/repository/DTO는 `apps/persistence/scenario_quality_evaluation`에 둔다.
