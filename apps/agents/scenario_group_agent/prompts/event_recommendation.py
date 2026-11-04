@@ -75,6 +75,26 @@ class EventRecommendationOutput(BaseModel):
     selection_reason: str = Field(min_length=1)
 
 
+class MultiEventRecommendationItem(EventRecommendationItem):
+    source_event_id: int = Field(gt=0, strict=True)
+
+
+class MultiEventRecommendationOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    items: list[MultiEventRecommendationItem] = Field(max_length=MAX_EVENT_RECOMMENDATIONS)
+    selection_reason: str = Field(min_length=1)
+
+
+MULTI_EVENT_RECOMMENDATION_INSTRUCTION = """\
+이번 요청의 기준 Event는 source_events 배열 전체입니다.
+각 기준 Event당 2개가 아니라 전체에서 최대 2개를 선정하십시오.
+후보는 기준 Event 중 하나 이상과 연결되어야 하며, 선택된 전체 조합에 추가 정보를 제공해야 합니다.
+source_event_id에는 가장 직접적으로 연결되는 기준 Event ID를 쓰고,
+source_evidence는 그 기준 Event에서 인용하십시오. 선택된 기준 Event는 추천하지 마십시오.
+"""
+
+
 def build_event_recommendation_user_prompt(
     source_event: EventPayload,
     candidates: Sequence[EventPayload],

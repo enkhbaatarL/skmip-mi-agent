@@ -75,6 +75,12 @@ HTTP 스키마는 `schemas/api/event_verifications.py`, 검색·비교 지침 �
 `apps/persistence/event/service.py`, 외부 검색·비교는 기존 `apps/connectors/web/`와
 `apps/connectors/llm/`를 재사용한다. 검증 결과는 요청에 반환하며 DB에 저장하지 않는다.
 
+Event 추천은 `routers/events.py`의 `POST /events/recommendations`에서
+`persistence/event_recommendation_service.py`를 호출한다. HTTP 스키마는
+`schemas/api/event_recommendations.py`, 로컬 Qdrant adapter는
+`apps/connectors/vdb/local_event_search.py`가 소유한다. MySQL 조회는 기존
+`apps/persistence/event/service.py`를 사용한다. CLI와 API는 같은 컬렉션 식별 함수를 공유한다.
+
 Scenario 품질 평가는 `scenario_group_agent/flows/evaluate_scenarios`와
 `persistence/scenario_quality_evaluation_service.py`가 실행·transaction을 담당하고,
 공유 ORM/repository/DTO는 `apps/persistence/scenario_quality_evaluation`에 둔다.

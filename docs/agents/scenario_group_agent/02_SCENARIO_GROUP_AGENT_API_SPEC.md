@@ -31,6 +31,7 @@
 | `DELETE` | `/scenario-groups/{id}` | 소유자 soft delete |
 | `GET` | `/events` | Event 목록 |
 | `POST` | `/events/verifications` | 시나리오 설계 전 Event 사실·최신성 웹 검증 |
+| `POST` | `/events/recommendations` | 로컬 Qdrant 후보 검색 + LLM 최대 2개 추천 (사전 적재 필요) |
 | `GET` | `/events/{miEventId}` | Event 상세와 Scenario Template |
 
 ### 개발·테스트·호환 API
@@ -48,6 +49,36 @@
 | deprecated | `POST /v4/scenario-groups` | background callback 호환 경로 |
 
 ## 1. Scenario Group 생성
+
+### Event 추천 (생성 전 선택 보조)
+
+`POST /events/recommendations`, `Content-Type: application/json`으로 호출한다.
+
+```json
+{"miEventIds": [5, 12]}
+```
+
+- `miEventIds`: 중복 없는 양의 정수 1~5개. 문자열 ID는 허용하지 않는다.
+- 선택한 전체 조합을 기준으로 최대 2개를 추천한다. 선택된 ID는 결과에서 제외한다.
+- 응답은 HTTP 200 JSON이며 callback이나 SSE를 사용하지 않는다.
+
+```json
+{
+  "items": [{"miEventId": 47, "title": "후보 Event 제목", "reason": "함께 분석할 이유"}],
+  "selectionReason": "선택된 조합에 추가 정보를 제공하는 후보를 선정했습니다."
+}
+```
+
+후보가 없거나 LLM이 적합하지 않다고 판단하면 `items: []`가 정상 결과다. 잘못된 요청은 422,
+선택 Event가 없거나 삭제·미게시 상태이면 404, 인덱스 누락·검색 실패·잘못된 LLM 결과는 500이다.
+기존 공통 오류 응답을 사용한다. LLM timeout은 기존 connector의 504 처리를 따른다.
+
+백엔드는 Event 본문이나 임베딩을 보내지 않는다. Agent가 MySQL에서 현재 게시된 Event를 조회하고,
+로컬 벡터 검색 최대 30개 결과 중 현재 게시 상태인 최대 10개를 LLM에 전달한다.
+여러 기준 Event의 후보 점수는 최고 cosine 값으로 합친다. LLM은 전체 조합에서 중복을 제외해 선정한다.
+현재 인증 없는 로컬 공유 Event 데이터 테스트용이며, 사용자별 접근 권한 분리는 구현하지 않는다.
+사용자 인증은 호출 백엔드가 담당한다. callback OAuth 설정은 이 API 호출 인증에 쓰지 않는다.
+설치·실행은 [로컬 검색 가이드](10_LOCAL_EVENT_VECTOR_SEARCH.md)의 API 항목을 참고한다.
 
 ### Event 웹 검증 (생성 전 사실·최신성 확인)
 

@@ -9,6 +9,9 @@
 현재 도구는 후보 벡터 검색 데모다. 키워드 검색 결합, LLM 최종 2개 추천, 사용자별 권한 검증 및 변경/삭제
 동기화는 포함하지 않는다. 샘플에 있는 가정·테스트 Event도 그대로 검색된다.
 
+별도 `POST /events/recommendations` API는 이 인덱스를 재사용하고 MySQL 재조회와 LLM 최종 추천을 수행한다.
+아래 CLI는 기존과 같이 후보 검색만 수행한다.
+
 ## 1. 설치 (Windows PowerShell, 저장소 루트)
 
 기존 앱 환경과 별도로 가상환경을 만든다.
@@ -87,3 +90,42 @@ ID·제목·cosine 유사도·데이터 경고를 콘솔에 출력한다. 유사
 공식 문서: [Qdrant Python Client](https://github.com/qdrant/qdrant-client),
 [BGE-M3](https://huggingface.co/BAAI/bge-m3),
 [Sentence Transformers](https://www.sbert.net/docs/package_reference/sentence_transformer/model.html).
+
+## 5. 백엔드에서 추천 API 호출
+
+API를 실행할 **앱 가상환경**에도 검색 의존성을 설치한다. CLI 전용 가상환경에만 설치하면 API가 사용할 수 없다.
+
+```powershell
+.venv\Scripts\python.exe -m pip install -r scripts/requirements-local-event-search.txt
+.venv\Scripts\python.exe -X utf8 scripts/local_event_vector_search.py
+.venv\Scripts\python.exe -m uvicorn main:app --host 127.0.0.1 --port 8000 --workers 1 --env-file envs/.env
+```
+
+DB와 LLM 설정은 기존 앱 설정을 사용한다. 인덱스가 이미 동일한 경로에 적재되어 있으면 두 번째 명령은 생략한다.
+API는 요청 중 인덱스를 생성하지 않는다. 최초 요청에는 CPU 임베딩 모델 로딩 시간이 추가된다.
+CLI를 종료한 뒤 API를 실행하고, 같은 저장소를 여는 API는 단일 worker로 실행한다.
+API 내부 검색은 lock으로 직렬화하고 Qdrant 연결은 검색 종료 시 닫는다. 모델은 프로세스에서 재사용한다.
+
+필요하면 다음 환경변수를 `envs/.env`에 설정한다. 기본값은 저장소 루트 기준이다.
+
+| 변수 | 기본 경로 |
+| --- | --- |
+| `EVENT_SEARCH_DOCUMENTS` | `local/output/event_search_documents/20261030_sample/documents.jsonl` |
+| `EVENT_SEARCH_DB_PATH` | `local/qdrant_event_demo` |
+| `EVENT_SEARCH_MODEL_CACHE` | `local/models` |
+
+CLI에서 다른 경로를 지정했다면 API 설정도 같은 **절대 경로**로 맞춘다. 문서 파일이 달라지면 컬렉션 이름도
+달라지므로 새 문서로 사전 적재해야 한다. 추천 대상은 인덱스에 있는 Event로 제한된다.
+
+```powershell
+Invoke-RestMethod -Method Post -Uri 'http://localhost:8000/events/recommendations' `
+  -ContentType 'application/json' -Body '{"miEventIds":[5,12]}' -TimeoutSec 120
+```
+
+위 ID는 예시이므로 현재 게시된 실제 Event ID로 바꾼다. HTTP 200 응답의 `items`에는 최대 2개의
+`miEventId`, `title`, `reason`이 있고, `selectionReason`에는 전체 선정 이유가 있다.
+UI 선택이 바뀌면 선택 ID 전체를 보내고 오래된 요청의 응답은 무시한다. 오류를 빈 추천 목록으로 바꾸지 않는다.
+초기 로컬 테스트는 read timeout 120초로 시작하고 실제 처리 시간에 맞춰 조정한다.
+
+이 API는 로컬 공유 데이터 테스트용이다. 사용자별 Event 접근 권한, 서버형 Qdrant, 인덱스 자동 동기화는
+포함하지 않는다. MySQL의 게시·삭제 상태는 LLM 입력 전에 다시 확인한다.

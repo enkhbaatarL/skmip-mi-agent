@@ -131,6 +131,10 @@ class ModelParameterMiBaseFallbackConfig(BaseModel):
 
 
 class Settings(BaseSettings):
+    event_search_documents: Path = ROOT_DIR / "local/output/event_search_documents/20261030_sample/documents.jsonl"
+    event_search_db_path: Path = ROOT_DIR / "local/qdrant_event_demo"
+    event_search_model_cache: Path = ROOT_DIR / "local/models"
+
     model_config = SettingsConfigDict(
         env_prefix="",
         env_nested_delimiter="__",

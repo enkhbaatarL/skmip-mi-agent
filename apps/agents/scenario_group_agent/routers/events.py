@@ -5,7 +5,12 @@ from typing import Annotated
 
 from fastapi import APIRouter, Query
 
+from apps.agents.scenario_group_agent.persistence.event_recommendation_service import EventRecommendationService
 from apps.agents.scenario_group_agent.persistence.event_verification_service import EventVerificationService
+from apps.agents.scenario_group_agent.schemas.api.event_recommendations import (
+    EventRecommendationsIn,
+    EventRecommendationsOut,
+)
 from apps.agents.scenario_group_agent.schemas.api.event_verifications import EventVerificationsIn, EventVerificationsOut
 from apps.agents.scenario_group_agent.schemas.endpoint import EventDetailOut, EventListOut
 from apps.persistence.event.service import EventService
@@ -21,6 +26,15 @@ router = APIRouter(tags=["events"])
 )
 async def verify_events(body: EventVerificationsIn) -> EventVerificationsOut:
     return await EventVerificationService().verify(body.mi_event_ids)
+
+
+@router.post(
+    "/events/recommendations",
+    response_model=EventRecommendationsOut,
+    summary="선택한 Event와 관련된 Event 최대 2개 추천",
+)
+async def recommend_events(body: EventRecommendationsIn) -> EventRecommendationsOut:
+    return await EventRecommendationService().recommend(body.mi_event_ids)
 
 
 @router.get(

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 from collections.abc import Sequence
-import hashlib
 import json
 import logging
 from pathlib import Path
@@ -18,6 +17,7 @@ if str(ROOT_DIR) not in sys.path:
 from apps.agents.scenario_group_agent.schemas.event_search_document import EventSearchDocument  # noqa: E402
 from apps.common.exceptions.custom import MIBaseError  # noqa: E402
 from apps.common.values.error_codes import ErrorCode  # noqa: E402
+from apps.connectors.vdb.local_event_search import MODEL_ID, MODEL_REVISION, collection_name  # noqa: E402
 
 
 if TYPE_CHECKING:
@@ -25,8 +25,6 @@ if TYPE_CHECKING:
 
 
 LOGGER = logging.getLogger("local_event_vector_search")
-MODEL_ID = "BAAI/bge-m3"
-MODEL_REVISION = "5617a9f61b028005a4858fdac845db406aefb181"
 DEFAULT_DOCUMENTS = ROOT_DIR / "local/output/event_search_documents/20261030_sample/documents.jsonl"
 
 
@@ -37,9 +35,7 @@ def load_documents(path: Path) -> tuple[list[EventSearchDocument], str]:
     ]
     if not 1 <= len(documents) <= 1000 or len({doc.document_id for doc in documents}) != len(documents):
         raise MIBaseError(ErrorCode.INVALID_REQUEST, detail="로컬 샘플은 중복 ID 없는 문서 1~1,000개여야 합니다.")
-    identity = f"demo-v1:{MODEL_ID}:{MODEL_REVISION}:".encode() + raw
-    collection = "events_demo_" + hashlib.sha256(identity).hexdigest()[:16]
-    return documents, collection
+    return documents, collection_name(raw)
 
 
 def event_query(documents: Sequence[EventSearchDocument], event_id: int) -> str:
