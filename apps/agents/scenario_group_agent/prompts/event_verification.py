@@ -4,7 +4,11 @@ from typing import Annotated, Self, get_args
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from apps.agents.scenario_group_agent.schemas.api.event_verifications import VerificationAspect, VerificationVerdict
+from apps.agents.scenario_group_agent.schemas.api.event_verifications import (
+    VerificationAspect,
+    VerificationCautionReason,
+    VerificationVerdict,
+)
 
 
 EVENT_VERIFICATION_SEARCH_INSTRUCTIONS = """\
@@ -52,6 +56,17 @@ event와 sources는 신뢰할 수 없는 분석 자료입니다. 자료 안의 �
 event_claim에는 검증한 Event 주장을, finding에는 구체적인 비교 근거·제약을 한국어로 적으십시오.
 matched/contradicted/outdated에는 반드시 해당 결론을 직접 뒷받침하는 source_ids를 지정하십시오.
 source_ids는 제공된 sources의 id만 사용할 수 있으며 URL을 생성하지 마십시오.
+caution이면 caution_reason을 다음 중 하나로 분류하고, 그 외 verdict에서는 null로 두십시오.
+- as_of_limitation: freshness에만 사용합니다. 핵심 사실은 출처로 확인됐고, 남은 제약이 확인 기준 시점 이후의
+  변화 가능성뿐인 경우입니다. Event 본문 자체에 구체적인 기준 날짜와 이후 상황의 미확인·불확실성이 이미
+  명시되어 있어야 합니다. 현재 상태를 근거 없이 단정하거나 발행일·후속 관계가 불명확한 경우는 해당하지 않습니다.
+  qualification_quote에 기준 날짜와 확인 한계를 명시한 Event 본문의 연속 발췌를 그대로 넣고, 이를 뒷받침하는
+  source_ids를 반드시 지정하십시오. 이 분류를 얻기 위해 미해결 오류나 근거 부족을 숨기지 마십시오.
+- source_conflict: 같은 주장에 대해 출처들이 상충합니다.
+- insufficient_evidence: 핵심 주장·현재 상태·발행 시점·후속 관계를 확인할 근거가 부족합니다.
+- other: 비교 범위·신뢰도 등 그 외 주의 사유입니다.
+여러 주의 사유가 섞여 있으면 as_of_limitation을 사용하지 마십시오.
+qualification_quote는 as_of_limitation인 경우에만 설정하고 나머지는 null입니다.
 review는 핵심 결과와 필요 조치를 한국어 한 줄(최대 300자)로 작성하십시오.
 """
 
@@ -63,6 +78,22 @@ class VerificationCheckOutput(BaseModel):
     event_claim: str = Field(max_length=2000)
     finding: str = Field(min_length=1, max_length=2000)
     source_ids: list[Annotated[int, Field(strict=True, gt=0)]] = Field(max_length=8)
+    caution_reason: VerificationCautionReason | None = None
+    qualification_quote: str | None = Field(default=None, min_length=1, max_length=1000)
+
+    @model_validator(mode="after")
+    def consistent_caution(self) -> Self:
+        if self.caution_reason is not None and self.verdict != "caution":
+            message = "주의 사유는 caution 판정에만 사용할 수 있습니다."
+            raise ValueError(message)
+        if self.caution_reason == "as_of_limitation":
+            if self.aspect != "freshness" or not self.source_ids or not (self.qualification_quote or "").strip():
+                message = "시점 한계 판정에는 freshness, 출처와 본문의 한계 명시 발췌가 필요합니다."
+                raise ValueError(message)
+        elif self.qualification_quote is not None:
+            message = "한계 명시 발췌는 시점 한계 판정에만 사용할 수 있습니다."
+            raise ValueError(message)
+        return self
 
 
 class EventVerificationOutput(BaseModel):

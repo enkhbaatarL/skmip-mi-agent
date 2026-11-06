@@ -67,6 +67,47 @@ Event Type 관계가 필요하다.
 Event와 활성 Record 연결을 읽는다. 신규 컬럼이나 테이블을 만들지 않는다. 사용자별 권한을 평가하는
 운영 검색 API는 아니며, 문서 변환 계약은 [Event 검색 문서 구성](09_EVENT_SEARCH_DOCUMENTS.md)을 따른다.
 
+### 검증 기반 Event UPDATE와 변경 전 Snapshot
+
+`POST /events/{miEventId}/verification-updates`는 현재 Event를 검증하고 수정안 재검증이 pass이거나,
+API 명세의 확인 시점 한계만 남은 warning 조건을 충족하면
+`tmm_mi_mievent_snapshot_m`에 **UPDATE 직전 값**을 INSERT한 후 `tmm_mi_mievent_m`을 UPDATE한다.
+저장 유스케이스는 `apps/persistence/event/service.py`, SQL은 `update_repository.py`가 소유한다.
+이 API에 한해 Agent가 Snapshot을 직접 생성한다. 기존 ingestion Snapshot 생성 경로는 계속 사용한다.
+
+| Snapshot 컬럼 | 생성 규칙 |
+| --- | --- |
+| `mi_event_snapshot_id` | DB AUTO_INCREMENT |
+| `mi_event_id` | 잠근 현재 Event ID |
+| `snapshot_version_no` | 해당 Event의 최대 기존 버전 + 1, 없거나 기존 버전이 모두 null이면 1 |
+| `previous_mi_event_snapshot_id` | 해당 Event의 직전 Snapshot ID, 없으면 null. 삭제된 이력도 버전 계산에서 제외하지 않음 |
+| `crt_usr_logn_id`, `mod_usr_logn_id` | 요청 actor |
+| `crt_dtm`, `mod_dtm`, `del_yn` | INSERT에서 생략하고 DB 기본값 사용 |
+| `update_trigger_cd` | `LLM_VALIDATION_UPDATE` |
+| `update_reason` | 검증 기준 시각·수정 이유·전후 값 해시·출처 URL·근거 발췌·수정안 검증 등급·남은 주의 사유 JSON 문자열 |
+| `changed_fields_json` | 최초 Snapshot은 [], 이후 실제 변경 본문 컬럼명 배열 |
+| `event_del_yn` | 변경 전 Event의 `del_yn` |
+| `event_crt_*`, `event_mod_*` | 변경 전 Event의 `crt_*`, `mod_*` |
+| 본문·분류·상태·발생일·Record 시각 등 나머지 동명 컬럼 | 변경 전 Event에서 그대로 복사 |
+
+Agent 조회 ORM은 DB 전체 컬럼의 부분집합이므로 두 테이블을 reflection하여 복사한다. v0046에서 추가된
+`event_revision`, `summary_json`, 게시·검색 관련 확장 컬럼도 Snapshot에 동명 컬럼이 있으면 원본 그대로 보존한다.
+현재 관리 저장소의 v0047 이후 스키마를 기준으로 `one_line_summary`는 표시 제목, `search_text`는 검색 요약이다.
+제거된 `event_title`은 수정 대상에 포함하지 않는다. Event와 Snapshot 양쪽의 `search_text` 컬럼이 필수다.
+수정 가능한 컬럼은 명시적 allowlist로 제한한다. 필수 감사 컬럼이나 수정 컬럼의 Snapshot 보존 컬럼이 없으면
+schema 오류로 중단하며 런타임 DDL이나 임의 데이터 보완은 수행하지 않는다. migration 정본은 관리 저장소다.
+
+동일 transaction에서 Event를 `SELECT ... FOR UPDATE`로 잠근 뒤 조회 때의 전체 row hash를 비교한다.
+일치할 때만 버전·직전 ID를 배정하고 Snapshot INSERT, Event UPDATE를 수행한다. 모든 Snapshot 작성자는
+동일 Event row lock 순서를 따라야 하며 unique 충돌을 포함한 저장 실패는 전체 롤백한다.
+Event의 `mod_usr_logn_id`와 `mod_dtm`을 명시적으로 갱신하고 `new_yn=N`, 존재하는 `event_revision`은 +1 한다.
+본문 변경 내역에는 이러한 감사·리비전 컬럼을 포함하지 않는다. 무변경 요청에는 Snapshot을 만들지 않는다.
+
+변경 전 Snapshot은 신규 Scenario 생성의 현재 입력으로 선택하지 않는다. `fetch_latest_snapshot_id`는 현재
+Event 수정 시각과 일치하는 ingestion Snapshot만 선택하며 없으면 기존 live fallback을 사용한다.
+이미 Snapshot ID가 고정된 Scenario의 참조는 유지한다. Snapshot ID가 없는 기존 Scenario의 live fallback은
+기존 동작을 따르므로 과거 입력 고정을 보장하지 않는다.
+
 ### Dimension Template과 Impact Lever
 
 | Table | 역할 |

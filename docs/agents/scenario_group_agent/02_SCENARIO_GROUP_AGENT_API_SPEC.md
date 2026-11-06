@@ -31,6 +31,7 @@
 | `DELETE` | `/scenario-groups/{id}` | 소유자 soft delete |
 | `GET` | `/events` | Event 목록 |
 | `POST` | `/events/verifications` | 시나리오 설계 전 Event 사실·최신성 웹 검증 |
+| `POST` | `/events/{miEventId}/verification-updates` | 웹 재검증·수정안 검증 후 변경 전 Snapshot 저장 및 Event 갱신 |
 | `POST` | `/events/recommendations` | 로컬 Qdrant 후보 검색 + LLM 최대 2개 추천 (사전 적재 필요) |
 | `GET` | `/events/{miEventId}` | Event 상세와 Scenario Template |
 
@@ -148,6 +149,85 @@ connector의 실제 인용 문맥만 전달하며 URL을 생성하게 하지 않
 대기·검색·비교 전체 제한이다. HTTP 클라이언트/gateway timeout은 DB 조회 시간과 이 제한을 고려해 설정한다.
 이 API는 검증 결과를 DB에 저장하거나 Event를 수정하지 않으며 Scenario 생성의 강제 차단 조건이 아니다.
 `checkedAt`과 `sourceUpdatedAt`을 함께 표시하고 Event 수정 후에는 다시 검증한다.
+
+### 검증 기반 Event 업데이트
+
+```http
+POST /events/5/verification-updates
+Content-Type: application/json
+```
+
+```json
+{
+  "actorUsrLognId": "10603",
+  "expectedUpdatedAt": "2026-11-06T09:00:00.123456"
+}
+```
+
+- 한 요청에서 양의 정수 Event ID 1개를 처리한다. `actorUsrLognId`는 필수 문자열(공백 제외 1~100자)이다.
+- `expectedUpdatedAt`은 선택 필드다. 이전 검증 응답의 `sourceUpdatedAt`을 timezone 포함 형태 그대로 전달한다.
+  일치하지 않으면 검색 전에 409를 반환한다. 생략해도 서버 내부 조회 시점과 저장 직전의 전체 row hash를 비교한다.
+- 호출 백엔드가 사용자 인증·수정 권한을 검사하고 신뢰할 수 있는 actor를 전달한다. actor 문자열 자체는 인증 수단이 아니다.
+- 클라이언트의 검증 결과나 임의 수정 값은 받지 않는다. 서버가 현재 게시 Event를 새로 조회하고 웹 검증을 실행한다.
+- 최초 검증 `pass`는 `unchanged`, `warning`은 `skipped`다. `fail`인 경우 근거가 연결된 수정안을 생성하고
+  같은 검색 근거로 수정안을 다시 비교한다. 재검증 `pass` 또는 아래의 제한된 `warning`만 저장한다.
+- 조건부 저장: 재검증의 유일한 주의 항목이 `freshness/caution`이고 `cautionReason=as_of_limitation`이어야 한다.
+  나머지 다섯 항목은 `matched` 또는 `not_applicable`이어야 하며, 기존 최신성 외 불일치 항목은 `matched`로
+  해결돼야 한다. 최신성 근거 URL이 있고, `qualificationQuote`가 수정안의 `detail_analysis`에 실제 존재해야 한다.
+  검증 모델은 이 발췌가 구체적인 기준 날짜와 이후 미확인 범위를 명시하는지 확인한다.
+  출처 상충·근거 부족·미분류 주의, `unverified`, `contradicted`, `outdated`는 저장을 허용하지 않는다.
+- `checks`에는 선택적 `cautionReason`과 `qualificationQuote`가 추가된다. 주의 사유는
+  `as_of_limitation`(확인 시점 한계), `source_conflict`(출처 상충), `insufficient_evidence`(근거 부족), `other`다.
+  사유가 없으면 null이며 자동 저장 예외를 적용하지 않는다. 발췌는 시점 한계인 경우만 설정한다.
+- 조건부 저장 후 `updateStatus=updated`여도 `postVerification.status=warning`은 유지하고 메시지로 주의를 알린다.
+  검색 근거 부족이나 저장 조건 미충족 시 Snapshot도 생성하지 않는다.
+- 현재 스키마 기준 수정 컬럼은 `one_line_summary`(표시 제목), `search_text`(검색 요약), `key_bullets_json`,
+  `detail_analysis`, `numeric_facts_md`, `institution_view_synthesis` 중 실제 값이 달라진 컬럼으로 제한한다.
+  기관 전망을 확정 사실로 승격하거나 관련 없는 기존 사실을 삭제하지 않도록 지시한다.
+- 수정 근거는 서버가 확보한 인용 ID와 해당 인용 문맥에 실제로 존재하는 발췌문으로 검증한다.
+  인용 문맥은 검색 모델의 추출 결과이므로 원문 전체를 재검증한 결과로 간주하지 않는다.
+
+완료 응답은 HTTP 200 JSON이며 공통 `data` wrapper, callback, SSE가 없다.
+
+| 응답 필드 | 의미 |
+| --- | --- |
+| `miEventId`, `checkedAt` | 대상 Event와 UTC 검증 기준 시각 |
+| `updateStatus` | `updated` / `unchanged` / `skipped`. HTTP 200만으로 저장 성공을 판단하지 않는다 |
+| `message` | 처리 결과 안내 |
+| `verification` | 변경 전 Event의 기존 검증 응답 항목과 같은 형식 |
+| `postVerification` | 수정안 검증 결과. 수정안 검증 전 종료되면 null |
+| `miEventSnapshotId` | 저장한 변경 전 Snapshot ID. 미저장이면 null |
+| `snapshotVersionNo`, `previousMiEventSnapshotId` | 새 Snapshot 버전과 직전 Snapshot ID |
+| `updatedAt` | 저장 후 DB 수정 시각. 미저장이면 처음 조회한 수정 시각 |
+| `changedFields` | 실제 변경한 본문 DB 컬럼명 배열. 미저장이면 [] |
+| `changes` | 실제 반영된 필드별 `{field, before, after, reason, sourceUrls}`. 미저장이면 [] |
+
+처리 순서는 `Event 조회 → 웹 검증 → 수정안 생성 → 수정안 재검증 → Event row lock → 동시 변경 검사 →
+변경 전 Snapshot INSERT → Event UPDATE → COMMIT`이다. Snapshot과 Event는 같은 transaction에서 처리한다.
+수정안 생성 중에는 DB session/row lock을 유지하지 않는다. 기존 Snapshot이나 기존 Scenario 관계는 덮어쓰지 않는다.
+
+Snapshot의 `update_trigger_cd`는 `LLM_VALIDATION_UPDATE`이며 `update_reason`에는 검증 기준 시각, 수정 이유,
+실제 반영 전후 값의 해시, URL, 근거 발췌를 JSON 문자열로 저장한다. TEXT 용량을 넘기지 않도록 수정 이유·발췌는
+길이를 제한하며 전체 변경 전 값은 Snapshot, 전체 diff는 응답에 제공한다. 최초 Snapshot의 `changed_fields_json`은 요청한
+계약대로 `[]`이고, 다음 Snapshot부터 실제 변경 컬럼명을 저장한다. 최초 변경 내역도 응답과 `update_reason`에 남는다.
+`update_reason`에는 `post_verification_status`와 `remaining_cautions`(항목·사유·비교 제약·본문 한계 발췌)도
+기록한다. `RESULT` 로그의 `post_caution_reasons`로 남은 주의 사유를 확인할 수 있다.
+
+HTTP 오류: 입력 오류 422, 누락·삭제·미게시 404, 동시 변경 `409/EVENT_UPDATE_STALE`, 저장 스키마 불일치
+`500/EVENT_UPDATE_SCHEMA_ERROR`, 잘못된 LLM 수정안 500, 외부 분석 전체 시간 초과 504다.
+DB 저장 실패는 전체 transaction을 롤백한다. `event_verification_update_timeout_sec` 기본값은 360초이며
+조회·DB commit 시간은 별도다. HTTP client/gateway 제한을 함께 설정한다. 응답 유실 시 자동 재시도하지 말고
+Event 상태와 Snapshot을 확인한다. 반복 요청에 대한 별도 request ID 기반 멱등 저장은 제공하지 않는다.
+
+운영 로그는 `[EVENT_VERIFICATION_UPDATE]`로 검색한다. `DB_TARGET`은 해당 세션 엔진의 연결 DB명을,
+`RESULT`는 최종 update_status·안내 메시지·변경 전/수정안 검증 status·reason·항목별 판정·Snapshot ID·변경 컬럼을
+기록한다. `DB_COMMITTED`는 실제 변경이 있고 transaction commit이 완료된 뒤에만 기록한다.
+`FAILED`는 Event ID와 오류 종류·도메인 오류명을 기록한다. 이 요약 로그에는 접속 비밀번호, Event 본문,
+변경 전후 값, 검색 인용문을 포함하지 않는다. HTTP 200만으로 저장 성공을 판단하지 않는다.
+
+로컬 Qdrant 추천 인덱스는 이 API가 갱신하지 않는다. 변경 Event를 추천 검색에 반영하려면 기존 export/index
+갱신 절차를 실행한다. v0046 이후 `event_revision`이 존재하면 증가시키며 게시본 관련 파생 컬럼은 기존 게시
+파이프라인이 소유한다. 원본 Fact/Record를 새로 수집하거나 게시본을 재생성하는 API는 아니다.
 
 ### Request
 

@@ -461,10 +461,15 @@ class EventRepository(BaseSyncSQLRepository):
         return payload
 
     def fetch_latest_snapshot_id(self, mi_event_id: int) -> int | None:
-        """생성 시점에 고정할 스냅샷 ID 조회 (해당 Event에 대한 가장 최근 스냅샷)."""
+        """Pin only a snapshot of the current Event; pre-update backups are not current state."""
         stmt = (
             select(MiEventSnapshotModel.mi_event_snapshot_id)
-            .where(MiEventSnapshotModel.mi_event_id == mi_event_id)
+            .join(MiEventModel, MiEventModel.mi_event_id == MiEventSnapshotModel.mi_event_id)
+            .where(
+                MiEventSnapshotModel.mi_event_id == mi_event_id,
+                MiEventSnapshotModel.event_mod_dtm == MiEventModel.mod_dtm,
+                MiEventSnapshotModel.update_trigger_cd != "LLM_VALIDATION_UPDATE",
+            )
             .order_by(MiEventSnapshotModel.mi_event_snapshot_id.desc())
             .limit(1)
         )

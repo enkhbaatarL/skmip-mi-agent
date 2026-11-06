@@ -9,6 +9,8 @@ class ErrorCode(Enum):
     USER_QUERY_ERROR = (-200, "사용자 질의는 1글자 이상 입력되어야합니다.", 422)
     ENTITY_NOT_FOUND = (-201, "요청한 리소스를 찾을 수 없습니다", 404)
     INVALID_REQUEST = (-202, "요청이 유효하지 않습니다.", 400)
+    EVENT_UPDATE_STALE = (-203, "검증 이후 Event가 변경되었습니다. 다시 검증해주세요.", 409)
+    EVENT_UPDATE_SCHEMA_ERROR = (-204, "Event/Snapshot 저장 스키마가 업데이트 계약과 일치하지 않습니다.", 500)
 
     # 1000 ~ 1999: Scenario Group Agent 관련 오류
     CLASSIFY_SCENARIO_TYPE_FAILED = (-1000, "사용자 질의 내용 기반으로 시나리오 타입 분류에 실패했습니다.", 500)

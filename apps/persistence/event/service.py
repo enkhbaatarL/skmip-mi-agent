@@ -1,20 +1,58 @@
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 import hashlib
 import json
 from typing import Any
 
 from apps.common.exceptions.custom import MIBaseError
+from apps.common.logging.logger_config import logger
 from apps.common.values.error_codes import ErrorCode
 from apps.persistence.event.repository import EventRepository
-from apps.persistence.event.schema import EventSearchSource
+from apps.persistence.event.schema import EventSearchSource, EventUpdateApplied, EventUpdateContext
 from apps.persistence.scenario.repository import ScenarioRepository
 from apps.persistence.scenario_group.repository import ScenarioGroupRepository
 from apps.persistence.signpost.repository import SignpostRepository
 
 
 class EventService:
+    def prepare_verification_update(
+        self, event_id: int, expected_updated_at: datetime | None = None,
+    ) -> EventUpdateContext:
+        from apps.common.configs.database.sync_database.connection import get_sync_session
+        from apps.persistence.event.update_repository import EventUpdateRepository
+
+        with get_sync_session() as session:
+            logger.info(
+                "[EVENT_VERIFICATION_UPDATE] DB_TARGET | event_id={} | database={}",
+                event_id,
+                session.get_bind().engine.url.database,
+            )
+            return EventUpdateRepository(session).prepare(event_id, expected_updated_at)
+
+    def apply_verification_update(
+        self, event_id: int, fingerprint: str, changes: dict[str, Any], actor: str, reason: str,
+    ) -> EventUpdateApplied:
+        from apps.common.configs.database.sync_database.connection import get_sync_session
+        from apps.persistence.event.update_repository import EventUpdateRepository
+
+        with get_sync_session() as session, session.begin():
+            database = session.get_bind().engine.url.database
+            applied = EventUpdateRepository(session).apply(event_id, fingerprint, changes, actor, reason)
+        # session.begin() must exit successfully before reporting a committed write.
+        if applied.changed_fields:
+            logger.info(
+                "[EVENT_VERIFICATION_UPDATE] DB_COMMITTED | event_id={} | database={} | snapshot_id={} "
+                "| snapshot_version_no={} | changed_fields={} | updated_at={}",
+                event_id,
+                database,
+                applied.snapshot_id,
+                applied.snapshot_version_no,
+                applied.changed_fields,
+                applied.updated_at,
+            )
+        return applied
+
     def load_search_sources(
         self,
         *,

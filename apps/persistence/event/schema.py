@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import Field, JsonValue
 
@@ -44,3 +44,28 @@ class EventPayload(ApiModel):
     latest_record_first_created: str = ""
     oldest_record_first_created: str = ""
     tags: list[str] = Field(default_factory=list)
+
+
+EventUpdateField = Literal[
+    "one_line_summary",
+    "search_text",
+    "key_bullets_json",
+    "detail_analysis",
+    "numeric_facts_md",
+    "institution_view_synthesis",
+]
+
+
+class EventUpdateContext(ApiModel):
+    source: EventSearchSource
+    fingerprint: str
+    content: dict[str, JsonValue]
+
+
+class EventUpdateApplied(ApiModel):
+    mi_event_id: int
+    snapshot_id: int | None
+    snapshot_version_no: int | None
+    previous_snapshot_id: int | None
+    changed_fields: list[str]
+    updated_at: datetime

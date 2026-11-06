@@ -15,6 +15,12 @@ v2/v3 비교 구현과 과거 v1 생성 flow도 범위에서 제외한다. API �
 
 ## 운영 API 전체 수명주기
 
+생성 전 선택적으로 `POST /events/{miEventId}/verification-updates`를 호출할 수 있다. 이 flow-less API는
+웹 검증과 수정안 재검증을 마친 뒤 변경 전 Event Snapshot을 저장하고 Event를 갱신한다. 신규 Group의 Event
+참조를 만들 때에는 현재 Event 수정 시각과 일치하는 ingestion Snapshot만 pin한다. 이 API가 생성한
+`LLM_VALIDATION_UPDATE` Snapshot은 변경 전 백업이므로 신규 Group의 현재 입력으로 선택하지 않는다.
+일치하는 Snapshot이 없으면 기존 live Event fallback을 사용한다. 이미 pin된 Snapshot 참조는 유지한다.
+
 ```mermaid
 sequenceDiagram
     participant PB as Platform Backend

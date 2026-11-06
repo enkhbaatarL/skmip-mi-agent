@@ -33,16 +33,21 @@ MAX_SOURCES = 8
 MAX_CONCURRENT_EVENTS = 3
 
 
-class _Source(BaseModel):
+class VerificationSource(BaseModel):
     id: int
     url: str
     title: str
     content: str
 
 
-def _search_sources(response: dict[str, Any]) -> list[_Source]:
+class VerificationEvidence(BaseModel):
+    verification: EventVerificationItem
+    sources: list[VerificationSource]
+
+
+def _search_sources(response: dict[str, Any]) -> list[VerificationSource]:
     """Accept only usable HTTP(S) citations returned by the search connector."""
-    sources: list[_Source] = []
+    sources: list[VerificationSource] = []
     seen: set[str] = set()
     for row in response.get("results") or []:
         if not isinstance(row, dict):
@@ -62,7 +67,7 @@ def _search_sources(response: dict[str, Any]) -> list[_Source]:
             continue
         seen.add(normalized_url)
         sources.append(
-            _Source(
+            VerificationSource(
                 id=len(sources) + 1,
                 url=normalized_url,
                 title=str(row.get("title") or "")[:500],
@@ -78,7 +83,7 @@ def _warning(
     event: EventSearchSource,
     reason: VerificationReason,
     review: str,
-    sources: list[_Source] | None = None,
+    sources: list[VerificationSource] | None = None,
 ) -> EventVerificationItem:
     return EventVerificationItem(
         mi_event_id=event.mi_event_id,
@@ -95,7 +100,7 @@ def _warning(
 def _verified_item(
     event: EventSearchSource,
     output: EventVerificationOutput,
-    sources: list[_Source],
+    sources: list[VerificationSource],
 ) -> EventVerificationItem:
     source_by_id = {source.id: source for source in sources}
     checks: list[EventVerificationCheck] = []
@@ -104,7 +109,8 @@ def _verified_item(
             check.verdict in {"matched", "contradicted", "outdated"} and not check.source_ids
         ):
             raise MIBaseError(
-                ErrorCode.LLM_INVALID_RESPONSE_ERROR, detail="검증 결과의 출처 ID 또는 근거가 유효하지 않습니다.",
+                ErrorCode.LLM_INVALID_RESPONSE_ERROR,
+                detail="검증 결과의 출처 ID 또는 근거가 유효하지 않습니다.",
             )
         checks.append(
             EventVerificationCheck(
@@ -113,6 +119,8 @@ def _verified_item(
                 event_claim=check.event_claim,
                 finding=check.finding,
                 source_urls=list(dict.fromkeys(source_by_id[source_id].url for source_id in check.source_ids)),
+                caution_reason=check.caution_reason,
+                qualification_quote=check.qualification_quote,
             ),
         )
     verdicts = {check.verdict for check in checks}
@@ -168,8 +176,58 @@ class EventVerificationService:
         checked_at: datetime,
         semaphore: asyncio.Semaphore,
     ) -> EventVerificationItem:
+        evidence = await self._verify_evidence(event, provider, checked_at, semaphore)
+        return evidence.verification
+
+    async def verify_with_evidence(self, event: EventSearchSource, checked_at: datetime) -> VerificationEvidence:
+        """Keep server-owned citations for a subsequent update; never accept client-supplied verdicts."""
+        try:
+            provider = WebSearchProviderFactory.create_from_settings()
+        except ValueError as exc:
+            raise MIBaseError(ErrorCode.LLM_INVOCATION_ERROR, detail="웹 검색 provider 초기화 실패") from exc
+        return await self._verify_evidence(event, provider, checked_at, asyncio.Semaphore(1))
+
+    async def compare_evidence(
+        self,
+        event: EventSearchSource,
+        sources: list[VerificationSource],
+        checked_at: datetime,
+    ) -> EventVerificationItem:
         cfg = get_settings()
-        sources: list[_Source] = []
+        result = await invoke_llm_structured_output(
+            output_schema=EventVerificationOutput,
+            messages=[
+                {"role": "system", "content": EVENT_VERIFICATION_SYSTEM_PROMPT},
+                {
+                    "role": "user",
+                    "content": json.dumps(
+                        {
+                            "as_of": checked_at.isoformat(),
+                            "event": event.model_dump(mode="json", exclude={"publish_status", "del_yn"}),
+                            "sources": [source.model_dump() for source in sources],
+                        },
+                        ensure_ascii=False,
+                    ),
+                },
+            ],
+            temperature=0.0,
+            max_retries=0,
+            stream=cfg.llm_stream_enabled,
+            reasoning_effort=cfg.llm_reasoning_effort,
+            log_label="event_verification",
+        )
+        output = EventVerificationOutput.model_validate(result.result)
+        return _verified_item(event, output, sources)
+
+    async def _verify_evidence(
+        self,
+        event: EventSearchSource,
+        provider: WebSearchProvider,
+        checked_at: datetime,
+        semaphore: asyncio.Semaphore,
+    ) -> VerificationEvidence:
+        cfg = get_settings()
+        sources: list[VerificationSource] = []
         stage = "search"
         # Includes queue time, retries and both external calls; all items share a bounded request lifetime.
         try:
@@ -185,43 +243,40 @@ class EventVerificationService:
                     tool_choice="required",
                 )
                 if response.get("status") not in {None, "completed"}:
-                    return _warning(event, "search_error", "웹 검색이 완료되지 않아 검증하지 못했습니다.")
+                    return VerificationEvidence(
+                        verification=_warning(event, "search_error", "웹 검색이 완료되지 않아 검증하지 못했습니다."),
+                        sources=[],
+                    )
                 sources = _search_sources(response)
                 if not sources:
-                    return _warning(
-                        event, "no_evidence", "비교 가능한 웹 근거를 찾지 못해 사실과 최신성을 확인할 수 없습니다.",
+                    return VerificationEvidence(
+                        verification=_warning(
+                            event,
+                            "no_evidence",
+                            "비교 가능한 웹 근거를 찾지 못해 사실과 최신성을 확인할 수 없습니다.",
+                        ),
+                        sources=[],
                     )
                 stage = "verification"
-                result = await invoke_llm_structured_output(
-                    output_schema=EventVerificationOutput,
-                    messages=[
-                        {"role": "system", "content": EVENT_VERIFICATION_SYSTEM_PROMPT},
-                        {
-                            "role": "user",
-                            "content": json.dumps(
-                                {
-                                    "as_of": checked_at.isoformat(),
-                                    "event": payload,
-                                    "sources": [source.model_dump() for source in sources],
-                                },
-                                ensure_ascii=False,
-                            ),
-                        },
-                    ],
-                    temperature=0.0,
-                    max_retries=0,
-                    stream=cfg.llm_stream_enabled,
-                    reasoning_effort=cfg.llm_reasoning_effort,
-                    log_label="event_verification",
+                return VerificationEvidence(
+                    verification=await self.compare_evidence(event, sources, checked_at),
+                    sources=sources,
                 )
-                output = EventVerificationOutput.model_validate(result.result)
-                return _verified_item(event, output, sources)
         except Exception:
             # External failures are inconclusive, never evidence that the Event is false.
             # CancelledError is intentionally not caught so disconnect/shutdown can cancel work.
             logger.exception("[EVENT_VERIFICATION] ITEM_FAILED | event_id={} | stage={}", event.mi_event_id, stage)
             if stage == "search":
-                return _warning(event, "search_error", "웹 검색 오류 또는 시간 초과로 검증하지 못했습니다.")
-            return _warning(
-                event, "verification_error", "검색 근거의 비교 검증을 완료하지 못해 재검증이 필요합니다.", sources,
+                return VerificationEvidence(
+                    verification=_warning(event, "search_error", "웹 검색 오류 또는 시간 초과로 검증하지 못했습니다."),
+                    sources=[],
+                )
+            return VerificationEvidence(
+                verification=_warning(
+                    event,
+                    "verification_error",
+                    "검색 근거의 비교 검증을 완료하지 못해 재검증이 필요합니다.",
+                    sources,
+                ),
+                sources=sources,
             )

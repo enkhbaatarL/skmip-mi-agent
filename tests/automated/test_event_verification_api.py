@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, Mock
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 import pytest
 
 from apps.agents.scenario_group_agent.persistence import event_verification_service as service_module
@@ -108,6 +109,48 @@ def test_api_returns_ordered_camelcase_results(client: TestClient, dependencies:
     assert context["event"]["numeric_facts_md"] == "연간 5 mtpa"
     assert context["event"]["institution_view_synthesis"]
     assert call["end_date"] == context["as_of"][:10]
+
+
+def test_as_of_caution_is_exposed_without_changing_warning_grade(
+    client: TestClient,
+    dependencies: SimpleNamespace,
+) -> None:
+    output = _output("caution").model_dump()
+    check = next(item for item in output["checks"] if item["aspect"] == "freshness")
+    check["caution_reason"] = "as_of_limitation"
+    check["qualification_quote"] = "2026년 10월 2일 기준이며 이후 변경 여부는 미확인입니다."
+    row = _row(1)
+    row.detail_analysis += check["qualification_quote"]
+    dependencies.load.return_value = [row]
+    dependencies.llm.return_value.result = EventVerificationOutput.model_validate(output)
+    response = client.post("/events/verifications", json={"miEventIds": [1]})
+    assert response.status_code == 200
+    result = response.json()["items"][0]
+    assert result["status"] == "warning"
+    freshness = next(item for item in result["checks"] if item["aspect"] == "freshness")
+    assert freshness["cautionReason"] == "as_of_limitation"
+    assert freshness["qualificationQuote"] == check["qualification_quote"]
+    assert freshness["sourceUrls"] == [SOURCE_URL]
+
+
+@pytest.mark.parametrize(
+    "patch",
+    [
+        {"verdict": "matched"},
+        {"aspect": "time"},
+        {"source_ids": []},
+        {"qualification_quote": None},
+        {"qualification_quote": " "},
+        {"caution_reason": "other"},
+    ],
+)
+def test_invalid_as_of_classification_rejected(patch: dict[str, object]) -> None:
+    output = _output("caution").model_dump()
+    check = next(item for item in output["checks"] if item["aspect"] == "freshness")
+    check.update(caution_reason="as_of_limitation", qualification_quote="2026년 10월 2일 이후 상황은 미확인입니다.")
+    check.update(patch)
+    with pytest.raises(ValidationError):
+        EventVerificationOutput.model_validate(output)
 
 
 @pytest.mark.parametrize(

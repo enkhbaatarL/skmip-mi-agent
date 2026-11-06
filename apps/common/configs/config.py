@@ -285,6 +285,7 @@ class Settings(BaseSettings):
 
     # Event verification: queue + web search + comparison deadline per item.
     event_verification_timeout_sec: float = Field(default=180.0, gt=0)
+    event_verification_update_timeout_sec: float = Field(default=360.0, gt=0)
 
 
     # MI MCP server

@@ -75,6 +75,14 @@ HTTP 스키마는 `schemas/api/event_verifications.py`, 검색·비교 지침 �
 `apps/persistence/event/service.py`, 외부 검색·비교는 기존 `apps/connectors/web/`와
 `apps/connectors/llm/`를 재사용한다. 검증 결과는 요청에 반환하며 DB에 저장하지 않는다.
 
+`POST /events/{miEventId}/verification-updates`는
+`persistence/event_verification_update_service.py`에서 웹 검증·수정안 생성·재검증을 수행한다.
+HTTP 스키마는 `schemas/api/event_verification_updates.py`, 수정 지침은 `prompts/event_verification_update.py`다.
+DB 조회·transaction은 `apps/persistence/event/service.py`, row lock·Snapshot INSERT·Event UPDATE는
+`apps/persistence/event/update_repository.py`가 소유한다. 이 repository는 현재 DB 컬럼을 reflection하여
+조회 ORM에 없는 원본 확장 컬럼까지 Snapshot에 보존하고, 수정은 명시적 본문 allowlist로 제한한다.
+DB migration은 관리 저장소를 따르며 실행 시 테이블 변경은 수행하지 않는다.
+
 Event 추천은 `routers/events.py`의 `POST /events/recommendations`에서
 `persistence/event_recommendation_service.py`를 호출한다. HTTP 스키마는
 `schemas/api/event_recommendations.py`, 로컬 Qdrant adapter는

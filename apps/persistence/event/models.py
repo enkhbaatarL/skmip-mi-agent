@@ -289,7 +289,10 @@ class MiEventRecordMapModel(AuditColumnsMixin, ORMBase):
 
 
 class MiEventSnapshotModel(MiEventContentColumnsMixin, ORMBase):
-    """Event 콘텐츠 변경 이력 스냅샷 (외부 ingestion 파이프라인이 적재, 이 레포는 읽기 전용).
+    """Event 콘텐츠 변경 이력의 조회 ORM.
+
+    외부 ingestion과 검증 기반 업데이트가 적재한다. 검증 업데이트는 update_repository의
+    reflected table을 사용하여 조회 ORM에 없는 원본 확장·감사 컬럼도 보존한다.
 
     mi_event_id / event_type_l2_id / previous_mi_event_snapshot_id는 DB에 FK가
     설정되어 있지 않음(원본이 갱신·삭제돼도 과거 스냅샷은 그대로 남아야 하므로).

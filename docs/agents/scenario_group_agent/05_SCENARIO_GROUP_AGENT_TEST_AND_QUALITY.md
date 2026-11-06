@@ -18,7 +18,22 @@ Agent 테스트를 요청하려는 Skill 사용자를 위한 문서다.
 
 ## 어떤 Skill을 사용하나요?
 
+검증 기반 업데이트의 저장·API 회귀 테스트:
+
+```bash
+python -m pytest tests/automated/test_event_verification_update.py tests/automated/test_event_verification_api.py -q
+```
+
+격리 테스트 설정은 `DEBUG=false`, `METADATA_DB_PORT=3306`을 사용할 수 있다. 웹 검색·LLM은 mock,
+Snapshot INSERT와 Event UPDATE는 SQLite transaction으로 검증한다. 원본·감사·확장 컬럼 복사, 최초/후속 버전,
+변경 필드, 무변경, 전체 row stale 검사, 양쪽 쓰기 실패 시 rollback, 실제 MySQL dialect의 FOR UPDATE SQL,
+현재 one_line_summary/search_text의 구분·보존과 필수 컬럼 검사, 신규 Scenario의 변경 전 Snapshot 제외를 확인한다.
+SQLite는 MySQL row lock의 병렬 동작을 재현하지 않는다. 실제 배포 전에는 관리 저장소 스키마와 대조하고,
+격리 MySQL에서 같은 Event에 대한 동시 요청 및 ingestion과의 버전 충돌을 확인한다.
+
 Event 사전 웹 검증 API의 독립 회귀 테스트는 다음 명령으로 실행한다(DB·외부 검색·LLM은 mock).
+업데이트 회귀 테스트는 최신성의 확인 시점 한계만 남은 warning의 조건부 저장과 주의 이력 보존도 확인한다.
+출처 상충·근거 부족·기타 주의·미확인·불일치·본문 한계 발췌 누락/불일치 시에는 저장하지 않아야 한다.
 
 ```bash
 python -m pytest tests/automated/test_event_verification_api.py tests/automated/test_web_search_citations.py -q

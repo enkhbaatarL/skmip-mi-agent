@@ -3,13 +3,20 @@ from __future__ import annotations
 from datetime import date
 from typing import Annotated
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Path, Query
 
 from apps.agents.scenario_group_agent.persistence.event_recommendation_service import EventRecommendationService
 from apps.agents.scenario_group_agent.persistence.event_verification_service import EventVerificationService
+from apps.agents.scenario_group_agent.persistence.event_verification_update_service import (
+    EventVerificationUpdateService,
+)
 from apps.agents.scenario_group_agent.schemas.api.event_recommendations import (
     EventRecommendationsIn,
     EventRecommendationsOut,
+)
+from apps.agents.scenario_group_agent.schemas.api.event_verification_updates import (
+    EventVerificationUpdateIn,
+    EventVerificationUpdateOut,
 )
 from apps.agents.scenario_group_agent.schemas.api.event_verifications import EventVerificationsIn, EventVerificationsOut
 from apps.agents.scenario_group_agent.schemas.endpoint import EventDetailOut, EventListOut
@@ -17,6 +24,18 @@ from apps.persistence.event.service import EventService
 
 
 router = APIRouter(tags=["events"])
+
+
+@router.post(
+    "/events/{mi_event_id}/verification-updates",
+    response_model=EventVerificationUpdateOut,
+    summary="웹 검증 후 변경 전 Snapshot을 저장하고 Event 업데이트",
+)
+async def update_verified_event(
+    body: EventVerificationUpdateIn,
+    mi_event_id: Annotated[int, Path(gt=0)],
+) -> EventVerificationUpdateOut:
+    return await EventVerificationUpdateService().update(mi_event_id, body)
 
 
 @router.post(

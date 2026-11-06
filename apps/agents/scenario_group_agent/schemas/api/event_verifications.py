@@ -10,6 +10,7 @@ from apps.agents.scenario_group_agent.schemas.base import ApiModel
 
 VerificationAspect = Literal["entity", "location", "time", "quantity", "freshness", "attribution"]
 VerificationVerdict = Literal["matched", "caution", "contradicted", "outdated", "unverified", "not_applicable"]
+VerificationCautionReason = Literal["as_of_limitation", "source_conflict", "insufficient_evidence", "other"]
 VerificationReason = Literal[
     "verified",
     "review_required",
@@ -40,6 +41,8 @@ class EventVerificationCheck(ApiModel):
     event_claim: str
     finding: str
     source_urls: list[str]
+    caution_reason: VerificationCautionReason | None = None
+    qualification_quote: str | None = None
 
 
 class EventVerificationItem(ApiModel):
