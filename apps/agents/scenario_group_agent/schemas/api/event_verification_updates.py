@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import Literal
+from uuid import UUID
 
 from pydantic import ConfigDict, Field, JsonValue, field_validator
 
@@ -12,6 +13,7 @@ from apps.agents.scenario_group_agent.schemas.base import ApiModel
 class EventVerificationUpdateIn(ApiModel):
     model_config = ConfigDict(extra="forbid")
     actor_usr_logn_id: str = Field(strict=True, min_length=1, max_length=100)
+    verification_id: UUID
     expected_updated_at: datetime | None = None
 
     @field_validator("actor_usr_logn_id")
@@ -33,6 +35,7 @@ class EventContentChange(ApiModel):
 
 class EventVerificationUpdateOut(ApiModel):
     mi_event_id: int
+    verification_id: UUID
     checked_at: datetime
     update_status: Literal["updated", "unchanged", "skipped"]
     message: str

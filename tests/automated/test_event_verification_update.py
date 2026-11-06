@@ -3,7 +3,7 @@ from __future__ import annotations
 # ruff: noqa: S101, SLF001, DTZ001
 import asyncio
 from collections.abc import Iterator
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 import json
 from types import SimpleNamespace
 from typing import get_args
@@ -28,10 +28,14 @@ from sqlalchemy import (
     text,
 )
 from sqlalchemy.dialects import mysql
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from apps.agents.scenario_group_agent.persistence import event_verification_update_service as orchestration
+from apps.agents.scenario_group_agent.persistence import (
+    event_verification_service as verification_module,
+    event_verification_update_service as orchestration,
+)
 from apps.agents.scenario_group_agent.persistence.event_verification_service import (
     VerificationEvidence,
     VerificationSource,
@@ -49,6 +53,7 @@ from apps.common.middleware.exception_handler import register_exception_handlers
 from apps.common.values.error_codes import ErrorCode
 from apps.persistence.event.models import MiEventModel, MiEventSnapshotModel
 from apps.persistence.event.repository import EventRepository
+from apps.persistence.event.schema import EventVerificationRecord
 from apps.persistence.event.service import EventService
 from apps.persistence.event.update_repository import EventUpdateRepository
 
@@ -56,6 +61,7 @@ from apps.persistence.event.update_repository import EventUpdateRepository
 SOURCE_URL = "https://example.com/news/confirmed"
 EVIDENCE = "운영사는 2026년 11월 1일 가동 계획을 12월로 연기했다고 발표했다."
 OLD_DATE = datetime(2020, 1, 1)
+VERIFICATION_ID = "12345678-1234-4234-8234-123456789abc"
 
 
 @pytest.fixture
@@ -95,6 +101,24 @@ def db(monkeypatch: pytest.MonkeyPatch) -> Iterator[SimpleNamespace]:
     snapshots.append_column(Column("mod_usr_logn_id", String(100), nullable=False, server_default="system"))
     snapshots.append_column(Column("mod_dtm", DateTime, nullable=False, server_default=func.current_timestamp()))
     snapshots.append_column(Column("del_yn", String(1), nullable=False, server_default="N"))
+    verifications = Table(
+        "tmm_mi_mievent_verification_m",
+        metadata,
+        Column("mi_event_verification_id", String(36), primary_key=True),
+        Column("mi_event_id", Integer, nullable=False),
+        Column("event_fingerprint", String(64), nullable=False),
+        Column("verification_result_json", JSON, nullable=False),
+        Column("search_evidence_json", JSON, nullable=False),
+        Column("checked_at", DateTime, nullable=False),
+        Column("expires_at", DateTime, nullable=False),
+        Column("applied_mi_event_snapshot_id", Integer),
+        Column("crt_usr_logn_id", String(100), nullable=False),
+        Column("mod_usr_logn_id", String(100), nullable=False),
+        Column("crt_dtm", DateTime, nullable=False, server_default=func.current_timestamp()),
+        Column("mod_dtm", DateTime, nullable=False, server_default=func.current_timestamp()),
+        Column("del_yn", String(1), nullable=False, server_default="N"),
+        Column("del_dtm", DateTime),
+    )
     metadata.create_all(engine)
     factory = sessionmaker(engine, expire_on_commit=False)
     from apps.common.configs.database.sync_database import connection
@@ -136,6 +160,7 @@ def db(monkeypatch: pytest.MonkeyPatch) -> Iterator[SimpleNamespace]:
         factory=factory,
         events=events,
         snapshots=snapshots,
+        verifications=verifications,
         engine=engine,
     )
     engine.dispose()
@@ -376,7 +401,7 @@ def _verification(status: str) -> EventVerificationItem:
 
 
 @pytest.fixture
-def analysis(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
+def analysis(monkeypatch: pytest.MonkeyPatch, db: SimpleNamespace) -> SimpleNamespace:
     verifier = SimpleNamespace(
         verify_with_evidence=AsyncMock(
             return_value=VerificationEvidence(
@@ -408,7 +433,34 @@ def analysis(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
     )
     llm = AsyncMock(return_value=SimpleNamespace(result=proposal))
     monkeypatch.setattr(orchestration, "invoke_llm_structured_output", llm)
-    return SimpleNamespace(verifier=verifier, proposal=proposal, llm=llm, settings=settings)
+    evidence = verifier.verify_with_evidence.return_value
+    now = datetime.now(UTC)
+    db.service.store_verifications(
+        [
+            EventVerificationRecord(
+                mi_event_verification_id=VERIFICATION_ID,
+                mi_event_id=1,
+                event_fingerprint=db.service.prepare_verification_update(1).fingerprint,
+                verification_result_json=evidence.verification.model_dump(mode="json"),
+                search_evidence_json=[source.model_dump(mode="json") for source in evidence.sources],
+                checked_at=now,
+                expires_at=now + timedelta(minutes=30),
+            ),
+        ],
+        "verification-actor",
+    )
+
+    def set_verification(value: EventVerificationItem) -> None:
+        with db.factory.begin() as session:
+            session.execute(db.verifications.update().values(verification_result_json=value.model_dump(mode="json")))
+
+    return SimpleNamespace(
+        verifier=verifier,
+        proposal=proposal,
+        llm=llm,
+        settings=settings,
+        set_verification=set_verification,
+    )
 
 
 @pytest.fixture
@@ -444,11 +496,15 @@ def test_as_of_warning_saved_with_snapshot_and_warning_audit(
     update_logs: list[str],
 ) -> None:
     before = _row(db)
-    response = client.post("/events/1/verification-updates", json={"actorUsrLognId": "actor"})
+    response = client.post(
+        "/events/1/verification-updates",
+        json={"verificationId": VERIFICATION_ID, "actorUsrLognId": "actor"},
+    )
     assert response.status_code == 200
     result = response.json()
     assert result["updateStatus"] == "updated"
-    assert result["postVerification"]["status"] == "warning"
+    assert result["postVerification"]["status"] == "pass"
+    assert result["postVerification"]["reasonCode"] == "no_contradiction"
     assert "주의" in result["message"]
     freshness = next(item for item in result["postVerification"]["checks"] if item["aspect"] == "freshness")
     assert freshness["cautionReason"] == "as_of_limitation"
@@ -457,9 +513,15 @@ def test_as_of_warning_saved_with_snapshot_and_warning_audit(
     assert snapshot["detail_analysis"] == before["detail_analysis"]
     audit = json.loads(snapshot["update_reason"])
     assert audit["post_verification_status"] == "warning"
+    assert audit["save_post_verification_status"] == "pass"
+    assert conditional_analysis.verifier.compare_evidence.return_value.status == "warning"
     assert audit["remaining_cautions"][0]["reason"] == "as_of_limitation"
     assert audit["remaining_cautions"][0]["qualification_quote"] == freshness["qualificationQuote"]
     assert any('"post_caution_reasons": {"freshness": "as_of_limitation"}' in message for message in update_logs)
+    logged = json.loads(next(message for message in update_logs if " RESULT | " in message).split(" | ", 1)[1])
+    assert logged["post_verification_status"] == "pass"
+    assert logged["raw_post_verification_status"] == "warning"
+    assert logged["save_post_verification_status"] == "pass"
 
 
 @pytest.mark.parametrize(
@@ -480,7 +542,7 @@ def test_as_of_warning_saved_with_snapshot_and_warning_audit(
         "missing_check",
     ],
 )
-def test_warning_exceptions_do_not_bypass_save_guards(
+def test_candidate_save_allows_cautions_but_blocks_contradictions_or_incomplete_checks(
     db: SimpleNamespace,
     conditional_analysis: SimpleNamespace,
     issue: str,
@@ -502,16 +564,115 @@ def test_warning_exceptions_do_not_bypass_save_guards(
     elif issue == "other_caution":
         post.checks[0].verdict = "caution"
     elif issue == "unresolved_original":
-        conditional_analysis.verifier.verify_with_evidence.return_value.verification.checks[0].verdict = "contradicted"
+        original = _verification("fail")
+        original.checks[0].verdict = "contradicted"
+        conditional_analysis.set_verification(original)
         post.checks[0].verdict = "not_applicable"
     else:
         post.checks.pop()
     result = asyncio.run(
-        orchestration.EventVerificationUpdateService().update(1, EventVerificationUpdateIn(actor_usr_logn_id="actor")),
+        orchestration.EventVerificationUpdateService().update(
+            1,
+            EventVerificationUpdateIn(verification_id=VERIFICATION_ID, actor_usr_logn_id="actor"),
+        ),
     )
-    assert result.update_status == "skipped"
-    assert _snapshots(db) == []
-    assert _row(db)["one_line_summary"] == "10월 가동 예정"
+    should_save = issue not in {"contradicted", "outdated", "missing_check"}
+    assert result.update_status == ("updated" if should_save else "skipped")
+    assert len(_snapshots(db)) == int(should_save)
+    assert _row(db)["one_line_summary"] == ("12월 가동 예정" if should_save else "10월 가동 예정")
+
+
+def _comparison_case(case: str) -> EventVerificationItem:
+    verification = _verification("warning")
+    verification.reason_code = "review_required"
+    if case in {"mixed", "reported_attribution", "single_match", "no_match", "all_caution"}:
+        verdicts = {
+            "mixed": ["matched"] * 3 + ["caution"] * 2 + ["unverified"],
+            "reported_attribution": ["matched"] * 4 + ["caution"] * 2,
+            "single_match": ["matched"] + ["unverified"] * 5,
+            "no_match": ["unverified"] * 6,
+            "all_caution": ["caution"] * 6,
+        }[case]
+        for check, verdict in zip(verification.checks, verdicts, strict=True):
+            check.verdict = verdict
+        if case == "reported_attribution":
+            for check in verification.checks:
+                if check.aspect == "freshness":
+                    check.caution_reason = "as_of_limitation"
+                elif check.aspect == "attribution":
+                    check.caution_reason = "other"
+    elif case in {"search_error", "verification_error", "no_evidence"}:
+        verification.reason_code = case
+        verification.checks = []
+    else:
+        verification = _verification("fail")
+    return verification
+
+
+@pytest.mark.parametrize("stage", ["initial", "post"])
+@pytest.mark.parametrize(
+    ("case", "public_status", "public_reason"),
+    [
+        ("mixed", "pass", "no_contradiction"),
+        ("reported_attribution", "pass", "no_contradiction"),
+        ("single_match", "pass", "no_contradiction"),
+        ("no_match", "warning", "review_required"),
+        ("all_caution", "warning", "review_required"),
+        ("search_error", "warning", "search_error"),
+        ("verification_error", "warning", "verification_error"),
+        ("no_evidence", "warning", "no_evidence"),
+        ("outdated", "fail", "outdated"),
+    ],
+)
+def test_candidate_save_uses_same_grade_as_verification_api(
+    db: SimpleNamespace,
+    analysis: SimpleNamespace,
+    client: TestClient,
+    stage: str,
+    case: str,
+    public_status: str,
+    public_reason: str,
+) -> None:
+    verification = _comparison_case(case)
+    original = verification.model_dump(mode="json", by_alias=True)
+    if stage == "initial":
+        analysis.set_verification(verification)
+    else:
+        analysis.verifier.compare_evidence.return_value = verification
+        if case == "reported_attribution":
+            initial = _verification("fail")
+            initial.reason_code = "contradicted"
+            for check in initial.checks:
+                if check.aspect in {"entity", "time", "freshness", "attribution"}:
+                    check.verdict = "contradicted"
+                elif check.aspect == "quantity":
+                    check.verdict = "caution"
+            analysis.set_verification(initial)
+    response = client.post(
+        "/events/1/verification-updates",
+        json={"verificationId": VERIFICATION_ID, "actorUsrLognId": "actor"},
+    )
+    assert response.status_code == 200
+    result = response.json()
+    item = result["verification" if stage == "initial" else "postVerification"]
+    assert (item["status"], item["reasonCode"]) == (public_status, public_reason)
+    assert item["checks"] == original["checks"]
+    assert item["review"] == original["review"]
+    assert verification.model_dump(mode="json", by_alias=True) == original
+    # Original warnings still do not trigger correction; candidate public pass now permits saving.
+    should_save = (stage == "initial" and case == "outdated") or (stage == "post" and public_status == "pass")
+    assert result["updateStatus"] == ("updated" if should_save else "skipped")
+    assert len(_snapshots(db)) == int(should_save)
+    if should_save:
+        assert result["miEventSnapshotId"] == _snapshots(db)[0]["mi_event_snapshot_id"]
+        assert _snapshots(db)[0]["one_line_summary"] == "10월 가동 예정"
+        assert _row(db)["one_line_summary"] == "12월 가동 예정"
+        with db.factory() as session:
+            applied = session.execute(select(db.verifications)).mappings().one()
+        assert applied["applied_mi_event_snapshot_id"] == result["miEventSnapshotId"]
+    else:
+        assert result["miEventSnapshotId"] is None
+        assert _row(db)["one_line_summary"] == "10월 가동 예정"
 
 
 def test_update_api_runs_verification_and_saves_preimage(
@@ -522,7 +683,7 @@ def test_update_api_runs_verification_and_saves_preimage(
 ) -> None:
     response = client.post(
         "/events/1/verification-updates",
-        json={"actorUsrLognId": "actor", "expectedUpdatedAt": "2020-01-01T00:00:00"},
+        json={"verificationId": VERIFICATION_ID, "actorUsrLognId": "actor", "expectedUpdatedAt": "2020-01-01T00:00:00"},
     )
     assert response.status_code == 200, response.text
     result = response.json()
@@ -560,10 +721,13 @@ def test_update_skipped_without_verified_correction(
     expected: str,
     update_logs: list[str],
 ) -> None:
-    analysis.verifier.verify_with_evidence.return_value.verification = _verification(initial)
+    analysis.set_verification(_verification(initial))
     analysis.verifier.compare_evidence.return_value = _verification(post)
     result = asyncio.run(
-        orchestration.EventVerificationUpdateService().update(1, EventVerificationUpdateIn(actor_usr_logn_id="a")),
+        orchestration.EventVerificationUpdateService().update(
+            1,
+            EventVerificationUpdateIn(verification_id=VERIFICATION_ID, actor_usr_logn_id="a"),
+        ),
     )
     assert result.update_status == expected
     logged = json.loads(next(message for message in update_logs if " RESULT | " in message).split(" | ", 1)[1])
@@ -592,7 +756,7 @@ def test_commit_failure_never_logs_saved_result(
             asyncio.run(
                 orchestration.EventVerificationUpdateService().update(
                     1,
-                    EventVerificationUpdateIn(actor_usr_logn_id="a"),
+                    EventVerificationUpdateIn(verification_id=VERIFICATION_ID, actor_usr_logn_id="a"),
                 ),
             )
     finally:
@@ -617,7 +781,10 @@ def test_untrusted_proposal_never_writes(db: SimpleNamespace, analysis: SimpleNa
         change.field = "event_title"
     with pytest.raises(MIBaseError) as exc:
         asyncio.run(
-            orchestration.EventVerificationUpdateService().update(1, EventVerificationUpdateIn(actor_usr_logn_id="a")),
+            orchestration.EventVerificationUpdateService().update(
+                1,
+                EventVerificationUpdateIn(verification_id=VERIFICATION_ID, actor_usr_logn_id="a"),
+            ),
         )
     assert exc.value.error_code == ErrorCode.LLM_INVALID_RESPONSE_ERROR
     assert _snapshots(db) == []
@@ -628,7 +795,10 @@ def test_untrusted_proposal_never_writes(db: SimpleNamespace, analysis: SimpleNa
     [{}, {"actorUsrLognId": " "}, {"actorUsrLognId": 123}, {"actorUsrLognId": "a", "changes": []}],
 )
 def test_update_request_contract(client: TestClient, body: dict[str, object]) -> None:
-    assert client.post("/events/1/verification-updates", json=body).status_code == 422
+    assert (
+        client.post("/events/1/verification-updates", json={"verificationId": VERIFICATION_ID, **body}).status_code
+        == 422
+    )
 
 
 def test_api_returns_conflict_before_external_calls(
@@ -638,7 +808,7 @@ def test_api_returns_conflict_before_external_calls(
 ) -> None:
     response = client.post(
         "/events/1/verification-updates",
-        json={"actorUsrLognId": "a", "expectedUpdatedAt": "2019-01-01T00:00:00"},
+        json={"verificationId": VERIFICATION_ID, "actorUsrLognId": "a", "expectedUpdatedAt": "2019-01-01T00:00:00"},
     )
     assert response.status_code == 409
     assert response.json()["data"]["error_name"] == "EVENT_UPDATE_STALE"
@@ -653,7 +823,10 @@ def test_update_timeout_never_writes(db: SimpleNamespace, analysis: SimpleNamesp
     analysis.llm.side_effect = pending
     with pytest.raises(MIBaseError) as exc:
         asyncio.run(
-            orchestration.EventVerificationUpdateService().update(1, EventVerificationUpdateIn(actor_usr_logn_id="a")),
+            orchestration.EventVerificationUpdateService().update(
+                1,
+                EventVerificationUpdateIn(verification_id=VERIFICATION_ID, actor_usr_logn_id="a"),
+            ),
         )
     assert exc.value.error_code == ErrorCode.LLM_RESPONSE_TIMEOUT
     assert _snapshots(db) == []
@@ -670,7 +843,10 @@ def test_concurrent_edit_during_analysis_returns_conflict_without_snapshot(
         return _verification("pass")
 
     analysis.verifier.compare_evidence.side_effect = edit_before_apply
-    response = client.post("/events/1/verification-updates", json={"actorUsrLognId": "actor"})
+    response = client.post(
+        "/events/1/verification-updates",
+        json={"verificationId": VERIFICATION_ID, "actorUsrLognId": "actor"},
+    )
     assert response.status_code == 409
     assert _snapshots(db) == []
     assert _row(db)["detail_analysis"] == "다른 사용자가 저장한 내용"
@@ -683,7 +859,7 @@ def test_large_content_does_not_overflow_snapshot_reason(db: SimpleNamespace, an
     result = asyncio.run(
         orchestration.EventVerificationUpdateService().update(
             1,
-            EventVerificationUpdateIn(actor_usr_logn_id="actor"),
+            EventVerificationUpdateIn(verification_id=VERIFICATION_ID, actor_usr_logn_id="actor"),
         ),
     )
     snapshot = _snapshots(db)[0]
@@ -710,3 +886,225 @@ def test_missing_snapshot_audit_column_blocks_all_writes(db: SimpleNamespace) ->
         db.service.prepare_verification_update(1)
     assert exc.value.error_code == ErrorCode.EVENT_UPDATE_SCHEMA_ERROR
     assert _row(db)["one_line_summary"] == "10월 가동 예정"
+
+
+def _verification_row(db: SimpleNamespace) -> dict[str, object]:
+    with db.factory() as session:
+        return dict(session.execute(select(db.verifications)).mappings().one())
+
+
+def test_verify_then_update_reuses_exact_saved_evidence(
+    db: SimpleNamespace,
+    analysis: SimpleNamespace,
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Use the real verification persistence path, with only the external search/comparison stubbed.
+    with db.factory.begin() as session:
+        session.execute(db.verifications.delete())
+    evidence = analysis.verifier.verify_with_evidence.return_value
+    search = AsyncMock(
+        return_value={
+            "status": "completed",
+            "results": [
+                {"url": SOURCE_URL, "title": "뉴스", "content": EVIDENCE},
+            ],
+        },
+    )
+    monkeypatch.setattr(
+        verification_module.WebSearchProviderFactory,
+        "create_from_settings",
+        lambda: SimpleNamespace(search=search),
+    )
+    monkeypatch.setattr(
+        verification_module,
+        "get_settings",
+        lambda: SimpleNamespace(
+            event_verification_timeout_sec=5,
+            event_verification_reuse_ttl_sec=1800,
+        ),
+    )
+    comparison = AsyncMock(return_value=evidence.verification)
+    monkeypatch.setattr(verification_module.EventVerificationService, "compare_evidence", comparison)
+    verified = client.post("/events/verifications", json={"miEventIds": [1], "actorUsrLognId": "verifier"})
+    assert verified.status_code == 200
+    item = verified.json()["items"][0]
+    saved = _verification_row(db)
+    assert saved["crt_usr_logn_id"] == saved["mod_usr_logn_id"] == "verifier"
+    assert saved["verification_result_json"]["status"] == "fail"
+    assert saved["search_evidence_json"][0]["content"] == EVIDENCE
+    assert saved["mi_event_verification_id"] == item["verificationId"]
+    assert saved["expires_at"] - saved["checked_at"] == timedelta(minutes=30)
+    search.side_effect = AssertionError("Updates must not search again")
+    response = client.post(
+        "/events/1/verification-updates",
+        json={
+            "verificationId": item["verificationId"],
+            "actorUsrLognId": "editor",
+        },
+    )
+    assert response.status_code == 200
+    result = response.json()
+    assert result["updateStatus"] == "updated"
+    assert result["verificationId"] == item["verificationId"]
+    assert result["checkedAt"] == verified.json()["checkedAt"]
+    assert _verification_row(db)["applied_mi_event_snapshot_id"] == result["miEventSnapshotId"]
+    assert _verification_row(db)["mod_usr_logn_id"] == "editor"
+    assert _verification_row(db)["crt_usr_logn_id"] == "verifier"
+    analysis.verifier.verify_with_evidence.assert_not_awaited()
+    search.assert_awaited_once()
+    comparison.assert_awaited_once()
+    assert analysis.verifier.compare_evidence.call_args.args[1][0].content == EVIDENCE
+    audit = json.loads(_snapshots(db)[0]["update_reason"])
+    assert audit["verification_id"] == item["verificationId"]
+
+
+@pytest.mark.parametrize("problem", ["expired", "deleted", "other_event", "unknown_id", "stale"])
+def test_saved_verification_rejected_before_llm(
+    db: SimpleNamespace,
+    analysis: SimpleNamespace,
+    client: TestClient,
+    problem: str,
+) -> None:
+    verification_id = VERIFICATION_ID
+    with db.factory.begin() as session:
+        if problem == "expired":
+            session.execute(
+                db.verifications.update().values(
+                    expires_at=datetime.now(UTC).replace(tzinfo=None) - timedelta(seconds=1),
+                ),
+            )
+        elif problem == "deleted":
+            session.execute(db.verifications.update().values(del_yn="Y"))
+        elif problem == "other_event":
+            session.execute(db.verifications.update().values(mi_event_id=999))
+        elif problem == "unknown_id":
+            verification_id = "00000000-0000-4000-8000-000000000000"
+        else:
+            session.execute(db.events.update().values(detail_analysis="changed without changing mod_dtm"))
+    response = client.post(
+        "/events/1/verification-updates",
+        json={
+            "verificationId": verification_id,
+            "actorUsrLognId": "actor",
+        },
+    )
+    assert response.status_code == (409 if problem in {"expired", "stale"} else 404)
+    if problem == "expired":
+        assert response.json()["data"]["error_name"] == "EVENT_VERIFICATION_EXPIRED"
+    analysis.llm.assert_not_awaited()
+    analysis.verifier.verify_with_evidence.assert_not_awaited()
+    assert _snapshots(db) == []
+
+
+def test_same_verification_cannot_apply_twice(
+    db: SimpleNamespace,
+    analysis: SimpleNamespace,
+    client: TestClient,
+) -> None:
+    body = {"verificationId": VERIFICATION_ID, "actorUsrLognId": "actor"}
+    first = client.post("/events/1/verification-updates", json=body)
+    assert first.status_code == 200
+    second = client.post("/events/1/verification-updates", json=body)
+    assert second.status_code == 409
+    assert second.json()["data"]["error_name"] == "EVENT_VERIFICATION_ALREADY_APPLIED"
+    assert second.json()["data"]["mi_event_snapshot_id"] == first.json()["miEventSnapshotId"]
+    assert len(_snapshots(db)) == 1
+    analysis.llm.assert_awaited_once()
+
+
+def test_expiration_during_analysis_blocks_commit(
+    db: SimpleNamespace,
+    analysis: SimpleNamespace,
+    client: TestClient,
+) -> None:
+    async def expire(*args: object, **kwargs: object) -> EventVerificationItem:
+        with db.factory.begin() as session:
+            session.execute(db.verifications.update().values(expires_at=OLD_DATE))
+        return _verification("pass")
+
+    analysis.verifier.compare_evidence.side_effect = expire
+    response = client.post(
+        "/events/1/verification-updates",
+        json={"verificationId": VERIFICATION_ID, "actorUsrLognId": "a"},
+    )
+    assert response.status_code == 409
+    assert response.json()["data"]["error_name"] == "EVENT_VERIFICATION_EXPIRED"
+    assert _snapshots(db) == []
+    assert _verification_row(db)["applied_mi_event_snapshot_id"] is None
+
+
+def test_application_marker_failure_rolls_back_snapshot_and_event(
+    db: SimpleNamespace,
+    analysis: SimpleNamespace,
+    client: TestClient,
+) -> None:
+    with db.engine.begin() as conn:
+        conn.exec_driver_sql(
+            "CREATE TRIGGER reject_verification_update BEFORE UPDATE ON tmm_mi_mievent_verification_m "
+            "BEGIN SELECT RAISE(ABORT, 'marker failed'); END",
+        )
+    with pytest.raises(IntegrityError, match="marker failed"):
+        client.post("/events/1/verification-updates", json={"verificationId": VERIFICATION_ID, "actorUsrLognId": "a"})
+    assert _snapshots(db) == []
+    assert _row(db)["one_line_summary"] == "10월 가동 예정"
+    assert _verification_row(db)["applied_mi_event_snapshot_id"] is None
+
+
+@pytest.mark.parametrize("value", [None, "invalid", "", 123])
+def test_update_requires_verification_id(client: TestClient, value: object) -> None:
+    body = {"actorUsrLognId": "actor"}
+    if value is not None:
+        body["verificationId"] = value
+    assert client.post("/events/1/verification-updates", json=body).status_code == 422
+
+
+def test_another_request_applies_same_id_during_analysis(
+    db: SimpleNamespace,
+    analysis: SimpleNamespace,
+    client: TestClient,
+) -> None:
+    async def apply_other_request(*args: object, **kwargs: object) -> EventVerificationItem:
+        context, _ = db.service.load_verification_update(1, VERIFICATION_ID)
+        db.service.apply_verification_update(
+            1,
+            context.fingerprint,
+            {"one_line_summary": "다른 요청의 수정"},
+            "other-actor",
+            "verified",
+            verification_id=VERIFICATION_ID,
+        )
+        return _verification("pass")
+
+    analysis.verifier.compare_evidence.side_effect = apply_other_request
+    response = client.post(
+        "/events/1/verification-updates",
+        json={"verificationId": VERIFICATION_ID, "actorUsrLognId": "actor"},
+    )
+    assert response.status_code == 409
+    assert response.json()["data"]["error_name"] == "EVENT_VERIFICATION_ALREADY_APPLIED"
+    assert len(_snapshots(db)) == 1
+    assert _row(db)["one_line_summary"] == "다른 요청의 수정"
+    assert _verification_row(db)["mod_usr_logn_id"] == "other-actor"
+
+
+def test_verification_batch_storage_failure_rolls_back_all(db: SimpleNamespace, analysis: SimpleNamespace) -> None:
+    _, record = db.service.load_verification_update(1, VERIFICATION_ID)
+    new_id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+    candidate = record.model_copy(update={"mi_event_verification_id": new_id})
+    with pytest.raises(IntegrityError):
+        db.service.store_verifications([candidate, candidate], "actor")
+    assert _verification_row(db)["mi_event_verification_id"] == VERIFICATION_ID
+
+
+def test_invalid_saved_result_is_rejected(db: SimpleNamespace, analysis: SimpleNamespace, client: TestClient) -> None:
+    with db.factory.begin() as session:
+        session.execute(db.verifications.update().values(verification_result_json={"status": "bad"}))
+    response = client.post(
+        "/events/1/verification-updates",
+        json={"verificationId": VERIFICATION_ID, "actorUsrLognId": "actor"},
+    )
+    assert response.status_code == 500
+    assert response.json()["data"]["error_name"] == "EVENT_VERIFICATION_INVALID"
+    analysis.llm.assert_not_awaited()
+    assert _snapshots(db) == []

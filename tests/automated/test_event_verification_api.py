@@ -19,7 +19,7 @@ from apps.agents.scenario_group_agent.routers.events import router
 from apps.agents.scenario_group_agent.schemas.api.event_verifications import VerificationAspect, VerificationVerdict
 from apps.common.exceptions.custom import MIBaseError
 from apps.common.values.error_codes import ErrorCode
-from apps.persistence.event.schema import EventSearchSource
+from apps.persistence.event.schema import EventSearchSource, EventUpdateContext
 
 
 SOURCE_URL = "https://example.com/news/update"
@@ -60,9 +60,19 @@ def _output(verdict: VerificationVerdict = "matched") -> EventVerificationOutput
 @pytest.fixture
 def dependencies(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
     load = Mock(return_value=[_row(1), _row(2)])
-    monkeypatch.setattr(service_module, "EventService", lambda: SimpleNamespace(load_search_sources=load))
+    store = Mock()
+
+    def prepare(ids: list[int]) -> list[EventUpdateContext]:
+        return [EventUpdateContext(source=row, fingerprint="f" * 64, content={}) for row in load(event_ids=ids)]
+
+    monkeypatch.setattr(
+        service_module,
+        "EventService",
+        lambda: SimpleNamespace(prepare_verifications=prepare, store_verifications=store),
+    )
     settings = SimpleNamespace(
         event_verification_timeout_sec=5,
+        event_verification_reuse_ttl_sec=1800,
         llm_stream_enabled=False,
         llm_reasoning_effort=None,
     )
@@ -77,7 +87,7 @@ def dependencies(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
     monkeypatch.setattr(service_module.WebSearchProviderFactory, "create_from_settings", factory)
     llm = AsyncMock(return_value=SimpleNamespace(result=_output()))
     monkeypatch.setattr(service_module, "invoke_llm_structured_output", llm)
-    return SimpleNamespace(load=load, settings=settings, search=search, factory=factory, llm=llm)
+    return SimpleNamespace(load=load, store=store, settings=settings, search=search, factory=factory, llm=llm)
 
 
 @pytest.fixture
@@ -88,7 +98,7 @@ def client() -> TestClient:
 
 
 def test_api_returns_ordered_camelcase_results(client: TestClient, dependencies: SimpleNamespace) -> None:
-    response = client.post("/events/verifications", json={"miEventIds": [2, 1]})
+    response = client.post("/events/verifications", json={"actorUsrLognId": "actor", "miEventIds": [2, 1]})
     assert response.status_code == 200
     body = response.json()
     assert body["checkedAt"].endswith("Z")
@@ -101,6 +111,12 @@ def test_api_returns_ordered_camelcase_results(client: TestClient, dependencies:
     assert item["checks"][0]["sourceUrls"] == [SOURCE_URL]
     assert "\n" not in item["review"]
     assert item["sourceUpdatedAt"] == "2026-10-02T00:00:00Z"
+    assert item["verificationId"]
+    records, actor = dependencies.store.call_args.args
+    assert actor == "actor"
+    assert records[0].mi_event_verification_id == item["verificationId"]
+    assert (records[0].expires_at - records[0].checked_at).total_seconds() == 1800
+    assert records[0].search_evidence_json[0]["content"]
     dependencies.load.assert_called_once_with(event_ids=[2, 1])
     call = dependencies.search.call_args.kwargs
     assert call["tool_choice"] == "required"
@@ -111,7 +127,7 @@ def test_api_returns_ordered_camelcase_results(client: TestClient, dependencies:
     assert call["end_date"] == context["as_of"][:10]
 
 
-def test_as_of_caution_is_exposed_without_changing_warning_grade(
+def test_as_of_caution_is_preserved_in_public_pass(
     client: TestClient,
     dependencies: SimpleNamespace,
 ) -> None:
@@ -123,10 +139,11 @@ def test_as_of_caution_is_exposed_without_changing_warning_grade(
     row.detail_analysis += check["qualification_quote"]
     dependencies.load.return_value = [row]
     dependencies.llm.return_value.result = EventVerificationOutput.model_validate(output)
-    response = client.post("/events/verifications", json={"miEventIds": [1]})
+    response = client.post("/events/verifications", json={"actorUsrLognId": "actor", "miEventIds": [1]})
     assert response.status_code == 200
     result = response.json()["items"][0]
-    assert result["status"] == "warning"
+    assert result["status"] == "pass"
+    assert result["reasonCode"] == "no_contradiction"
     freshness = next(item for item in result["checks"] if item["aspect"] == "freshness")
     assert freshness["cautionReason"] == "as_of_limitation"
     assert freshness["qualificationQuote"] == check["qualification_quote"]
@@ -173,14 +190,14 @@ def test_invalid_request_rejected_before_io(
     dependencies: SimpleNamespace,
     body: dict[str, object],
 ) -> None:
-    assert client.post("/events/verifications", json=body).status_code == 422
+    assert client.post("/events/verifications", json={"actorUsrLognId": "actor", **body}).status_code == 422
     dependencies.load.assert_not_called()
     dependencies.search.assert_not_called()
 
 
 def test_missing_or_unpublished_event_prevents_search(dependencies: SimpleNamespace) -> None:
     with pytest.raises(MIBaseError) as exc:
-        asyncio.run(service_module.EventVerificationService().verify([1, 3]))
+        asyncio.run(service_module.EventVerificationService().verify([1, 3], "actor"))
     assert exc.value.error_code == ErrorCode.ENTITY_NOT_FOUND
     dependencies.factory.assert_not_called()
 
@@ -189,8 +206,8 @@ def test_missing_or_unpublished_event_prevents_search(dependencies: SimpleNamesp
     ("verdict", "status", "reason"),
     [
         ("matched", "pass", "verified"),
-        ("caution", "warning", "review_required"),
-        ("unverified", "warning", "review_required"),
+        ("caution", "pass", "no_contradiction"),
+        ("unverified", "pass", "no_contradiction"),
         ("outdated", "fail", "outdated"),
         ("contradicted", "fail", "contradicted"),
     ],
@@ -202,14 +219,58 @@ def test_aggregate_verdict(
     reason: str,
 ) -> None:
     dependencies.llm.return_value = SimpleNamespace(result=_output(verdict))
-    result = asyncio.run(service_module.EventVerificationService().verify([1, 2]))
+    result = asyncio.run(service_module.EventVerificationService().verify([1, 2], "actor"))
     assert result.items[0].status == status
     assert result.items[0].reason_code == reason
 
 
+@pytest.mark.parametrize(
+    ("verdicts", "status", "reason"),
+    [
+        (["matched"] * 3 + ["caution"] * 2 + ["unverified"], "pass", "no_contradiction"),
+        (["matched"] + ["unverified"] * 5, "pass", "no_contradiction"),
+        (["unverified"] * 6, "warning", "review_required"),
+        (["caution"] * 6, "warning", "review_required"),
+        (["not_applicable"] * 5 + ["unverified"], "warning", "review_required"),
+        (["matched"] * 3 + ["caution", "unverified", "contradicted"], "fail", "contradicted"),
+        (["matched"] * 3 + ["caution", "unverified", "outdated"], "fail", "outdated"),
+    ],
+)
+def test_public_verification_mixed_checks_preserves_details(
+    client: TestClient,
+    dependencies: SimpleNamespace,
+    verdicts: list[VerificationVerdict],
+    status: str,
+    reason: str,
+) -> None:
+    output = _output().model_dump()
+    for check, verdict in zip(output["checks"], verdicts, strict=True):
+        check["verdict"] = verdict
+    dependencies.load.return_value = [_row(1)]
+    dependencies.llm.return_value.result = EventVerificationOutput.model_validate(output)
+    response = client.post("/events/verifications", json={"actorUsrLognId": "actor", "miEventIds": [1]})
+    assert response.status_code == 200
+    result = response.json()["items"][0]
+    assert (result["status"], result["reasonCode"]) == (status, reason)
+    assert [check["verdict"] for check in result["checks"]] == verdicts
+    assert all(check["finding"] for check in result["checks"])
+
+
+@pytest.mark.parametrize("verdict", ["caution", "unverified"])
+def test_update_verification_keeps_strict_grade(dependencies: SimpleNamespace, verdict: VerificationVerdict) -> None:
+    dependencies.llm.return_value.result = _output(verdict)
+    verifier = service_module.EventVerificationService()
+    evidence = asyncio.run(verifier.verify_with_evidence(_row(1), datetime.now(UTC)))
+    assert evidence.verification.status == "warning"
+    assert evidence.verification.reason_code == "review_required"
+    post = asyncio.run(verifier.compare_evidence(_row(1), evidence.sources, datetime.now(UTC)))
+    assert post.status == "warning"
+    assert post.reason_code == "review_required"
+
+
 def test_no_search_evidence_cannot_pass(dependencies: SimpleNamespace) -> None:
     dependencies.search.return_value = {"answer": "문제 없음 https://invented.example/", "results": []}
-    result = asyncio.run(service_module.EventVerificationService().verify([1, 2]))
+    result = asyncio.run(service_module.EventVerificationService().verify([1, 2], "actor"))
     assert all(item.status == "warning" and item.reason_code == "no_evidence" for item in result.items)
     assert all(item.links == [] for item in result.items)
     dependencies.llm.assert_not_called()
@@ -227,7 +288,7 @@ def test_invalid_comparison_is_inconclusive(dependencies: SimpleNamespace, mode:
     else:
         output["checks"][0]["aspect"] = "freshness"
     dependencies.llm.return_value = SimpleNamespace(result=output)
-    result = asyncio.run(service_module.EventVerificationService().verify([1, 2]))
+    result = asyncio.run(service_module.EventVerificationService().verify([1, 2], "actor"))
     assert result.items[0].status == "warning"
     assert result.items[0].reason_code == "verification_error"
     assert result.items[0].links == [SOURCE_URL]
@@ -238,13 +299,13 @@ def test_no_applicable_claims_cannot_pass(dependencies: SimpleNamespace) -> None
     for check in output["checks"]:
         check.update(verdict="not_applicable", source_ids=[])
     dependencies.llm.return_value = SimpleNamespace(result=output)
-    result = asyncio.run(service_module.EventVerificationService().verify([1, 2]))
+    result = asyncio.run(service_module.EventVerificationService().verify([1, 2], "actor"))
     assert result.items[0].status == "warning"
 
 
 def test_partial_search_failure_keeps_other_result(dependencies: SimpleNamespace) -> None:
     dependencies.search.side_effect = [RuntimeError("unavailable"), dependencies.search.return_value]
-    result = asyncio.run(service_module.EventVerificationService().verify([1, 2]))
+    result = asyncio.run(service_module.EventVerificationService().verify([1, 2], "actor"))
     assert [item.status for item in result.items] == ["warning", "pass"]
     assert result.items[0].reason_code == "search_error"
     dependencies.llm.assert_awaited_once()
@@ -252,14 +313,14 @@ def test_partial_search_failure_keeps_other_result(dependencies: SimpleNamespace
 
 def test_incomplete_search_does_not_reach_comparison(dependencies: SimpleNamespace) -> None:
     dependencies.search.return_value["status"] = "incomplete"
-    result = asyncio.run(service_module.EventVerificationService().verify([1, 2]))
+    result = asyncio.run(service_module.EventVerificationService().verify([1, 2], "actor"))
     assert result.items[0].reason_code == "search_error"
     dependencies.llm.assert_not_called()
 
 
 def test_provider_unavailable_is_explicit(dependencies: SimpleNamespace) -> None:
     dependencies.factory.side_effect = ValueError("missing provider")
-    result = asyncio.run(service_module.EventVerificationService().verify([1, 2]))
+    result = asyncio.run(service_module.EventVerificationService().verify([1, 2], "actor"))
     assert all(item.reason_code == "search_error" for item in result.items)
     dependencies.llm.assert_not_called()
 
@@ -270,7 +331,7 @@ def test_timeout_is_warning(dependencies: SimpleNamespace) -> None:
 
     dependencies.settings.event_verification_timeout_sec = 0.02
     dependencies.search.side_effect = wait_forever
-    result = asyncio.run(service_module.EventVerificationService().verify([1, 2]))
+    result = asyncio.run(service_module.EventVerificationService().verify([1, 2], "actor"))
     assert all(item.reason_code == "search_error" for item in result.items)
     dependencies.llm.assert_not_called()
 
@@ -278,7 +339,25 @@ def test_timeout_is_warning(dependencies: SimpleNamespace) -> None:
 def test_cancellation_propagates(dependencies: SimpleNamespace) -> None:
     dependencies.search.side_effect = asyncio.CancelledError()
     with pytest.raises(asyncio.CancelledError):
-        asyncio.run(service_module.EventVerificationService().verify([1, 2]))
+        asyncio.run(service_module.EventVerificationService().verify([1, 2], "actor"))
+    dependencies.store.assert_not_called()
+
+
+@pytest.mark.parametrize("actor", [None, "", " ", 123, "a" * 101])
+def test_verification_actor_required(client: TestClient, actor: object) -> None:
+    body = {"miEventIds": [1]}
+    if actor is not None:
+        body["actorUsrLognId"] = actor
+    assert client.post("/events/verifications", json=body).status_code == 422
+
+
+def test_persisted_verdict_keeps_strict_grade(dependencies: SimpleNamespace) -> None:
+    dependencies.llm.return_value.result = _output("caution")
+    result = asyncio.run(service_module.EventVerificationService().verify([1, 2], "actor"))
+    assert result.items[0].status == "pass"
+    records = dependencies.store.call_args.args[0]
+    assert records[0].verification_result_json["status"] == "warning"
+    assert records[0].verification_result_json["checks"][4]["verdict"] == "caution"
 
 
 def test_only_unique_usable_web_citations_are_kept() -> None:

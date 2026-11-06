@@ -29,7 +29,7 @@ router = APIRouter(tags=["events"])
 @router.post(
     "/events/{mi_event_id}/verification-updates",
     response_model=EventVerificationUpdateOut,
-    summary="웹 검증 후 변경 전 Snapshot을 저장하고 Event 업데이트",
+    summary="저장된 검증 근거로 수정안을 재검증하고 Snapshot 저장 후 Event 업데이트",
 )
 async def update_verified_event(
     body: EventVerificationUpdateIn,
@@ -44,7 +44,7 @@ async def update_verified_event(
     summary="시나리오 설계 전 Event 사실·최신성 웹 검증",
 )
 async def verify_events(body: EventVerificationsIn) -> EventVerificationsOut:
-    return await EventVerificationService().verify(body.mi_event_ids)
+    return await EventVerificationService().verify(body.mi_event_ids, body.actor_usr_logn_id)
 
 
 @router.post(

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import UTC, datetime
+from datetime import datetime
 import hashlib
 import json
 from time import perf_counter
@@ -13,6 +13,7 @@ from apps.agents.scenario_group_agent.persistence.event_verification_service imp
     EventVerificationService,
     VerificationEvidence,
     VerificationSource,
+    public_verification_result,
 )
 from apps.agents.scenario_group_agent.prompts.event_verification_update import (
     EVENT_UPDATE_SYSTEM_PROMPT,
@@ -102,35 +103,15 @@ def _content_hash(value: JsonValue) -> str:
     return hashlib.sha256(json.dumps(value, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
 
 
-def _allows_update(
-    original: EventVerificationItem,
-    post: EventVerificationItem,
-    candidate: EventSearchSource,
-) -> bool:
-    if post.status == "pass":
-        return True
-    if post.status != "warning" or post.reason_code != "review_required":
-        return False
+def _allows_update(post: EventVerificationItem) -> bool:
+    """Accept the same pass grade exposed by the verification API after a complete comparison."""
     checks = {item.aspect: item for item in post.checks}
     if len(post.checks) != 6 or set(checks) != set(get_args(VerificationAspect)):
         return False
-    freshness = checks["freshness"]
-    quote = freshness.qualification_quote or ""
-    if not (
-        freshness.verdict == "caution"
-        and freshness.caution_reason == "as_of_limitation"
-        and freshness.source_urls
-        and quote.strip()
-        and quote in candidate.detail_analysis
-    ):
-        return False
-    if any(item.verdict not in {"matched", "not_applicable"} for key, item in checks.items() if key != "freshness"):
-        return False
-    # A previously contradicted claim must be checked, not merely disappear into not_applicable.
-    return all(
-        checks[item.aspect].verdict == "matched"
-        for item in original.checks
-        if item.aspect != "freshness" and item.verdict in {"contradicted", "outdated"}
+    return (
+        public_verification_result(post).status == "pass"
+        and any(item.verdict == "matched" for item in post.checks)
+        and all(item.verdict not in {"contradicted", "outdated"} for item in post.checks)
     )
 
 
@@ -150,9 +131,11 @@ def _update_reason(
     return json.dumps(
         {
             "reason": proposal.reason[:1000],
+            "verification_id": str(evidence.verification.verification_id),
             "checked_at": checked_at.isoformat(),
             "verification_review": evidence.verification.review,
             "post_verification_status": post.status,
+            "save_post_verification_status": public_verification_result(post).status,
             "remaining_cautions": [
                 {
                     "aspect": item.aspect,
@@ -203,14 +186,23 @@ class EventVerificationUpdateService:
                 round((perf_counter() - started) * 1000),
             )
             raise
+        save_verification_status = response.verification.status
+        raw_post_verification_status = response.post_verification.status if response.post_verification else None
+        response.verification = public_verification_result(response.verification)
+        if response.post_verification is not None:
+            response.post_verification = public_verification_result(response.post_verification)
         post = response.post_verification
         logger.info(
             "[EVENT_VERIFICATION_UPDATE] RESULT | {}",
             json.dumps(
                 {
                     "event_id": event_id,
+                    "verification_id": str(response.verification_id),
                     "update_status": response.update_status,
                     "message": response.message,
+                    "save_verification_status": save_verification_status,
+                    "raw_post_verification_status": raw_post_verification_status,
+                    "save_post_verification_status": post.status if post else None,
                     "verification_status": response.verification.status,
                     "verification_reason": response.verification.reason_code,
                     "verification_checks": {item.aspect: item.verdict for item in response.verification.checks},
@@ -235,16 +227,32 @@ class EventVerificationUpdateService:
 
     async def _update(self, event_id: int, body: EventVerificationUpdateIn) -> EventVerificationUpdateOut:
         persistence = EventService()
-        context = await asyncio.to_thread(persistence.prepare_verification_update, event_id, body.expected_updated_at)
-        checked_at = datetime.now(UTC)
+        context, record = await asyncio.to_thread(
+            persistence.load_verification_update,
+            event_id,
+            str(body.verification_id),
+            body.expected_updated_at,
+        )
+        checked_at = record.checked_at
+        try:
+            evidence = VerificationEvidence(
+                verification=EventVerificationItem.model_validate(record.verification_result_json),
+                sources=[VerificationSource.model_validate(source) for source in record.search_evidence_json],
+            )
+        except ValidationError as exc:
+            raise MIBaseError(ErrorCode.EVENT_VERIFICATION_INVALID) from exc
+        if evidence.verification.mi_event_id != event_id:
+            raise MIBaseError(ErrorCode.EVENT_VERIFICATION_INVALID)
+        evidence.verification.verification_id = body.verification_id
+        evidence.verification.expires_at = record.expires_at
         verifier = EventVerificationService()
         cfg = get_settings()
         try:
             # Only external analysis is cancellable by this timeout; never timeout a transaction in a worker thread.
             async with asyncio.timeout(cfg.event_verification_update_timeout_sec):
-                evidence = await verifier.verify_with_evidence(context.source, checked_at)
                 response = EventVerificationUpdateOut(
                     mi_event_id=event_id,
+                    verification_id=body.verification_id,
                     checked_at=checked_at,
                     update_status="skipped",
                     message="검증 근거가 충분하지 않아 업데이트하지 않았습니다.",
@@ -256,6 +264,9 @@ class EventVerificationUpdateService:
                     response.message = "검증 결과 수정할 내용이 없습니다."
                     return response
                 if evidence.verification.status != "fail" or not evidence.sources:
+                    response.message = (
+                        "저장된 검증에서 수정할 오류가 확정되지 않았거나 검색 근거가 없어 업데이트하지 않았습니다."
+                    )
                     return response
                 result = await invoke_llm_structured_output(
                     output_schema=EventUpdateProposal,
@@ -291,9 +302,9 @@ class EventVerificationUpdateService:
                     evidence.sources,
                     checked_at,
                 )
-                if not _allows_update(evidence.verification, response.post_verification, candidate):
+                if not _allows_update(response.post_verification):
                     response.message = (
-                        "수정안에 저장 허용 조건을 충족하지 못한 주의 사항이 남아 업데이트하지 않았습니다."
+                        "수정안을 확인할 근거가 충분하지 않거나 비교가 완료되지 않아 업데이트하지 않았습니다."
                         if response.post_verification.status == "warning"
                         else "수정안이 재검증을 통과하지 못해 업데이트하지 않았습니다."
                     )
@@ -310,6 +321,7 @@ class EventVerificationUpdateService:
             values,
             body.actor_usr_logn_id,
             reason,
+            verification_id=str(body.verification_id),
         )
         response.update_status = "updated" if applied.changed_fields else "unchanged"
         response.message = (
@@ -318,7 +330,7 @@ class EventVerificationUpdateService:
         if applied.changed_fields and response.post_verification.status == "warning":
             response.message = (
                 "변경 전 Snapshot 저장 후 확인된 오류를 수정했습니다. "
-                "확인 기준 시점 이후의 최신성 주의가 남아 있습니다."
+                "일부 항목에 주의 또는 확인 불가가 남아 있으므로 상세 검증 결과를 확인해 주세요."
             )
         response.mi_event_snapshot_id = applied.snapshot_id
         response.snapshot_version_no = applied.snapshot_version_no

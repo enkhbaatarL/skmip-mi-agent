@@ -9,13 +9,58 @@ from apps.common.exceptions.custom import MIBaseError
 from apps.common.logging.logger_config import logger
 from apps.common.values.error_codes import ErrorCode
 from apps.persistence.event.repository import EventRepository
-from apps.persistence.event.schema import EventSearchSource, EventUpdateApplied, EventUpdateContext
+from apps.persistence.event.schema import (
+    EventSearchSource,
+    EventUpdateApplied,
+    EventUpdateContext,
+    EventVerificationRecord,
+)
 from apps.persistence.scenario.repository import ScenarioRepository
 from apps.persistence.scenario_group.repository import ScenarioGroupRepository
 from apps.persistence.signpost.repository import SignpostRepository
 
 
 class EventService:
+    def prepare_verifications(self, event_ids: list[int]) -> list[EventUpdateContext]:
+        from apps.common.configs.database.sync_database.connection import get_sync_session
+        from apps.persistence.event.update_repository import EventUpdateRepository
+        from apps.persistence.event.verification_repository import EventVerificationRepository
+
+        with get_sync_session() as session:
+            EventVerificationRepository(session)  # Fail before external calls when the persistence schema is missing.
+            repository = EventUpdateRepository(session)
+            return [repository.prepare(event_id, None) for event_id in event_ids]
+
+    def store_verifications(self, records: list[EventVerificationRecord], actor: str) -> None:
+        from apps.common.configs.database.sync_database.connection import get_sync_session
+        from apps.persistence.event.verification_repository import EventVerificationRepository
+
+        with get_sync_session() as session, session.begin():
+            repository = EventVerificationRepository(session)
+            for record in records:
+                repository.insert(record, actor)
+
+    def load_verification_update(
+        self, event_id: int, verification_id: str, expected_updated_at: datetime | None = None,
+    ) -> tuple[EventUpdateContext, EventVerificationRecord]:
+        from apps.common.configs.database.sync_database.connection import get_sync_session
+        from apps.persistence.event.update_repository import EventUpdateRepository
+        from apps.persistence.event.verification_repository import EventVerificationRepository
+
+        with get_sync_session() as session:
+            logger.info(
+                "[EVENT_VERIFICATION_UPDATE] DB_TARGET | event_id={} | database={}",
+                event_id,
+                session.get_bind().engine.url.database,
+            )
+            repository = EventVerificationRepository(session)
+            record = repository.get(event_id, verification_id)
+            repository.ensure_usable(record)
+            context = EventUpdateRepository(session).prepare(event_id, expected_updated_at)
+            if context.fingerprint != record.event_fingerprint:
+                raise MIBaseError(ErrorCode.EVENT_UPDATE_STALE)
+            return context, record
+
     def prepare_verification_update(
         self, event_id: int, expected_updated_at: datetime | None = None,
     ) -> EventUpdateContext:
@@ -32,13 +77,28 @@ class EventService:
 
     def apply_verification_update(
         self, event_id: int, fingerprint: str, changes: dict[str, Any], actor: str, reason: str,
+        *, verification_id: str | None = None,
     ) -> EventUpdateApplied:
         from apps.common.configs.database.sync_database.connection import get_sync_session
         from apps.persistence.event.update_repository import EventUpdateRepository
+        from apps.persistence.event.verification_repository import EventVerificationRepository
 
         with get_sync_session() as session, session.begin():
             database = session.get_bind().engine.url.database
-            applied = EventUpdateRepository(session).apply(event_id, fingerprint, changes, actor, reason)
+            update_repository = EventUpdateRepository(session)
+            record = None
+            if verification_id is not None:
+                verification_repository = EventVerificationRepository(session)
+                record = verification_repository.get(event_id, verification_id, lock=True)
+                verification_repository.ensure_usable(record)
+                if record.event_fingerprint != fingerprint:
+                    raise MIBaseError(ErrorCode.EVENT_UPDATE_STALE)
+                update_repository.read_event(event_id, lock=True)
+                # A lock wait can cross the expiration boundary: check again before INSERT/UPDATE.
+                verification_repository.ensure_usable(record)
+            applied = update_repository.apply(event_id, fingerprint, changes, actor, reason)
+            if record is not None and applied.snapshot_id is not None:
+                verification_repository.mark_applied(record, applied.snapshot_id, actor)
         # session.begin() must exit successfully before reporting a committed write.
         if applied.changed_fields:
             logger.info(

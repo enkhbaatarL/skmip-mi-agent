@@ -69,3 +69,14 @@ class EventUpdateApplied(ApiModel):
     previous_snapshot_id: int | None
     changed_fields: list[str]
     updated_at: datetime
+
+
+class EventVerificationRecord(ApiModel):
+    mi_event_verification_id: str
+    mi_event_id: int
+    event_fingerprint: str
+    verification_result_json: dict[str, JsonValue]
+    search_evidence_json: list[dict[str, JsonValue]]
+    checked_at: datetime
+    expires_at: datetime
+    applied_mi_event_snapshot_id: int | None = None

@@ -69,18 +69,22 @@ apps/agents/<agent_name>/
 ## Persistence 경계
 
 Event 사전 웹 검증은 `routers/events.py`의 `POST /events/verifications`에서
-`persistence/event_verification_service.py`를 호출하는 flow-less read-only 유스케이스다.
+`persistence/event_verification_service.py`를 호출하는 flow-less 유스케이스다.
 HTTP 스키마는 `schemas/api/event_verifications.py`, 검색·비교 지침 및 structured output은
 `prompts/event_verification.py`가 소유한다. 현재 게시된 Event 조회는
 `apps/persistence/event/service.py`, 외부 검색·비교는 기존 `apps/connectors/web/`와
-`apps/connectors/llm/`를 재사용한다. 검증 결과는 요청에 반환하며 DB에 저장하지 않는다.
+`apps/connectors/llm/`를 재사용한다. 내부 검증 결과·검색 근거·Event 해시는
+`apps/persistence/event/verification_repository.py`를 통해 검증 테이블에 저장하고 verificationId를 반환한다.
 
 `POST /events/{miEventId}/verification-updates`는
-`persistence/event_verification_update_service.py`에서 웹 검증·수정안 생성·재검증을 수행한다.
+`persistence/event_verification_update_service.py`에서 verificationId의 저장 근거를 재사용하여 수정안을 생성·재검증한다.
+이 경로는 웹 검색과 원본 Event 검증을 다시 실행하지 않는다.
 HTTP 스키마는 `schemas/api/event_verification_updates.py`, 수정 지침은 `prompts/event_verification_update.py`다.
 DB 조회·transaction은 `apps/persistence/event/service.py`, row lock·Snapshot INSERT·Event UPDATE는
 `apps/persistence/event/update_repository.py`가 소유한다. 이 repository는 현재 DB 컬럼을 reflection하여
 조회 ORM에 없는 원본 확장 컬럼까지 Snapshot에 보존하고, 수정은 명시적 본문 allowlist로 제한한다.
+검증 행 잠금·만료/중복 적용 검사·적용 Snapshot ID 기록은 `verification_repository.py`가 담당하며,
+검증 적용 기록과 Snapshot INSERT·Event UPDATE는 같은 service transaction으로 커밋한다.
 DB migration은 관리 저장소를 따르며 실행 시 테이블 변경은 수행하지 않는다.
 
 Event 추천은 `routers/events.py`의 `POST /events/recommendations`에서

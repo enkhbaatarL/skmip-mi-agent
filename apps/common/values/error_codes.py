@@ -11,6 +11,9 @@ class ErrorCode(Enum):
     INVALID_REQUEST = (-202, "요청이 유효하지 않습니다.", 400)
     EVENT_UPDATE_STALE = (-203, "검증 이후 Event가 변경되었습니다. 다시 검증해주세요.", 409)
     EVENT_UPDATE_SCHEMA_ERROR = (-204, "Event/Snapshot 저장 스키마가 업데이트 계약과 일치하지 않습니다.", 500)
+    EVENT_VERIFICATION_EXPIRED = (-205, "검증 결과가 만료되었습니다. 다시 검증해주세요.", 409)
+    EVENT_VERIFICATION_ALREADY_APPLIED = (-206, "이미 적용한 검증 결과입니다.", 409)
+    EVENT_VERIFICATION_INVALID = (-207, "저장된 검증 결과 형식이 유효하지 않습니다.", 500)
 
     # 1000 ~ 1999: Scenario Group Agent 관련 오류
     CLASSIFY_SCENARIO_TYPE_FAILED = (-1000, "사용자 질의 내용 기반으로 시나리오 타입 분류에 실패했습니다.", 500)

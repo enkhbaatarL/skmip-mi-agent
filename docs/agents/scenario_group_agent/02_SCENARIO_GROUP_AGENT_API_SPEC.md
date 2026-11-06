@@ -31,7 +31,7 @@
 | `DELETE` | `/scenario-groups/{id}` | 소유자 soft delete |
 | `GET` | `/events` | Event 목록 |
 | `POST` | `/events/verifications` | 시나리오 설계 전 Event 사실·최신성 웹 검증 |
-| `POST` | `/events/{miEventId}/verification-updates` | 웹 재검증·수정안 검증 후 변경 전 Snapshot 저장 및 Event 갱신 |
+| `POST` | `/events/{miEventId}/verification-updates` | 저장된 웹 근거로 수정안 검증 후 변경 전 Snapshot 저장 및 Event 갱신 |
 | `POST` | `/events/recommendations` | 로컬 Qdrant 후보 검색 + LLM 최대 2개 추천 (사전 적재 필요) |
 | `GET` | `/events/{miEventId}` | Event 상세와 Scenario Template |
 
@@ -56,7 +56,7 @@
 `POST /events/recommendations`, `Content-Type: application/json`으로 호출한다.
 
 ```json
-{"miEventIds": [5, 12]}
+{"miEventIds": [5, 12], "actorUsrLognId": "10603"}
 ```
 
 - `miEventIds`: 중복 없는 양의 정수 1~5개. 문자열 ID는 허용하지 않는다.
@@ -86,13 +86,16 @@
 `POST /events/verifications`, `Content-Type: application/json`으로 호출한다.
 
 ```json
-{"miEventIds": [5, 12]}
+{"miEventIds": [5, 12], "actorUsrLognId": "10603"}
 ```
 
 - `miEventIds`: 중복 없는 양의 정수 1~5개. 문자열·boolean·소수 ID와 알 수 없는 필드는 422다.
+- `actorUsrLognId`: 필수 문자열(공백 제외 1~100자). 백엔드가 인증한 사용자 ID를 전달한다.
 - 게시(`PUBLISHED`)·미삭제 Event를 일괄 조회한다. 누락·삭제·미게시 Event가 하나라도 있으면 검색 전에 404다.
 - HTTP 200 JSON으로 완료 결과를 반환한다. 요청 ID 순서를 유지하며 callback/SSE는 사용하지 않는다.
 - Event별 검색·비교 실패는 해당 항목의 `warning`으로 반환하여 다른 Event의 검증을 계속한다.
+- 내부 판정·검색 근거·Event 해시를 검증 테이블에 저장한 뒤 각 항목에 `verificationId`, `expiresAt`을 반환한다.
+  실패/근거 없음도 이력으로 저장하나 업데이트 가능한 결과라는 의미는 아니다. 저장 실패 시 성공 응답/ID를 반환하지 않는다.
 - DB 접근 오류는 기존 공통 오류 처리를 따른다. 호출 백엔드가 사용자 인증을 담당하는 기존 공유 Event 범위다.
 
 근거가 없을 때의 응답 예시:
@@ -102,6 +105,8 @@
   "checkedAt": "2026-11-03T01:00:00Z",
   "items": [{
     "miEventId": 5,
+    "verificationId": "12345678-1234-4234-8234-123456789abc",
+    "expiresAt": "2026-11-03T01:30:00Z",
     "title": "Event 제목",
     "sourceUpdatedAt": "2026-11-02T09:00:00",
     "status": "warning",
@@ -116,9 +121,10 @@
 | 필드 | 의미 |
 | --- | --- |
 | `checkedAt` | 검증 기준 시각(조회 직후 UTC). 요청 처리 완료 시각이 아님 |
+| `verificationId`, `expiresAt` | Event별 저장된 검증 UUID와 재사용 만료 시각. 기본 checkedAt부터 30분 |
 | `sourceUpdatedAt` | 조회한 Event의 DB 수정 시각. DB 값의 timezone 유무를 그대로 보존 |
-| `status` | `pass`: 해당 핵심 주장 일치, `warning`: 고려 사항·근거 부족·검증 불가, `fail`: 명확한 불일치·대체된 정보 |
-| `reasonCode` | `verified`, `review_required`, `contradicted`, `outdated`, `no_evidence`, `search_error`, `verification_error` |
+| `status` | `pass`: 최소 한 항목 일치 및 명확한 불일치 없음(주의·일부 확인 불가 포함 가능), `warning`: 일치 확인 항목 없음·검증 불가, `fail`: 명확한 불일치·대체된 정보 |
+| `reasonCode` | `verified`, `no_contradiction`, `review_required`, `contradicted`, `outdated`, `no_evidence`, `search_error`, `verification_error` |
 | `review` | 한국어 한 줄 비교 후기(최대 300자) |
 | `links` | 실제 검색 근거에서 가져온 HTTP(S) URL 배열. 근거가 없으면 `[]` |
 | `checks` | 비교가 완료되면 6개 항목, 검색·비교를 완료하지 못한 경우 `[]` |
@@ -129,14 +135,20 @@
 not_applicable`이다. 해당 주장이 Event에 없을 때만 `not_applicable`을 사용한다.
 
 판정은 비교 항목에서 결정한다. 근거가 연결된 `contradicted`가 있으면 `fail/contradicted`, 그다음
-`outdated`가 있으면 `fail/outdated`다. 적어도 하나가 `matched`이고 나머지가 모두 `matched` 또는
-`not_applicable`일 때만 `pass/verified`다. 미확인·주의 항목이 있으면 `warning/review_required`다.
+`outdated`가 있으면 `fail/outdated`다. 적어도 하나가 `matched`이고 불일치·outdated가 없으면 `pass`다.
+나머지가 모두 `matched` 또는 `not_applicable`이면 `reasonCode=verified`, 주의·미확인이 함께 있으면
+`reasonCode=no_contradiction`이다. 예를 들어 3개 일치 + 주의 2개 + 확인 불가 1개는 `pass/no_contradiction`이다.
+`matched`가 하나도 없으면 `warning/review_required`다. 검색 실패·근거 없음·비교 실패도 warning을 유지한다.
+이 pass는 전체 사실 확인 완료가 아니라 확보한 근거에서 명확한 불일치가 발견되지 않았다는 의미다.
+항목별 `verdict`, `finding`, `cautionReason`, `qualificationQuote`와 review는 그대로 제공하므로 화면에 함께 표시한다.
+같은 응답 등급을 업데이트 API의 `verification`, `postVerification`에도 적용한다.
+업데이트의 수정안 재검증도 이 pass 기준을 저장 허용 조건으로 사용한다. 주의·일부 확인 불가만으로 저장을 차단하지 않는다.
 없는 출처 ID 또는 출처 없는 일치·불일치 판정은 `warning/verification_error`로 처리한다.
 정상 비교 결과의 `links`는 비교에 인용된 URL만 담는다. 비교 실패 시에는 이미 확보한 검색 링크를 제공한다.
 
 검증 입력은 제목(`one_line_summary`), 검색 요약, 핵심 bullet, 태그, 상세 분석, 수치 근거(`numeric_facts_md`),
 기관 전망(`institution_view_synthesis`), 발생·생성·수정 시각과 source record ID다. DB 조회는 기존
-`apps/persistence/event/service.py`의 `load_search_sources`를 사용하며 불필요한 Scenario Template은 조회하지 않는다.
+`apps/persistence/event/service.py`의 `prepare_verifications`를 사용하며 불필요한 Scenario Template은 조회하지 않는다.
 
 웹 검색은 설정된 첫 사용 가능 provider를 사용한다. 원래 사건과 최신 후속 뉴스·공식 발표를 함께 찾고,
 하한 날짜를 강제하지 않는다. 검색의 종료일은 기준일을 전달하는 soft constraint다. 비교 모델에는 검색
@@ -147,7 +159,7 @@ connector의 실제 인용 문맥만 전달하며 URL을 생성하게 하지 않
 `web_search_*`, `llm_*` 설정을 재사용하되 이 호출의 검색은 `tool_choice=required`, 최대 인용 8개다.
 요청 내 최대 3개 Event를 동시에 처리한다. `event_verification_timeout_sec`(기본 180초)는 각 항목의
 대기·검색·비교 전체 제한이다. HTTP 클라이언트/gateway timeout은 DB 조회 시간과 이 제한을 고려해 설정한다.
-이 API는 검증 결과를 DB에 저장하거나 Event를 수정하지 않으며 Scenario 생성의 강제 차단 조건이 아니다.
+이 API는 검증 결과와 검색 근거를 DB에 저장하되 Event 본문을 수정하지 않으며 Scenario 생성의 강제 차단 조건이 아니다.
 `checkedAt`과 `sourceUpdatedAt`을 함께 표시하고 Event 수정 후에는 다시 검증한다.
 
 ### 검증 기반 Event 업데이트
@@ -160,26 +172,35 @@ Content-Type: application/json
 ```json
 {
   "actorUsrLognId": "10603",
+  "verificationId": "12345678-1234-4234-8234-123456789abc",
   "expectedUpdatedAt": "2026-11-06T09:00:00.123456"
 }
 ```
 
 - 한 요청에서 양의 정수 Event ID 1개를 처리한다. `actorUsrLognId`는 필수 문자열(공백 제외 1~100자)이다.
+- `verificationId`는 필수 UUID다. 먼저 검증 API가 반환한 해당 Event의 ID를 전달한다. 생략/잘못된 형식은 422다.
+  존재하지 않거나 삭제됐거나 다른 Event의 ID이면 404, 만료되면 409/EVENT_VERIFICATION_EXPIRED다.
+  이미 적용됐으면 409/EVENT_VERIFICATION_ALREADY_APPLIED이며 오류 data에 기존 `mi_event_snapshot_id`를 제공한다.
 - `expectedUpdatedAt`은 선택 필드다. 이전 검증 응답의 `sourceUpdatedAt`을 timezone 포함 형태 그대로 전달한다.
-  일치하지 않으면 검색 전에 409를 반환한다. 생략해도 서버 내부 조회 시점과 저장 직전의 전체 row hash를 비교한다.
+  일치하지 않으면 수정안 생성 전에 409를 반환한다. 생략해도 검증 당시와 현재의 전체 row hash를 비교한다.
 - 호출 백엔드가 사용자 인증·수정 권한을 검사하고 신뢰할 수 있는 actor를 전달한다. actor 문자열 자체는 인증 수단이 아니다.
-- 클라이언트의 검증 결과나 임의 수정 값은 받지 않는다. 서버가 현재 게시 Event를 새로 조회하고 웹 검증을 실행한다.
-- 최초 검증 `pass`는 `unchanged`, `warning`은 `skipped`다. `fail`인 경우 근거가 연결된 수정안을 생성하고
-  같은 검색 근거로 수정안을 다시 비교한다. 재검증 `pass` 또는 아래의 제한된 `warning`만 저장한다.
-- 조건부 저장: 재검증의 유일한 주의 항목이 `freshness/caution`이고 `cautionReason=as_of_limitation`이어야 한다.
-  나머지 다섯 항목은 `matched` 또는 `not_applicable`이어야 하며, 기존 최신성 외 불일치 항목은 `matched`로
-  해결돼야 한다. 최신성 근거 URL이 있고, `qualificationQuote`가 수정안의 `detail_analysis`에 실제 존재해야 한다.
-  검증 모델은 이 발췌가 구체적인 기준 날짜와 이후 미확인 범위를 명시하는지 확인한다.
-  출처 상충·근거 부족·미분류 주의, `unverified`, `contradicted`, `outdated`는 저장을 허용하지 않는다.
+- 클라이언트의 검증 결과나 임의 수정 값은 받지 않는다. 서버에 보관된 내부 판정·인용 문맥을 재사용한다.
+  새 웹 검색이나 원본 Event 재검증은 하지 않는다. 만료/변경 시 자동 재검색하지 않고 새 검증 ID를 요구한다.
+- 저장 판단용 내부 등급에서 최초 검증 `pass`는 `unchanged`, `warning`은 `skipped`다. `fail`인 경우 근거가 연결된 수정안을 생성하고
+  같은 검색 근거로 수정안을 다시 비교한다. 수정안을 생성하는 조건과 아래의 수정안 저장 조건을 구분한다.
+- 수정안 저장 조건은 검증 API와 동일한 공개 `pass` 기준이다. 6개 항목 비교가 완료되고 최소 한 항목이 `matched`이며
+  `contradicted`와 `outdated`가 없으면 저장을 허용한다. `caution`과 일부 `unverified`는 저장 차단 사유가 아니다.
+  예: 일치 4개 + 주의 2개, 일치 3개 + 주의 2개 + 확인 불가 1개 모두 저장 가능하다.
+  기존 불일치 항목이 수정 후 주의·미확인으로 바뀌어도 같은 기준을 적용한다. 최신성만 예외적으로 허용하던 조건과
+  `qualificationQuote`의 본문 포함 여부를 검사하던 별도 저장 조건은 제거했다.
+  일치가 하나도 없거나 검색·비교 실패/근거 없음이면 warning으로 저장하지 않고, 불일치·outdated가 남으면 fail로 저장하지 않는다.
 - `checks`에는 선택적 `cautionReason`과 `qualificationQuote`가 추가된다. 주의 사유는
   `as_of_limitation`(확인 시점 한계), `source_conflict`(출처 상충), `insufficient_evidence`(근거 부족), `other`다.
-  사유가 없으면 null이며 자동 저장 예외를 적용하지 않는다. 발췌는 시점 한계인 경우만 설정한다.
-- 조건부 저장 후 `updateStatus=updated`여도 `postVerification.status=warning`은 유지하고 메시지로 주의를 알린다.
+  사유가 없으면 null이다. 발췌는 시점 한계인 경우만 설정하며 주의 사항 설명용으로 제공한다.
+- 응답의 `verification`과 `postVerification`은 검증 API와 동일하게 집계한다.
+  `postVerification.status=pass`, `reasonCode=no_contradiction`이면 주의·일부 확인 불가가 남아도 저장을 허용한다.
+  항목별 상세 판정과 안내 메시지는 보존한다. 원본 `verification.status=pass`만으로 수정·저장을 보장하지 않는다.
+  실제 저장 여부는 반드시 `updateStatus`와 `miEventSnapshotId`로 확인한다.
   검색 근거 부족이나 저장 조건 미충족 시 Snapshot도 생성하지 않는다.
 - 현재 스키마 기준 수정 컬럼은 `one_line_summary`(표시 제목), `search_text`(검색 요약), `key_bullets_json`,
   `detail_analysis`, `numeric_facts_md`, `institution_view_synthesis` 중 실제 값이 달라진 컬럼으로 제한한다.
@@ -192,6 +213,7 @@ Content-Type: application/json
 | 응답 필드 | 의미 |
 | --- | --- |
 | `miEventId`, `checkedAt` | 대상 Event와 UTC 검증 기준 시각 |
+| `verificationId` | 이번 업데이트가 사용한 검증 UUID. checkedAt은 해당 원본 검증 기준 시각 |
 | `updateStatus` | `updated` / `unchanged` / `skipped`. HTTP 200만으로 저장 성공을 판단하지 않는다 |
 | `message` | 처리 결과 안내 |
 | `verification` | 변경 전 Event의 기존 검증 응답 항목과 같은 형식 |
@@ -202,22 +224,60 @@ Content-Type: application/json
 | `changedFields` | 실제 변경한 본문 DB 컬럼명 배열. 미저장이면 [] |
 | `changes` | 실제 반영된 필드별 `{field, before, after, reason, sourceUrls}`. 미저장이면 [] |
 
-처리 순서는 `Event 조회 → 웹 검증 → 수정안 생성 → 수정안 재검증 → Event row lock → 동시 변경 검사 →
-변경 전 Snapshot INSERT → Event UPDATE → COMMIT`이다. Snapshot과 Event는 같은 transaction에서 처리한다.
+처리 순서는 `검증 ID·Event 조회 → 만료/중복/해시 검사 → 저장 근거로 수정안 생성 → 같은 근거로 수정안 재검증 →
+검증 row lock → Event row lock → 만료/중복/해시 재검사 → 변경 전 Snapshot INSERT → Event UPDATE →
+검증 행의 적용 Snapshot ID 기록 → COMMIT`이다. 세 저장은 같은 transaction에서 처리한다.
 수정안 생성 중에는 DB session/row lock을 유지하지 않는다. 기존 Snapshot이나 기존 Scenario 관계는 덮어쓰지 않는다.
 
-Snapshot의 `update_trigger_cd`는 `LLM_VALIDATION_UPDATE`이며 `update_reason`에는 검증 기준 시각, 수정 이유,
+Snapshot의 `update_trigger_cd`는 `LLM_VALIDATION_UPDATE`이며 `update_reason`에는 verification_id, 검증 기준 시각, 수정 이유,
 실제 반영 전후 값의 해시, URL, 근거 발췌를 JSON 문자열로 저장한다. TEXT 용량을 넘기지 않도록 수정 이유·발췌는
 길이를 제한하며 전체 변경 전 값은 Snapshot, 전체 diff는 응답에 제공한다. 최초 Snapshot의 `changed_fields_json`은 요청한
 계약대로 `[]`이고, 다음 Snapshot부터 실제 변경 컬럼명을 저장한다. 최초 변경 내역도 응답과 `update_reason`에 남는다.
 `update_reason`에는 `post_verification_status`와 `remaining_cautions`(항목·사유·비교 제약·본문 한계 발췌)도
 기록한다. `RESULT` 로그의 `post_caution_reasons`로 남은 주의 사유를 확인할 수 있다.
+이력의 `post_verification_status`는 비교 원본 등급이고, `save_post_verification_status`는 공개 기준을 적용한 등급이다.
+`RESULT` 로그의 `save_verification_status`는 수정안 생성에 사용한 원본 Event의 내부 등급,
+`raw_post_verification_status`는 수정안의 내부 등급이다. `save_post_verification_status`와
+`post_verification_status`는 동일한 공개 등급이다. 따라서 내부 warning이어도 공개 pass이면 저장 가능하다.
+이 로그 필드들은 API 응답 필드가 아니다. 수정안 재검증 후 저장하며 저장 후 별도 검색을 하지 않는다.
+
+#### 백엔드 연동: 수정안 pass 저장 기준 적용
+
+이번 변경은 Agent의 저장 판정 변경이다. 기존 `verificationId` 연동이 완료됐다면 요청/응답 DTO와 DB 스키마 변경은 없다.
+Agent의 변경 소스를 배포·재시작해야 새 조건이 적용된다. 백엔드는 다음 처리 여부를 점검한다.
+
+1. 검증 응답의 Event별 `verificationId`를 해당 Event의 업데이트 요청에 그대로 전달한다.
+   검증 결과·검색 근거는 Agent가 DB에 저장하므로 백엔드에 별도 보관 테이블을 추가할 필요는 없다.
+2. Agent가 저장을 수행하므로 백엔드가 Event UPDATE나 Snapshot INSERT를 다시 실행하지 않는다.
+3. HTTP 200이나 `verification.status` 대신 `updateStatus`로 저장 결과를 처리한다.
+   `updated`는 저장 완료, `unchanged`는 변경 없음, `skipped`는 미저장이다.
+   저장 성공 시 반환된 `miEventSnapshotId`, `updatedAt`, `changedFields`를 사용하고 Event 상세를 다시 조회한다.
+4. `updated` 결과를 `checks`의 caution/unverified, `reasonCode=no_contradiction` 때문에 실패로 재분류하지 않는다.
+   기존에 모든 항목 matched 또는 freshness만 caution이어야 한다는 자체 조건이 있으면 제거한다.
+5. 화면에는 저장 성공과 별도로 `postVerification.checks`의 주의·미확인 설명을 제공한다.
+   `skipped`의 postVerification은 저장되지 않은 수정안 결과이므로 현재 Event의 검증 상태로 덮어쓰지 않는다.
+6. 만료/변경 409는 새 검증을 안내한다. 이미 적용된 ID의 409는 응답의 기존 Snapshot ID와 Event를 확인한다.
+   미저장 결과에 대해 서버가 자동 재검색하지 않으며, 실패를 성공으로 바꾸기 위해 백엔드가 직접 DB를 갱신하지 않는다.
+
+백엔드 회귀 확인 사례:
+
+| 수정안 재검증 | 기대 처리 |
+| --- | --- |
+| 일치 4개 + freshness/attribution 주의 2개 | `postVerification.status=pass`, `updateStatus=updated`, Snapshot ID 있음 |
+| 일치 3개 + 주의 2개 + 확인 불가 1개 | 동일하게 저장 성공, 상세 주의·미확인 표시 |
+| contradicted 또는 outdated 남음 | `postVerification.status=fail`, `updateStatus=skipped`, Snapshot 없음 |
+| 일치 없음 또는 비교 실패 | `postVerification.status=warning`, `updateStatus=skipped`, Snapshot 없음 |
+
+위 저장 성공 사례는 수정안에 실제 변경이 있고 근거 인용·만료·Event 해시·DB transaction 검사를 통과한 경우다.
 
 HTTP 오류: 입력 오류 422, 누락·삭제·미게시 404, 동시 변경 `409/EVENT_UPDATE_STALE`, 저장 스키마 불일치
 `500/EVENT_UPDATE_SCHEMA_ERROR`, 잘못된 LLM 수정안 500, 외부 분석 전체 시간 초과 504다.
 DB 저장 실패는 전체 transaction을 롤백한다. `event_verification_update_timeout_sec` 기본값은 360초이며
 조회·DB commit 시간은 별도다. HTTP client/gateway 제한을 함께 설정한다. 응답 유실 시 자동 재시도하지 말고
-Event 상태와 Snapshot을 확인한다. 반복 요청에 대한 별도 request ID 기반 멱등 저장은 제공하지 않는다.
+Event 상태와 Snapshot을 확인한다. 같은 verificationId의 성공한 적용은 중복 실행하지 않으며,
+재요청 시 기존 Snapshot ID가 포함된 409/EVENT_VERIFICATION_ALREADY_APPLIED로 안내한다.
+적용 성공 외의 skipped/unchanged는 미적용 상태로 남아 만료 전 재시도할 수 있다.
+검증 유효기간은 `event_verification_reuse_ttl_sec` 기본 1800초이며 업데이트 시작과 저장 직전에 검사한다.
 
 운영 로그는 `[EVENT_VERIFICATION_UPDATE]`로 검색한다. `DB_TARGET`은 해당 세션 엔진의 연결 DB명을,
 `RESULT`는 최종 update_status·안내 메시지·변경 전/수정안 검증 status·reason·항목별 판정·Snapshot ID·변경 컬럼을

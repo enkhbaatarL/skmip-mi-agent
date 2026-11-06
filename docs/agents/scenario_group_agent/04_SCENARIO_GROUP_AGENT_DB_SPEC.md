@@ -67,10 +67,38 @@ Event Type 관계가 필요하다.
 Event와 활성 Record 연결을 읽는다. 신규 컬럼이나 테이블을 만들지 않는다. 사용자별 권한을 평가하는
 운영 검색 API는 아니며, 문서 변환 계약은 [Event 검색 문서 구성](09_EVENT_SEARCH_DOCUMENTS.md)을 따른다.
 
+### Event 검증 결과와 검색 근거 보관
+
+관리 저장소 revision `0053_mievent_verification`은 `tmm_mi_mievent_verification_m`을 생성한다.
+검증 API는 이 테이블에 내부 판정·원본 검색 인용·Event 전체 row 해시를 저장한 뒤 verificationId를 반환한다.
+업데이트 API는 verificationId로 근거를 조회하며 재검색하지 않는다. 테이블은 관리 저장소에서 사전 적용해야 한다.
+
+| 컬럼 | 타입 / 용도 |
+| --- | --- |
+| `mi_event_verification_id` | CHAR(36) PK, 서버 생성 UUID |
+| `mi_event_id` | INT UNSIGNED NOT NULL, Event FK |
+| `event_fingerprint` | CHAR(64) NOT NULL, 검증 당시 Event 상태 SHA-256 |
+| `verification_result_json` | JSON NOT NULL, 내부 등급·항목별 판정·후기 |
+| `search_evidence_json` | JSON NOT NULL, 근거별 id/url/title/content 배열, 근거 없으면 [] |
+| `checked_at`, `expires_at` | DATETIME(6) NOT NULL, UTC 검증 기준 시각과 만료 시각 |
+| `applied_mi_event_snapshot_id` | INT UNSIGNED NULL, 적용 시 생성한 변경 전 Snapshot FK |
+| `crt_usr_logn_id`, `mod_usr_logn_id` | VARCHAR(100) NOT NULL, 검증 요청 actor로 생성, 적용 시 mod actor만 갱신 |
+| `crt_dtm`, `mod_dtm` | DATETIME(6) NOT NULL, CURRENT_TIMESTAMP(6); mod_dtm은 ON UPDATE 자동 갱신 |
+| `del_yn`, `del_dtm` | CHAR(1) NOT NULL DEFAULT N / DATETIME(6) NULL, 논리 삭제 여부와 시각 |
+
+총 14개 컬럼이다. `(mi_event_id, checked_at)` 조회 인덱스와 적용 Snapshot FK용 인덱스를 둔다.
+`expires_at = checked_at + event_verification_reuse_ttl_sec`이며 기본 1800초(30분)다. 시각은 UTC로 저장한다.
+검증 배치의 모든 결과는 한 transaction으로 저장하며 실패 시 ID를 반환하지 않는다.
+업데이트 시작 시 Event ID·del_yn·적용 여부·만료·Event hash를 확인한다. 저장 transaction에서는 검증 행을
+FOR UPDATE로 먼저 잠근 다음 Event를 잠그고 만료·hash를 재확인한다. 동일 verificationId 재적용은
+409/EVENT_VERIFICATION_ALREADY_APPLIED와 기존 Snapshot ID를 반환한다. 만료는 409/EVENT_VERIFICATION_EXPIRED다.
+적용 Snapshot ID와 수정 actor는 Snapshot INSERT·Event UPDATE와 함께 커밋되며, 어느 저장이든 실패하면 모두 롤백한다.
+미변경/생략에는 적용 표시를 하지 않는다. 만료 행은 자동 삭제하지 않으며, 런타임 DDL도 실행하지 않는다.
+
 ### 검증 기반 Event UPDATE와 변경 전 Snapshot
 
-`POST /events/{miEventId}/verification-updates`는 현재 Event를 검증하고 수정안 재검증이 pass이거나,
-API 명세의 확인 시점 한계만 남은 warning 조건을 충족하면
+`POST /events/{miEventId}/verification-updates`는 저장된 검증 근거로 수정안을 생성하고 재검증이 공개 기준 pass이면
+(6개 항목 비교 완료, 최소 한 항목 일치, contradicted/outdated 없음; 주의·일부 미확인은 허용)
 `tmm_mi_mievent_snapshot_m`에 **UPDATE 직전 값**을 INSERT한 후 `tmm_mi_mievent_m`을 UPDATE한다.
 저장 유스케이스는 `apps/persistence/event/service.py`, SQL은 `update_repository.py`가 소유한다.
 이 API에 한해 Agent가 Snapshot을 직접 생성한다. 기존 ingestion Snapshot 생성 경로는 계속 사용한다.

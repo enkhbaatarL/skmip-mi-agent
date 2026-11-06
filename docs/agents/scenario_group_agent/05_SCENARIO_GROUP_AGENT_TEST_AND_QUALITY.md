@@ -32,14 +32,23 @@ SQLite는 MySQL row lock의 병렬 동작을 재현하지 않는다. 실제 배�
 격리 MySQL에서 같은 Event에 대한 동시 요청 및 ingestion과의 버전 충돌을 확인한다.
 
 Event 사전 웹 검증 API의 독립 회귀 테스트는 다음 명령으로 실행한다(DB·외부 검색·LLM은 mock).
-업데이트 회귀 테스트는 최신성의 확인 시점 한계만 남은 warning의 조건부 저장과 주의 이력 보존도 확인한다.
-출처 상충·근거 부족·기타 주의·미확인·불일치·본문 한계 발췌 누락/불일치 시에는 저장하지 않아야 한다.
+업데이트 회귀 테스트는 공개 pass 기준으로 저장하는지, 주의 항목과 원본 비교 등급이 이력에 보존되는지 확인한다.
+일치가 있고 불일치가 없으면 주의 사유·일부 미확인·한계 발췌 유무로 저장을 차단하지 않는다.
+불일치·outdated·일치 없음·비교 실패·비교 항목 누락 시에는 저장하지 않아야 한다.
 
 ```bash
 python -m pytest tests/automated/test_event_verification_api.py tests/automated/test_web_search_citations.py -q
 ```
 
 입력·응답 계약, 입력 순서, 판정 집계, 근거 없음, 허위 출처, 부분 실패·timeout·취소를 검증한다.
+사전 검증의 3개 일치 + 주의 2개 + 확인 불가 1개는 pass/no_contradiction이며 상세 판정은 보존한다.
+일치 확인 항목이 없거나 검색·비교 실패면 warning, 명확한 불일치·outdated가 있으면 fail이다.
+수정안 저장 판단과 postVerification 응답은 사전 검증 API와 같은 공개 등급을 사용한다.
+기존 attribution 불일치가 주의로 개선되고 일치 4개·주의 2개가 된 실제 사례도 저장되는지 확인한다.
+최초 검증 warning에서 수정안을 생성하지 않는 기존 조건, 주의 이력과 원본 내부 등급 보존도 확인한다.
+검증 결과 저장 → verificationId 재사용 통합 경로는 실제 SQLite transaction과 mock 검색/LLM으로 검증한다.
+동일 근거 재사용(재검색 없음), 30분 만료, Event 해시 변경, 다른 Event/삭제된 ID, 중복 적용 409,
+분석 중 만료, 적용 표시 실패 시 Snapshot/Event 동시 롤백을 포함한다. MySQL 동시 row lock은 별도 환경 검증 대상이다.
 실제 검색 품질은 `POST /events/verifications`에 현재 게시 Event ID를 넣고 `checks`와 인용 원문을 대조한다.
 장소·기간·단위가 다른 자료, 정정·복구된 현재 상태, 역사적 사실, 상충 기관 전망, 검색 근거 없는 Event를
 포함해야 한다. 자동 테스트는 실제 뉴스 검색이나 LLM의 의미 판정 정확도를 보장하지 않는다.

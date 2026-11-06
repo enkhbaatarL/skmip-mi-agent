@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 import json
 from typing import Any
+from uuid import UUID, uuid4
 
 from pydantic import BaseModel, HttpUrl, TypeAdapter, ValidationError
 
@@ -25,7 +26,7 @@ from apps.common.values.error_codes import ErrorCode
 from apps.connectors.llm.llm_client import invoke_llm_structured_output
 from apps.connectors.web.base import WebSearchProvider
 from apps.connectors.web.factory import WebSearchProviderFactory
-from apps.persistence.event.schema import EventSearchSource
+from apps.persistence.event.schema import EventSearchSource, EventVerificationRecord
 from apps.persistence.event.service import EventService
 
 
@@ -144,30 +145,73 @@ def _verified_item(
     )
 
 
-class EventVerificationService:
-    """Read-only, best-effort verification of the current published Event snapshot."""
+def public_verification_result(verification: EventVerificationItem) -> EventVerificationItem:
+    """Share the API and candidate-save grade without mutating the original comparison evidence."""
+    if (
+        verification.status == "warning"
+        and verification.reason_code == "review_required"
+        and any(check.verdict == "matched" for check in verification.checks)
+        and all(check.verdict not in {"contradicted", "outdated"} for check in verification.checks)
+    ):
+        return verification.model_copy(update={"status": "pass", "reason_code": "no_contradiction"})
+    return verification
 
-    async def verify(self, event_ids: list[int]) -> EventVerificationsOut:
-        rows = await asyncio.to_thread(EventService().load_search_sources, event_ids=event_ids)
-        by_id = {row.mi_event_id: row for row in rows}
+
+class EventVerificationService:
+    """Verify the published Event and persist the exact evidence for subsequent updates."""
+
+    async def verify(self, event_ids: list[int], actor: str) -> EventVerificationsOut:
+        persistence = EventService()
+        contexts = await asyncio.to_thread(persistence.prepare_verifications, event_ids)
+        by_id = {context.source.mi_event_id: context for context in contexts}
         if set(by_id) != set(event_ids):
             raise MIBaseError(ErrorCode.ENTITY_NOT_FOUND, detail="선택한 Event가 없거나 게시 상태가 아닙니다.")
         checked_at = datetime.now(UTC)
-        events = [by_id[event_id] for event_id in event_ids]
+        events = [by_id[event_id].source for event_id in event_ids]
+        expires_at = checked_at + timedelta(seconds=get_settings().event_verification_reuse_ttl_sec)
         try:
             provider = WebSearchProviderFactory.create_from_settings()
         except Exception:
             logger.exception("[EVENT_VERIFICATION] SEARCH_PROVIDER_INIT_FAILED")
-            return EventVerificationsOut(
-                checked_at=checked_at,
-                items=[
-                    _warning(event, "search_error", "웹 검색 서비스를 사용할 수 없어 검증하지 못했습니다.")
-                    for event in events
-                ],
+            evidence_items = [
+                VerificationEvidence(
+                    verification=_warning(
+                        event,
+                        "search_error",
+                        "웹 검색 서비스를 사용할 수 없어 검증하지 못했습니다.",
+                    ),
+                    sources=[],
+                )
+                for event in events
+            ]
+        else:
+            semaphore = asyncio.Semaphore(MAX_CONCURRENT_EVENTS)
+            evidence_items = await asyncio.gather(
+                *(self._verify_evidence(event, provider, checked_at, semaphore) for event in events),
             )
-        semaphore = asyncio.Semaphore(MAX_CONCURRENT_EVENTS)
-        items = await asyncio.gather(*(self._verify_one(event, provider, checked_at, semaphore) for event in events))
-        return EventVerificationsOut(checked_at=checked_at, items=list(items))
+        records = [
+            EventVerificationRecord(
+                mi_event_verification_id=str(uuid4()),
+                mi_event_id=event.mi_event_id,
+                event_fingerprint=by_id[event.mi_event_id].fingerprint,
+                verification_result_json=evidence.verification.model_dump(mode="json"),
+                search_evidence_json=[source.model_dump(mode="json") for source in evidence.sources],
+                checked_at=checked_at,
+                expires_at=expires_at,
+            )
+            for event, evidence in zip(events, evidence_items, strict=True)
+        ]
+        await asyncio.to_thread(persistence.store_verifications, records, actor)
+        items = []
+        for record, evidence in zip(records, evidence_items, strict=True):
+            item = public_verification_result(evidence.verification).model_copy(
+                update={
+                    "verification_id": UUID(record.mi_event_verification_id),
+                    "expires_at": expires_at,
+                },
+            )
+            items.append(item)
+        return EventVerificationsOut(checked_at=checked_at, items=items)
 
     async def _verify_one(
         self,
@@ -177,7 +221,7 @@ class EventVerificationService:
         semaphore: asyncio.Semaphore,
     ) -> EventVerificationItem:
         evidence = await self._verify_evidence(event, provider, checked_at, semaphore)
-        return evidence.verification
+        return public_verification_result(evidence.verification)
 
     async def verify_with_evidence(self, event: EventSearchSource, checked_at: datetime) -> VerificationEvidence:
         """Keep server-owned citations for a subsequent update; never accept client-supplied verdicts."""

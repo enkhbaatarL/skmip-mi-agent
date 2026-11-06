@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import Annotated, Literal
+from uuid import UUID
 
 from pydantic import ConfigDict, Field, field_validator
 
@@ -13,6 +14,7 @@ VerificationVerdict = Literal["matched", "caution", "contradicted", "outdated", 
 VerificationCautionReason = Literal["as_of_limitation", "source_conflict", "insufficient_evidence", "other"]
 VerificationReason = Literal[
     "verified",
+    "no_contradiction",
     "review_required",
     "contradicted",
     "outdated",
@@ -25,6 +27,15 @@ VerificationReason = Literal[
 class EventVerificationsIn(ApiModel):
     model_config = ConfigDict(extra="forbid")
     mi_event_ids: list[Annotated[int, Field(strict=True, gt=0)]] = Field(min_length=1, max_length=5)
+    actor_usr_logn_id: str = Field(strict=True, min_length=1, max_length=100)
+
+    @field_validator("actor_usr_logn_id")
+    @classmethod
+    def nonempty_actor(cls, value: str) -> str:
+        if not value.strip():
+            message = "actorUsrLognId는 공백일 수 없습니다."
+            raise ValueError(message)
+        return value.strip()
 
     @field_validator("mi_event_ids")
     @classmethod
@@ -54,6 +65,8 @@ class EventVerificationItem(ApiModel):
     review: str
     links: list[str]
     checks: list[EventVerificationCheck]
+    verification_id: UUID | None = None
+    expires_at: datetime | None = None
 
 
 class EventVerificationsOut(ApiModel):
