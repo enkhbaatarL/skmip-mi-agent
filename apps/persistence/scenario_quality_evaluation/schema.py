@@ -23,7 +23,7 @@ class QualityFactCheck(ApiModel):
     target_period: str | None = Field(description="입력에서 확인되는 주장의 대상 기간. 불명확하면 null")
 
 
-class QualityIssue(ApiModel):
+class InputOnlyQualityIssue(ApiModel):
     model_config = ConfigDict(extra="forbid")
 
     scenario_ids: list[int] = Field(min_length=1)
@@ -31,20 +31,25 @@ class QualityIssue(ApiModel):
     evidence: str = Field(min_length=1)
     reason: str = Field(min_length=1)
     suggested_fix: str = Field(min_length=1)
-    fact_dependency: Literal["NONE", "EVENT_PAYLOAD_ONLY", "EXTERNAL_FACT_REQUIRED"]
+
+
+class QualityIssue(InputOnlyQualityIssue):
+    """Compatibility reader for historical evaluation JSON; not the LLM output schema."""
+
+    fact_dependency: Literal["NONE", "EVENT_PAYLOAD_ONLY", "EXTERNAL_FACT_REQUIRED"] = "NONE"
     fact_check: QualityFactCheck | None = Field(
         default=None,
-        description="EXTERNAL_FACT_REQUIRED인 신규 평가에서 생성하는 검증 계획. 그 외에는 null",
+        description="과거 평가 이력에 저장된 외부 사실 확인 계획. 신규 평가에서는 생성하지 않는다.",
     )
 
 
-class QualityItem(ApiModel):
+class InputOnlyQualityItem(ApiModel):
     model_config = ConfigDict(extra="forbid")
 
     judge_id: Literal["J-01", "J-02", "J-03", "J-04", "J-05", "J-06", "J-11"]
     score: int = Field(ge=1, le=5)
     verdict: Literal["PASS", "WARN", "FAIL"]
-    violations: list[QualityIssue]
+    violations: list[InputOnlyQualityIssue]
 
     @model_validator(mode="after")
     def require_evidence(self) -> Self:
@@ -54,11 +59,15 @@ class QualityItem(ApiModel):
         return self
 
 
-class ScenarioQualityJudgment(ApiModel):
+class QualityItem(InputOnlyQualityItem):
+    violations: list[QualityIssue]
+
+
+class InputOnlyScenarioQualityJudgment(ApiModel):
     model_config = ConfigDict(extra="forbid")
 
     summary: str = Field(min_length=1)
-    items: list[QualityItem] = Field(min_length=7, max_length=7)
+    items: list[InputOnlyQualityItem] = Field(min_length=7, max_length=7)
 
     @model_validator(mode="after")
     def require_seven_rubrics(self) -> Self:
@@ -68,12 +77,18 @@ class ScenarioQualityJudgment(ApiModel):
         return self
 
 
+class ScenarioQualityJudgment(InputOnlyScenarioQualityJudgment):
+    """Reads both current results and historical fact-check metadata without rewriting history."""
+
+    items: list[QualityItem] = Field(min_length=7, max_length=7)
+
+
 class ScenarioQualityEvaluationPayload(ScenarioGroupOperationPayload):
     request_id: str
     input_snapshot: dict[str, JsonValue]
     input_hash: str
     prompt_version: str
-    result: ScenarioQualityJudgment | None = None
+    result: InputOnlyScenarioQualityJudgment | ScenarioQualityJudgment | None = None
     verdict: QualityVerdict | None = None
     average_score: float | None = None
     llm_metadata: dict[str, JsonValue] | None = None

@@ -92,3 +92,23 @@ def test_forecast_values_stated_as_fact_requires_missing_attribution() -> None:
     assert forecast_values_stated_as_fact(split_rationale_fields(attributed)["사실"], anchors) == []
     assert forecast_values_stated_as_fact(split_rationale_fields(moved)["사실"], anchors) == []
     assert "93.8" in split_rationale_fields(moved)["전망"]
+
+
+@pytest.mark.parametrize("date", ["2026-11-10", "2026/11/10", "2026.11.10", "2026년 11월 10일"])
+def test_forecast_quantity_does_not_match_calendar_date(date: str) -> None:
+    assert forecast_values_stated_as_fact(f"{date} 현재 LNG 화물 지연은 직접 확인되지 않음", ["11", "10"]) == []
+    # A real quantitative occurrence in the same sentence must still be detected.
+    assert forecast_values_stated_as_fact(f"{date} 독일 태양광 발전량은 11GW다", ["11"]) == ["11"]
+
+
+def test_observed_date_does_not_remove_unobserved_forecast_quantity() -> None:
+    assert extract_forecast_anchors(
+        "독일 태양광이 11GW로 감소할 것으로 예상됐다.",
+        analysis_year=2026,
+        observed_texts=["2026-11-10 현재 현물가격을 확인했다."],
+    ) == ["11"]
+
+
+@pytest.mark.parametrize("text", ["태양광 발전량 10~11GW", "태양광 발전량 10-11GW", "발전량 11GW와 6.3GW"])
+def test_forecast_quantity_ranges_remain_detectable(text: str) -> None:
+    assert forecast_values_stated_as_fact(text, ["11"]) == ["11"]

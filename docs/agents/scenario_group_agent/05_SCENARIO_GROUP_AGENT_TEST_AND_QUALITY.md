@@ -18,6 +18,59 @@ Agent 테스트를 요청하려는 Skill 사용자를 위한 문서다.
 
 ## 어떤 Skill을 사용하나요?
 
+### 시나리오 생성의 순차·병렬 실행 비교
+
+`tests/manual/benchmark_scenario_concurrency.py`는 고정한 `V4MultiEventGenerationState` JSON으로 실제 v4
+graph를 실행한다. 순차 조건은 Event별 영향 분석 전체에 동시성 1을 적용하고, 병렬 조건은 현재
+`asyncio.gather()` 실행을 유지한다. 프롬프트·모델·추론 설정·후속 graph 순서는 변경하지 않는다.
+DB 접수·저장, SSE, Additional Dimension은 측정에서 제외한다. 입력 Event·Catalog·기준일은 동일 snapshot이다.
+
+```powershell
+.venv/Scripts/python.exe -X utf8 tests/manual/benchmark_scenario_concurrency.py `
+  --input <고정된-state.json> --output <새-결과-폴더> --rounds 2
+```
+
+기본 모드는 실제 LLM 호출이다. 각 round에서 순차→병렬, 병렬→순차로 순서를 교대한다.
+노드별 시간, Event별 시간·시도 횟수, 호출별 prompt hash·응답·시간과 최종 결과를 저장한다.
+완료한 호출의 실행 순서만 달라지는지 검증하려면 성공한 live trial을 재생한다.
+
+```powershell
+.venv/Scripts/python.exe -X utf8 tests/manual/benchmark_scenario_concurrency.py `
+  --input <같은-state.json> --output <새-replay-폴더> --rounds 3 `
+  --recording <live-결과-폴더>/round_1_sequential.json --replay-scale 0.01
+```
+
+재생은 실제 생성·검증 graph에 저장된 LLM 응답을 반환하고 관측 호출 시간의 1%만 기다리는 통제 실험이다.
+prompt hash가 다르면 실패한다. 최종 결과 hash 일치와 단축률을 확인하되 재생 시간을 실제 서비스 성능으로
+보고하지 않는다. 실제 LLM 비교는 응답·재시도·서비스 부하가 달라질 수 있으므로 호출 횟수와 단계 시간을
+함께 해석한다. 소수 실행의 차이를 일반적인 성능 보장이나 품질 동등성으로 해석하지 않는다.
+재생은 같은 생성·검증 코드와 설정에서 비교한다. 검증 수정으로 재시도가 없어지면 후속 프롬프트도 달라지므로
+수정 전 기록으로 전체 graph를 재생할 수 없을 수 있다. 이 경우 문제를 일으킨 동일 draft의 검증 결과를
+직접 비교하고, 수정 후 전체 생성 시간은 별도의 live 실행으로 확인한다.
+
+날짜 속 숫자를 다른 Event의 전망 수치로 오인해 Dimension 전체를 재생성하던 회귀는 다음으로 확인한다.
+날짜의 월·일은 제외하지만 같은 문장에 별도로 적힌 전망 수치와 수치 범위는 계속 검사한다.
+
+```bash
+python -m pytest tests/automated/test_claim_kind.py tests/automated/test_v4_multi_event_model_lever_scenarios.py -q
+```
+
+추천 임베딩 재사용과 검증 검색·비교 병렬 처리 회귀 테스트:
+
+```bash
+python -m pytest tests/automated/test_event_recommendation_api.py tests/automated/test_event_verification_api.py -q
+```
+
+동일 본문 임베딩 재사용, 본문 변경 시 재계산, 캐시 상한·퇴출, 입력 길이 검사를 확인한다.
+검증은 앞 Event 비교가 끝나기 전 다음 Event 검색 진행, 비교 동시성 제한, 응답 순서,
+비교 대기 중 timeout 시 근거 보존을 확인한다. 검색·LLM은 mock이며 실제 서비스 속도 향상률을 의미하지 않는다.
+실측 시 같은 Event의 최초·반복 추천과 1개·5개 Event 검증을 구분하고 TIMING 로그와 최종 판정을 함께 비교한다.
+
+웹 검색의 HTTP/TLS 클라이언트 초기화는 동기 인증서 로딩이 이벤트 루프를 막지 않도록
+`asyncio.to_thread`로 실행한다. `test_web_search_concurrency.py`는 초기화 중 다른 coroutine의 진행과
+요청 성공·실패 시 클라이언트 종료 및 semaphore 반환을 확인한다. 초기화 시간의 단축률은 웹 검색·LLM을
+포함한 전체 검증 시간의 단축률과 구분한다. 전체 검증이 timeout된 실행은 정상 완료 성능 비교에 포함하지 않는다.
+
 검증 기반 업데이트의 저장·API 회귀 테스트:
 
 ```bash
@@ -668,6 +721,35 @@ local/output/multi_event_scenario_comparison/<batch_id>/
 Agent Judge 입력과 판정 JSON도 생성된다.
 
 ### 품질 평가
+
+#### 10개 그룹의 실제 LLM 수정 전후 비교
+
+```powershell
+.venv/Scripts/python.exe -X utf8 tests/manual/benchmark_scenario_quality_repair.py `
+  --output-dir local/output/scenario_quality_benchmark/<새로운-실행명> `
+  --sample-count 10 --seed 20261110 --workers 2
+```
+
+운영 DB에서는 SELECT만 허용하며, 현재 저장된 적격 v4 그룹을 결과 판정 전에 무작위 비복원 추출한다.
+기존 그룹 내용을 Signpost 전 단계의 격리된 메모리 SQLite로 복사해 실제 평가→최대 1회 수정→재평가를 실행한다.
+시나리오를 새로 생성하는 실험은 아니며, 실제 DB에 평가·시나리오 변경을 저장하지 않는다.
+모델·키는 `envs/.env`를 로딩한 설정을 사용하고 실제 응답 모델명과 토큰 사용량은 실행 산출물에 남긴다.
+
+- `manifest.json`, `inputs/`: 선정 기준·seed·모델·프롬프트 버전 및 고정 원본 입력.
+- `group_<id>/evaluation_1.json`, `evaluation_2.json`: 최초·재평가 입력, 판정, 근거 및 수정 제안.
+  최초 PASS/NEEDS_FACT에는 자동 수정 및 두 번째 평가가 없다. 차단·실패도 표본에서 제거하지 않는다.
+- `group_<id>/llm_trace.json`, `operations.json`: 실제 수정안·검증 응답·실행 상태.
+- `report.html`: 검색·펼치기를 지원하는 보고서. `report.md`와 `comparison.json`은 원문 및 집계 자료.
+- `score_comparison.svg`, `pass_rates.svg`: 독립적으로 사용할 수 있는 점수·통과율 차트.
+
+그룹 통과율은 전체 표본을 분모로 종합 PASS만 집계한다. 최초부터 수정 대상이 아닌 그룹은 기존 판정을 유지한다.
+수정·재평가 실패는 통과로 계산하지 않는다. 기준별 통과율은 그룹 수 × 7개 기준을 분모로 계산하며,
+같은 그룹의 기준들을 독립 표본으로 해석하지 않는다. 평균 점수 변화는 재평가까지 성공한 동일 그룹 쌍만 비교한다.
+평가 미도입 비교값은 원본을 최초 평가한 점수/판정이며, 별도 무작위 대조군 실험이나 개선 보장은 아니다.
+
+완료된 결과를 보존하며 이어 실행하려면 `--resume`, 모델 호출 없이 보고서만 다시 만들려면 `--report-only`를
+동일 output-dir에 지정한다. 프롬프트 버전이 변경됐다면 새로운 실행 폴더를 사용한다.
+집계 회귀 테스트: `pytest tests/automated/test_scenario_quality_benchmark_report.py -q`.
 
 pipeline batch 안에 다음 파일이 추가된다.
 

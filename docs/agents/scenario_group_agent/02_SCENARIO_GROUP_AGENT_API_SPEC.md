@@ -37,6 +37,12 @@
 
 ### 개발·테스트·호환 API
 
+품질 평가 POST 및 Validation 후 자동 평가는 v4 `scenario_validated` 단계에서 WARN/FAIL이면
+허용된 내용 수정을 최대 1회 반영하고 재평가할 수 있다. Signpost 이후의 평가는 자동 수정하지 않는다.
+최초 평가 GET 응답의 `retrySummary.qualityRepair.reevaluationId`가 있으면 해당 ID도 조회해야 전체 완료를
+확인할 수 있다. 전 과정 중 Signpost/편집은 기존 활성 operation 검사로 차단한다.
+상세: [품질 평가의 자동 수정·재평가](07_SCENARIO_QUALITY_EVALUATION.md).
+
 | 분류 | Method / Path | 비고 |
 | --- | --- | --- |
 | sync | `POST /v2/scenario-groups/sync` | Event별 원본 Template Dimension 비교 |
@@ -77,6 +83,9 @@
 백엔드는 Event 본문이나 임베딩을 보내지 않는다. Agent가 MySQL에서 현재 게시된 Event를 조회하고,
 로컬 벡터 검색 최대 30개 결과 중 현재 게시 상태인 최대 10개를 LLM에 전달한다.
 여러 기준 Event의 후보 점수는 최고 cosine 값으로 합친다. LLM은 전체 조합에서 중복을 제외해 선정한다.
+동일 본문의 임베딩은 프로세스 내 최대 128개 LRU 캐시로 재사용한다. 본문이 바뀌면 다시 계산하며,
+후보 검색·현재 게시 상태 조회·LLM 선정 결과는 캐시하지 않는다. 최초 요청의 모델 로딩·임베딩 비용은 남는다.
+`[EVENT_RECOMMENDATION] TIMING` 로그로 DB 조회·벡터 검색·LLM 호출 시간을 구분한다.
 현재 인증 없는 로컬 공유 Event 데이터 테스트용이며, 사용자별 접근 권한 분리는 구현하지 않는다.
 사용자 인증은 호출 백엔드가 담당한다. callback OAuth 설정은 이 API 호출 인증에 쓰지 않는다.
 설치·실행은 [로컬 검색 가이드](10_LOCAL_EVENT_VECTOR_SEARCH.md)의 API 항목을 참고한다.
@@ -157,7 +166,11 @@ connector의 실제 인용 문맥만 전달하며 URL을 생성하게 하지 않
 취급하지 않는다. `outdated`는 현재 유효하다고 적힌 상태·계획이 날짜와 후속 관계가 확인된 근거로 대체된 경우다.
 
 `web_search_*`, `llm_*` 설정을 재사용하되 이 호출의 검색은 `tool_choice=required`, 최대 인용 8개다.
-요청 내 최대 3개 Event를 동시에 처리한다. `event_verification_timeout_sec`(기본 180초)는 각 항목의
+요청 내 웹 검색과 근거 비교를 각각 최대 3개씩 병렬 처리한다. 앞 Event의 비교 중에도 다음 Event의 검색을
+시작할 수 있다. 합계 최대 5개 Event가 진행 중일 수 있으며 공통 connector 동시성 제한도 적용된다.
+검색 결과·검증 결과는 캐시하지 않고, 6개 비교 항목과 최대 인용 8개를 유지한다.
+`[EVENT_VERIFICATION] TIMING` 로그는 검색·비교 실행 시간과 각 단계 대기 시간, 항목 전체 시간을 기록한다.
+`event_verification_timeout_sec`(기본 180초)는 각 항목의
 대기·검색·비교 전체 제한이다. HTTP 클라이언트/gateway timeout은 DB 조회 시간과 이 제한을 고려해 설정한다.
 이 API는 검증 결과와 검색 근거를 DB에 저장하되 Event 본문을 수정하지 않으며 Scenario 생성의 강제 차단 조건이 아니다.
 `checkedAt`과 `sourceUpdatedAt`을 함께 표시하고 Event 수정 후에는 다시 검증한다.

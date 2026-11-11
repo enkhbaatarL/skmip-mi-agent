@@ -186,6 +186,9 @@ LLM에 보여주는 핵심 사실 후보에는 `[전망]`·`[계획]` 표시를 
 않은 문장을 포함한 Event의 모든 전망·계획 문장은 `forecastClaims[]`(`topic`, `claimKind`, `text`, `anchors`)에
 기록한다. `topic`은 Event 요약·제목의 `[토픽]`이며 프롬프트에 Event ID 대신 표시한다.
 `decisionBasis`처럼 Fact를 거치지 않고 전망이 전달되는 경로가 있으므로 검증은 `forecastClaims` 기준으로 한다.
+수치 anchor의 비교에서는 완전한 날짜(`2026-11-10`, `2026/11/10`, `2026.11.10`, `2026년 11월 10일`)를
+제외한다. 예를 들어 다른 Event의 `11GW` 전망을 사실 칸의 기준일 `2026-11-10`과 혼동해 Dimension 전체를
+재생성하지 않는다. 날짜와 같은 문장에 별도 `11GW`가 있거나 `10~11GW` 범위가 있으면 기존 검증을 유지한다.
 두 값은 `generationDiagnostics` 내부 진단이며 Presentation section에는 노출하지 않는다. 이 값이 도입되기 전에
 저장된 Fact는 `claimKind=observed`로 읽는다.
 
@@ -402,6 +405,9 @@ canonical v4 create 완료 시에는 평가하지 않는다. Validation 통과 �
 `quality_evaluation` operation으로 접수하고 기존 TaskRunner에서 실행한다. 변경 없는 반복 Validation은
 최신 평가가 succeeded이면 건너뛰며, 최신 평가가 실패·중단된 경우 다시 평가한다. BLOCK은 평가하지 않는다.
 평가 중에는 기존 활성 작업 검사로 편집을 차단한다.
+Signpost 전 최초 품질 평가가 WARN/FAIL이면 수정안 생성·구조/근거 검증·반영·재평가를 최대 1회 진행한다.
+최초 평가 완료와 후속 평가 접수 사이에 빈 구간이 없으며, 전체 흐름 종료 전까지 Signpost/편집을 차단한다.
+수정 후 acceptance를 별도 Validation 이력으로 남기되 세 번째 평가를 자동 접수하지 않는다.
 API·저장·실행 경로는 [시나리오 품질 평가](07_SCENARIO_QUALITY_EVALUATION.md)를 참조한다.
 
 ### 실행 구조

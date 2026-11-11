@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from datetime import UTC, datetime, timedelta
 import json
+from time import perf_counter
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -186,8 +187,12 @@ class EventVerificationService:
             ]
         else:
             semaphore = asyncio.Semaphore(MAX_CONCURRENT_EVENTS)
+            comparison_semaphore = asyncio.Semaphore(MAX_CONCURRENT_EVENTS)
             evidence_items = await asyncio.gather(
-                *(self._verify_evidence(event, provider, checked_at, semaphore) for event in events),
+                *(
+                    self._verify_evidence(event, provider, checked_at, semaphore, comparison_semaphore)
+                    for event in events
+                ),
             )
         records = [
             EventVerificationRecord(
@@ -269,23 +274,37 @@ class EventVerificationService:
         provider: WebSearchProvider,
         checked_at: datetime,
         semaphore: asyncio.Semaphore,
+        comparison_semaphore: asyncio.Semaphore | None = None,
     ) -> VerificationEvidence:
         cfg = get_settings()
         sources: list[VerificationSource] = []
         stage = "search"
+        started = perf_counter()
         # Includes queue time, retries and both external calls; all items share a bounded request lifetime.
         try:
-            async with asyncio.timeout(cfg.event_verification_timeout_sec), semaphore:
+            async with asyncio.timeout(cfg.event_verification_timeout_sec):
                 payload = event.model_dump(mode="json", exclude={"publish_status", "del_yn"})
                 context = json.dumps({"as_of": checked_at.isoformat(), "event": payload}, ensure_ascii=False)
-                response = await provider.search(
-                    query=f"{event.one_line_summary}: 사건 사실 확인 및 최신 후속 뉴스·정정·변경 검색",
-                    end_date=checked_at.date().isoformat(),
-                    context=context,
-                    instructions=EVENT_VERIFICATION_SEARCH_INSTRUCTIONS,
-                    max_results=MAX_SOURCES,
-                    tool_choice="required",
-                )
+                async with semaphore:
+                    search_started = perf_counter()
+                    logger.info(
+                        "[EVENT_VERIFICATION] TIMING | event_id={} | stage=search_queue | elapsed_ms={}",
+                        event.mi_event_id,
+                        round((search_started - started) * 1000),
+                    )
+                    response = await provider.search(
+                        query=f"{event.one_line_summary}: 사건 사실 확인 및 최신 후속 뉴스·정정·변경 검색",
+                        end_date=checked_at.date().isoformat(),
+                        context=context,
+                        instructions=EVENT_VERIFICATION_SEARCH_INSTRUCTIONS,
+                        max_results=MAX_SOURCES,
+                        tool_choice="required",
+                    )
+                    logger.info(
+                        "[EVENT_VERIFICATION] TIMING | event_id={} | stage=search | elapsed_ms={}",
+                        event.mi_event_id,
+                        round((perf_counter() - search_started) * 1000),
+                    )
                 if response.get("status") not in {None, "completed"}:
                     return VerificationEvidence(
                         verification=_warning(event, "search_error", "웹 검색이 완료되지 않아 검증하지 못했습니다."),
@@ -302,10 +321,21 @@ class EventVerificationService:
                         sources=[],
                     )
                 stage = "verification"
-                return VerificationEvidence(
-                    verification=await self.compare_evidence(event, sources, checked_at),
-                    sources=sources,
-                )
+                queued_at = perf_counter()
+                async with comparison_semaphore or semaphore:
+                    comparison_started = perf_counter()
+                    logger.info(
+                        "[EVENT_VERIFICATION] TIMING | event_id={} | stage=comparison_queue | elapsed_ms={}",
+                        event.mi_event_id,
+                        round((comparison_started - queued_at) * 1000),
+                    )
+                    verification = await self.compare_evidence(event, sources, checked_at)
+                    logger.info(
+                        "[EVENT_VERIFICATION] TIMING | event_id={} | stage=comparison | elapsed_ms={}",
+                        event.mi_event_id,
+                        round((perf_counter() - comparison_started) * 1000),
+                    )
+                    return VerificationEvidence(verification=verification, sources=sources)
         except Exception:
             # External failures are inconclusive, never evidence that the Event is false.
             # CancelledError is intentionally not caught so disconnect/shutdown can cancel work.
@@ -323,4 +353,11 @@ class EventVerificationService:
                     sources,
                 ),
                 sources=sources,
+            )
+        finally:
+            logger.info(
+                "[EVENT_VERIFICATION] TIMING | event_id={} | stage=total | last_stage={} | elapsed_ms={}",
+                event.mi_event_id,
+                stage,
+                round((perf_counter() - started) * 1000),
             )

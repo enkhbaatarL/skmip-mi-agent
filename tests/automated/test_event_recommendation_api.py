@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-# ruff: noqa: S101
+# ruff: noqa: S101, SLF001
 import asyncio
 import json
 from pathlib import Path
@@ -93,7 +93,9 @@ def dependencies(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
         return [_row(event_id) for event_id in event_ids if event_id != 4]
 
     monkeypatch.setattr(
-        service_module, "EventService", lambda: SimpleNamespace(load_search_sources=load_search_sources),
+        service_module,
+        "EventService",
+        lambda: SimpleNamespace(load_search_sources=load_search_sources),
     )
     monkeypatch.setattr(
         service_module,
@@ -210,3 +212,53 @@ def test_local_search_reuses_index_and_closes_client(
         model_factory.assert_not_called()
     client.close.assert_called_once()
     client.upsert.assert_not_called()
+
+
+def test_embedding_cache_reuses_identical_text_and_recomputes_changes(tmp_path: Path) -> None:
+    from apps.connectors.vdb.local_event_search import LocalEventSearch
+
+    model = Mock(max_seq_length=100)
+    model.tokenizer.return_value = {"input_ids": [1, 2]}
+    model.encode.side_effect = lambda texts, **kwargs: SimpleNamespace(
+        tolist=lambda: [[float(len(text))] for text in texts],
+    )
+    search = LocalEventSearch(tmp_path / "docs", tmp_path / "db", tmp_path / "models")
+    search._model = model
+    assert search._encode(["original", "original"]) == [[8.0], [8.0]]
+    assert search._encode(["original"]) == [[8.0]]
+    assert model.encode.call_count == 1
+    assert model.encode.call_args.args[0] == ["original"]
+    assert search._encode(["updated", "original"]) == [[7.0], [8.0]]
+    assert model.encode.call_args.args[0] == ["updated"]
+    assert model.encode.call_count == 2
+    assert model.tokenizer.call_count == 2
+    model.tokenizer.return_value = {"input_ids": list(range(101))}
+    with pytest.raises(MIBaseError) as exc:
+        search._encode(["overlong new content"])
+    assert exc.value.error_code == ErrorCode.INVALID_REQUEST
+    assert model.encode.call_count == 2
+
+
+def test_embedding_cache_is_bounded_and_preserves_recent_inputs(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from apps.connectors.vdb import local_event_search as module
+
+    monkeypatch.setattr(module, "EMBEDDING_CACHE_SIZE", 2)
+    model = Mock(max_seq_length=100)
+    model.tokenizer.return_value = {"input_ids": [1]}
+    model.encode.side_effect = lambda texts, **kwargs: SimpleNamespace(tolist=lambda: [[1.0] for text in texts])
+    search = module.LocalEventSearch(tmp_path / "docs", tmp_path / "db", tmp_path / "models")
+    search._model = model
+    search._encode(["a", "b"])
+    search._encode(["a"])
+    search._encode(["c"])
+    search._encode(["a"])
+    assert model.encode.call_count == 2
+    search._encode(["b"])
+    assert model.encode.call_args.args[0] == ["b"]
+    assert len(search._embeddings) == 2
+    # A single batch exceeding the capacity still returns every vector in input order.
+    assert search._encode(["a", "b", "c", "a"]) == [[1.0]] * 4
+    assert len(search._embeddings) == 2

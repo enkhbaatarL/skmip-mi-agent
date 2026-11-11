@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from datetime import UTC, datetime
 import json
+from time import perf_counter
 
 from apps.agents.scenario_group_agent.prompts.event_recommendation import (
     EVENT_RECOMMENDATION_SYSTEM_PROMPT,
@@ -19,6 +20,7 @@ from apps.agents.scenario_group_agent.utils.event_recommendation import validate
 from apps.agents.scenario_group_agent.utils.event_search_document import build_event_search_text
 from apps.common.configs.config import get_settings
 from apps.common.exceptions.custom import MIBaseError
+from apps.common.logging.logger_config import logger
 from apps.common.values.error_codes import ErrorCode
 from apps.connectors.llm.llm_client import invoke_llm_structured_output
 from apps.connectors.vdb.local_event_search import get_local_event_search
@@ -43,8 +45,13 @@ class EventRecommendationService:
     """Local shared-corpus recommendation; caller backend owns user authentication."""
 
     async def recommend(self, event_ids: list[int]) -> EventRecommendationsOut:
+        started = perf_counter()
         service = EventService()
         sources = await asyncio.to_thread(service.load_search_sources, event_ids=event_ids)
+        logger.info(
+            "[EVENT_RECOMMENDATION] TIMING | stage=source_db | elapsed_ms={}",
+            round((perf_counter() - started) * 1000),
+        )
         source_by_id = {source.mi_event_id: _payload(source) for source in sources}
         if set(source_by_id) != set(event_ids):
             raise MIBaseError(ErrorCode.ENTITY_NOT_FOUND, detail="선택한 Event가 없거나 게시 상태가 아닙니다.")
@@ -54,20 +61,31 @@ class EventRecommendationService:
             cfg.event_search_db_path,
             cfg.event_search_model_cache,
         )
+        stage_started = perf_counter()
         candidate_ids = await asyncio.to_thread(
             search.search,
             [source_by_id[event_id].detail_analysis for event_id in event_ids],
             event_ids,
         )
+        logger.info(
+            "[EVENT_RECOMMENDATION] TIMING | stage=vector_search | elapsed_ms={}",
+            round((perf_counter() - stage_started) * 1000),
+        )
         candidate_ids = list(dict.fromkeys(event_id for event_id in candidate_ids if event_id not in source_by_id))
         if not candidate_ids:
             return EventRecommendationsOut(items=[], selection_reason="검색된 후보 Event가 없습니다.")
         # Vector payload is a snapshot. Only current published, non-deleted DB rows enter the prompt.
+        stage_started = perf_counter()
         rows = await asyncio.to_thread(service.load_search_sources, event_ids=candidate_ids)
+        logger.info(
+            "[EVENT_RECOMMENDATION] TIMING | stage=candidate_db | elapsed_ms={}",
+            round((perf_counter() - stage_started) * 1000),
+        )
         candidate_by_id = {row.mi_event_id: _payload(row) for row in rows}
         candidates = [candidate_by_id[event_id] for event_id in candidate_ids if event_id in candidate_by_id][:10]
         if not candidates:
             return EventRecommendationsOut(items=[], selection_reason="현재 게시 상태인 후보 Event가 없습니다.")
+        stage_started = perf_counter()
         result = await invoke_llm_structured_output(
             output_schema=MultiEventRecommendationOutput,
             messages=[
@@ -93,6 +111,10 @@ class EventRecommendationService:
             reasoning_effort=cfg.llm_reasoning_effort,
             log_label="event_recommendation",
         )
+        logger.info(
+            "[EVENT_RECOMMENDATION] TIMING | stage=llm | elapsed_ms={}",
+            round((perf_counter() - stage_started) * 1000),
+        )
         output = result.result
         seen = set(event_ids)
         items: list[RecommendedEvent] = []
@@ -115,4 +137,8 @@ class EventRecommendationService:
                     reason=item.reason,
                 ),
             )
+        logger.info(
+            "[EVENT_RECOMMENDATION] TIMING | stage=total | elapsed_ms={}",
+            round((perf_counter() - started) * 1000),
+        )
         return EventRecommendationsOut(items=items, selection_reason=output.selection_reason)

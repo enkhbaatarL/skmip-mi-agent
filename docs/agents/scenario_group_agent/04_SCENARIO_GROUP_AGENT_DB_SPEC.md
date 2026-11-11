@@ -258,6 +258,10 @@ Scenario Group, create operation, 첫 `accepted` event는 같은 transaction으�
 `tmm_mi_scenario_quality_eval_m`은 평가 operation과 operation_id PK/FK로 연결되는 1:1 상세다.
 requestId UUID는 전역 unique이며 입력 snapshot/hash, prompt version, 점수·위반 JSON, 모델 사용량을 저장한다.
 실행 상태·heartbeat·오류는 operation이 소유한다. 상세: [품질 평가](07_SCENARIO_QUALITY_EVALUATION.md).
+Signpost 전 WARN/FAIL 자동 수정은 최초 평가 완료와 재평가 접수를 같은 transaction으로 묶는다.
+수정 전후 평가 상세는 별도 행으로 유지하고, 기존 operation의 retry_summary.qualityRepair에 부모/후속 ID와
+1회 제한 및 수정 내역을 기록한다. 수정 적용·새 Validation acceptance·재평가 입력 갱신도 함께 commit한다.
+전용 Scenario snapshot 테이블이나 새 컬럼은 추가하지 않는다.
 
 `tmm_mi_dimension_value_mapping_m`은 legacy v2/v3 자유값을 model parameter source에 연결하는 proposal과
 승인 상태를 저장한다. 주요 값은 `dimension_value_id`, `dimension_id`, `display_value`,

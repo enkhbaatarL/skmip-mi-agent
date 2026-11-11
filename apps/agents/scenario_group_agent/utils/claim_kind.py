@@ -43,6 +43,12 @@ _CLAUSE_SPLIT_PATTERN = re.compile(
     r"(?:(?<=[됐했였었]고)|(?<=[됐했였었]으며)|(?<=[됐했였었]며)|(?<=으나)|(?<=지만))\s*,?\s+",
 )
 _FIELD_LABEL_PATTERN = re.compile(r"(사실|전망|파생|가정|영향)\s*:\s*")
+# A quantitative anchor such as 11 GW must not match the month in 2026-11-10.
+# Mask complete dates only; standalone quantities and ranges remain eligible.
+_CALENDAR_DATE_PATTERN = re.compile(
+    r"(?<!\d)(?:\d{4}(?P<separator>[-/.])\d{1,2}(?P=separator)\d{1,2}"
+    r"|\d{4}년\s*\d{1,2}월\s*\d{1,2}일)(?!\d)",
+)
 
 
 def _has_rieul_final(char: str) -> bool:
@@ -99,7 +105,8 @@ def extract_forecast_anchors(
 
 
 def _contains_value(text: str, value: str) -> bool:
-    return bool(re.search(rf"(?<![\d.]){re.escape(value)}(?![\d])", text))
+    quantitative_text = _CALENDAR_DATE_PATTERN.sub(" ", text)
+    return bool(re.search(rf"(?<![\d.]){re.escape(value)}(?![\d])", quantitative_text))
 
 
 def split_rationale_fields(text: str) -> dict[str, str]:

@@ -18,6 +18,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import re
 import time
 from typing import Any, Literal
@@ -371,7 +372,8 @@ class ResponsesWebSearchProvider(WebSearchProvider):
 
         model = self._resolve_model(overrides.pop("model", None))
         max_results = int(overrides.pop("max_results", self.max_results))
-        client, http_client = self._create_client()
+        # TLS/certificate setup is synchronous; keep concurrent searches off the event-loop thread.
+        client, http_client = await asyncio.to_thread(self._create_client)
         request_kwargs = self._build_request_kwargs(
             query=query,
             start_date=start_date,

@@ -343,6 +343,61 @@ def test_cancellation_propagates(dependencies: SimpleNamespace) -> None:
     dependencies.store.assert_not_called()
 
 
+def test_search_pipeline_advances_while_comparison_is_pending(dependencies: SimpleNamespace) -> None:
+    """All five searches must start before the first three comparisons can finish."""
+    dependencies.load.return_value = [_row(event_id) for event_id in range(1, 6)]
+
+    async def run() -> None:
+        all_searched = asyncio.Event()
+        comparison_peak = 0
+        comparison_active = 0
+        search_count = 0
+
+        async def search(**kwargs: object) -> dict[str, object]:
+            nonlocal search_count
+            search_count += 1
+            if search_count == 5:
+                all_searched.set()
+            return {"results": [{"url": SOURCE_URL, "content": "confirmed"}]}
+
+        async def compare(**kwargs: object) -> SimpleNamespace:
+            nonlocal comparison_peak, comparison_active
+            comparison_active += 1
+            comparison_peak = max(comparison_peak, comparison_active)
+            try:
+                await all_searched.wait()
+                return SimpleNamespace(result=_output())
+            finally:
+                comparison_active -= 1
+
+        dependencies.search.side_effect = search
+        dependencies.llm.side_effect = compare
+        result = await asyncio.wait_for(service_module.EventVerificationService().verify([5, 4, 3, 2, 1], "actor"), 2)
+        assert [item.mi_event_id for item in result.items] == [5, 4, 3, 2, 1]
+        assert all(item.status == "pass" for item in result.items)
+        assert search_count == 5
+        assert comparison_peak == service_module.MAX_CONCURRENT_EVENTS
+
+    asyncio.run(run())
+
+
+def test_comparison_queue_timeout_preserves_evidence(dependencies: SimpleNamespace) -> None:
+    async def run() -> None:
+        dependencies.settings.event_verification_timeout_sec = 0.02
+        result = await service_module.EventVerificationService()._verify_evidence(
+            _row(1),
+            dependencies.factory.return_value,
+            datetime.now(UTC),
+            asyncio.Semaphore(1),
+            asyncio.Semaphore(0),
+        )
+        assert result.verification.reason_code == "verification_error"
+        assert result.sources[0].url == SOURCE_URL
+        dependencies.llm.assert_not_called()
+
+    asyncio.run(run())
+
+
 @pytest.mark.parametrize("actor", [None, "", " ", 123, "a" * 101])
 def test_verification_actor_required(client: TestClient, actor: object) -> None:
     body = {"miEventIds": [1]}

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import OrderedDict
 from functools import lru_cache
 import hashlib
 import json
@@ -17,6 +18,7 @@ if TYPE_CHECKING:
 
 MODEL_ID = "BAAI/bge-m3"
 MODEL_REVISION = "5617a9f61b028005a4858fdac845db406aefb181"
+EMBEDDING_CACHE_SIZE = 128
 
 
 def collection_name(raw: bytes) -> str:
@@ -33,6 +35,35 @@ class LocalEventSearch:
         self.model_cache = model_cache
         self._lock = Lock()
         self._model: SentenceTransformer | None = None
+        self._embeddings: OrderedDict[str, list[float]] = OrderedDict()
+
+    def _encode(self, texts: list[str]) -> list[list[float]]:
+        """Reuse only identical input embeddings; caller holds the instance lock.
+
+        Model ID/revision are fixed for this instance. Changed DB text gets a new key;
+        search results and publication eligibility are deliberately never cached.
+        """
+        if self._model is None:
+            raise MIBaseError(ErrorCode.DATA_RETRIEVAL_FAILED, detail="Embedding model is not initialized")
+        keys = [hashlib.sha256(text.encode("utf-8")).hexdigest() for text in texts]
+        missing = {key: text for key, text in zip(keys, texts, strict=True) if key not in self._embeddings}
+        for text in missing.values():
+            tokens = self._model.tokenizer(text, truncation=False, add_special_tokens=True)["input_ids"]
+            if len(tokens) > self._model.max_seq_length:
+                raise MIBaseError(ErrorCode.INVALID_REQUEST, detail="Event가 임베딩 입력 한도를 초과했습니다.")
+        if missing:
+            vectors = self._model.encode(
+                list(missing.values()),
+                normalize_embeddings=True,
+                show_progress_bar=False,
+            ).tolist()
+            self._embeddings.update(zip(missing, vectors, strict=True))
+        result = [self._embeddings[key] for key in keys]
+        for key in keys:
+            self._embeddings.move_to_end(key)
+        while len(self._embeddings) > EMBEDDING_CACHE_SIZE:
+            self._embeddings.popitem(last=False)
+        return result
 
     def search(self, texts: list[str], excluded_ids: list[int]) -> list[int]:
         try:
@@ -70,11 +101,7 @@ class LocalEventSearch:
                     cache_folder=str(self.model_cache),
                     trust_remote_code=False,
                 )
-            for text in texts:
-                tokens = self._model.tokenizer(text, truncation=False, add_special_tokens=True)["input_ids"]
-                if len(tokens) > self._model.max_seq_length:
-                    raise MIBaseError(ErrorCode.INVALID_REQUEST, detail="Event가 임베딩 입력 한도를 초과했습니다.")
-            vectors = self._model.encode(texts, normalize_embeddings=True, show_progress_bar=False).tolist()
+            vectors = self._encode(texts)
             query_filter = models.Filter(
                 must_not=[
                     models.FieldCondition(key="event_id", match=models.MatchAny(any=excluded_ids)),

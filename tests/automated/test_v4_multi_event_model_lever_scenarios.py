@@ -3674,6 +3674,24 @@ def test_v4_dimension_accepts_forecast_value_in_forecast_field() -> None:
     assert "FORECAST_STATED_AS_FACT" not in [warning.code for warning in result.validation_warnings]
 
 
+def test_v4_dimension_date_does_not_trigger_other_events_forecast_quantity() -> None:
+    analysis = _analysis_with_forecast()
+    analysis.forecast_claims[0].anchors = ["11"]
+    analysis.forecast_claims[0].text = "독일 태양광 발전량이 11GW로 감소할 전망이다."
+    draft = _dimension_draft()
+    value = draft.dimension_definitions[0].values[1]
+    value.assumption_rationale = (
+        "사실: 2026-11-10 현재 LNG 화물 지연은 직접 확인되지 않음 | 가정: 한파 지속 | 영향: JKM 상승 압력"
+    )
+    result = finalize_v4_dimension_design(draft, impact_analysis=analysis, impact_levers=_catalog())
+    assert "FORECAST_STATED_AS_FACT" not in [warning.code for warning in result.validation_warnings]
+    value.assumption_rationale = (
+        "사실: 2026-11-10 태양광 발전량은 11GW임 | 가정: 한파 지속 | 영향: JKM 상승 압력"
+    )
+    with pytest.raises(ValueError, match="사실 칸에 전망값 11"):
+        finalize_v4_dimension_design(draft, impact_analysis=analysis, impact_levers=_catalog())
+
+
 def test_v4_finalizer_warns_when_scenario_states_forecast_value_as_fact() -> None:
     synthesis = _synthesis()
     synthesis.scenarios[0].explanation = "미국 국내 소비가 2027년 93.8 bcfd로 늘어 원료가스 여력이 줄어든다."

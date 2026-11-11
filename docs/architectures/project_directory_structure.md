@@ -96,6 +96,9 @@ Event 추천은 `routers/events.py`의 `POST /events/recommendations`에서
 Scenario 품질 평가는 `scenario_group_agent/flows/evaluate_scenarios`와
 `persistence/scenario_quality_evaluation_service.py`가 실행·transaction을 담당하고,
 공유 ORM/repository/DTO는 `apps/persistence/scenario_quality_evaluation`에 둔다.
+Signpost 전 1회 수정·재평가도 같은 flow에서 실행한다. 수정 허용 범위와 기존 v4 검증 연결은
+`flows/evaluate_scenarios/repair.py`, 수정 프롬프트/출력은 `prompts/scenario_quality_repair.py`,
+수정 적용 및 Validation acceptance transaction은 `persistence/scenario_quality_repair_service.py`가 소유한다.
 
 ```text
 router / flow / node

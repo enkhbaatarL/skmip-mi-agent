@@ -32,9 +32,9 @@ from apps.persistence.scenario_group_operation.schema import TERMINAL_OPERATION_
 from apps.persistence.scenario_quality_evaluation.models import MiScenarioQualityEvaluationModel
 from apps.persistence.scenario_quality_evaluation.repository import ScenarioQualityEvaluationRepository
 from apps.persistence.scenario_quality_evaluation.schema import (
+    InputOnlyScenarioQualityJudgment,
     QualityVerdict,
     ScenarioQualityEvaluationPayload,
-    ScenarioQualityJudgment,
 )
 
 
@@ -204,7 +204,7 @@ class ScenarioQualityEvaluationService:
             input_snapshot=row.input_snapshot,
             input_hash=row.input_hash,
             prompt_version=row.prompt_version,
-            result=ScenarioQualityJudgment.model_validate(row.result_payload) if row.result_payload else None,
+            result=row.result_payload,
             verdict=row.verdict,
             average_score=float(row.average_score) if row.average_score is not None else None,
             llm_metadata=row.llm_metadata,
@@ -233,12 +233,15 @@ class ScenarioQualityEvaluationService:
         group_id: int,
         operation_id: str,
         *,
-        result: ScenarioQualityJudgment,
+        result: InputOnlyScenarioQualityJudgment,
         verdict: QualityVerdict,
         average_score: float,
         llm_metadata: dict[str, object],
-    ) -> None:
+        repair_once: bool = False,
+    ) -> str | None:
+        retry_id = None
         with get_sync_session() as session, session.begin():
+            group = ScenarioGroupRepository(session=session).fetch_by_id(group_id, for_update=True)
             operation = ScenarioGroupOperationRepository(session=session).fetch_by_id(
                 group_id, operation_id, for_update=True,
             )
@@ -262,7 +265,31 @@ class ScenarioQualityEvaluationService:
                 now=_db_now(),
                 status="succeeded",
             )
+            if (
+                repair_once and verdict in {"WARN", "FAIL"}
+                and group is not None and group.stage == "scenario_validated"
+                and str(group.api_version) == "v4"
+                and not (operation.retry_summary or {}).get("qualityRepair")
+                and any(item.violations for item in result.items if item.verdict != "PASS")
+            ):
+                # Complete A and reserve B under the same group lock: no gap for Signpost/edits.
+                session.flush()
+                retry = self.prepare_in_session(
+                    session, group=group, user_id=int(operation.crt_usr_logn_id),
+                    request_id=str(uuid5(NAMESPACE_URL, f"scenario-quality-repair:{operation_id}")),
+                    source_operation=operation,
+                )
+                retry_id = retry.operation_id
+                retry_operation = ScenarioGroupOperationRepository(session=session).fetch_by_id(group_id, retry_id)
+                retry_operation.current_phase = "quality_repair"
+                retry_operation.retry_summary = {"qualityRepair": {
+                    "parentEvaluationId": operation_id, "attempt": 1, "state": "pending",
+                }}
+                operation.retry_summary = {**(operation.retry_summary or {}), "qualityRepair": {
+                    "reevaluationId": retry_id, "attempt": 0,
+                }}
         self._notify(group_id, operation_id)
+        return retry_id
 
     def fail(
         self, group_id: int, operation_id: str, *, interrupted: bool = False, code: str = "EVALUATION_FAILED",

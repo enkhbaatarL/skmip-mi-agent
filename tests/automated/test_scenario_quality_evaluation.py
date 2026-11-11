@@ -3,6 +3,7 @@ from __future__ import annotations
 # ruff: noqa: CPY001, S101, ANN001, ANN201, ANN202, PT011
 import asyncio
 from copy import deepcopy
+import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from uuid import uuid4
@@ -30,7 +31,11 @@ from apps.persistence.scenario_group_operation.models import (
 )
 from apps.persistence.scenario_group_operation.schema import ValidationOperationResultPayload
 from apps.persistence.scenario_quality_evaluation.models import MiScenarioQualityEvaluationModel
-from apps.persistence.scenario_quality_evaluation.schema import JUDGE_IDS, ScenarioQualityJudgment
+from apps.persistence.scenario_quality_evaluation.schema import (
+    JUDGE_IDS,
+    InputOnlyScenarioQualityJudgment,
+    ScenarioQualityJudgment,
+)
 
 
 SNAPSHOT = {
@@ -143,13 +148,15 @@ def test_scope_owner_and_snapshot_are_preserved(db):
 def test_completion_and_late_result_guard(db):
     record, _ = prepare(db)
     result = judgment(fact=True)
+    with db.factory.begin() as session:
+        session.get(MiScenarioQualityEvaluationModel, record.operation_id).prompt_version = "scenario-set-v4"
     verdict, score = summarize(result)
     db.service.complete(
         103, record.operation_id, result=result, verdict=verdict, average_score=score, llm_metadata={"model": "test"},
     )
     saved = db.service.get(103, record.operation_id)
     assert saved.status == "succeeded"
-    assert saved.verdict == "NEEDS_FACT"
+    assert saved.verdict == "WARN"
     assert saved.result.items[1].violations[0].scenario_ids == [417]
     assert saved.result.items[1].violations[0].fact_check.verification_question == "기준 경로의 근거가 성립하는가?"
     with db.factory() as session:
@@ -285,56 +292,51 @@ def test_seven_rubrics_and_evidence_required():
         ScenarioQualityJudgment.model_validate(data)
 
 
-def test_legacy_external_fact_result_is_readable_but_new_result_requires_fact_check():
+def test_new_schema_excludes_external_fact_fields_and_rejects_legacy_input():
+    schema = json.dumps(InputOnlyScenarioQualityJudgment.model_json_schema(by_alias=True))
+    assert "factDependency" not in schema
+    assert "factCheck" not in schema
+    assert "EXTERNAL_FACT_REQUIRED" not in schema
+    with pytest.raises(ValidationError):
+        InputOnlyScenarioQualityJudgment.model_validate(judgment(fact=True).model_dump(by_alias=True))
+
+
+def test_legacy_external_fact_result_remains_readable():
     data = judgment(fact=True).model_dump(mode="json", by_alias=True)
     del data["items"][1]["violations"][0]["factCheck"]
     legacy = ScenarioQualityJudgment.model_validate(data)
     assert legacy.items[1].violations[0].fact_check is None
-    with pytest.raises(ValueError, match="requires factCheck"):
-        validate_targets(legacy, SNAPSHOT)
 
 
-@pytest.mark.parametrize("dependency", ["NONE", "EVENT_PAYLOAD_ONLY"])
-def test_fact_check_is_rejected_for_non_external_issue(dependency):
-    result = judgment(fact=True)
-    result.items[1].violations[0].fact_dependency = dependency
-    with pytest.raises(ValueError, match="only allowed"):
-        validate_targets(result, SNAPSHOT)
-
-
-@pytest.mark.parametrize("field", ["claim", "verificationQuestion"])
-@pytest.mark.parametrize("value", ["", "   "])
-def test_fact_check_rejects_empty_claim_and_question(field, value):
-    data = judgment(fact=True).model_dump(mode="json", by_alias=True)
-    data["items"][1]["violations"][0]["factCheck"][field] = value
-    with pytest.raises(ValidationError):
-        ScenarioQualityJudgment.model_validate(data)
-
-
-def test_external_fact_check_validates_with_unknown_scope():
-    result = judgment(fact=True)
-    validate_targets(result, SNAPSHOT)
-    assert result.items[1].violations[0].fact_check.target_period is None
-
-
-def test_worker_rejects_missing_fact_check_before_persisting_result(db, monkeypatch):
+def test_worker_stores_input_only_result_without_fact_metadata(db, monkeypatch):
     record, _ = prepare(db)
-    legacy = judgment(fact=True)
-    legacy.items[1].violations[0].fact_check = None
-    monkeypatch.setattr(
-        flow,
-        "invoke_llm_structured_output",
-        AsyncMock(return_value=SimpleNamespace(result=legacy, model="test-model", usage=None)),
-    )
+    data = judgment(fact=True).model_dump(mode="json", by_alias=True)
+    issue = data["items"][1]["violations"][0]
+    issue.pop("factDependency")
+    issue.pop("factCheck")
+    current = InputOnlyScenarioQualityJudgment.model_validate(data)
+    # Avoid exercising repair scheduling in this persistence test (covered by repair tests).
+    db.group.stage = "signpost_created"
+    mock = AsyncMock(return_value=SimpleNamespace(result=current, model="test-model", usage=None))
+    monkeypatch.setattr(flow, "invoke_llm_structured_output", mock)
     asyncio.run(flow.run_quality_evaluation(103, record.operation_id))
     saved = db.service.get(103, record.operation_id)
-    assert saved.status == "failed"
-    assert saved.result is None
+    assert saved.status == "succeeded"
+    assert saved.verdict == "WARN"
+    assert mock.call_args.kwargs["output_schema"] is InputOnlyScenarioQualityJudgment
+    with db.factory() as session:
+        row = session.get(MiScenarioQualityEvaluationModel, record.operation_id)
+        stored = row.result_payload["items"][1]["violations"][0]
+        assert "factCheck" not in stored
+        assert "factDependency" not in stored
+    assert "factCheck" not in saved.result.model_dump_json(by_alias=True)
 
 
 def test_api_returns_fact_check_and_reads_legacy_payload(db):
     record, _ = prepare(db)
     result = judgment(fact=True)
+    with db.factory.begin() as session:
+        session.get(MiScenarioQualityEvaluationModel, record.operation_id).prompt_version = "scenario-set-v4"
     verdict, score = summarize(result)
     db.service.complete(
         103,
