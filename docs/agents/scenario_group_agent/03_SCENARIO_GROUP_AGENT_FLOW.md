@@ -560,3 +560,11 @@ Scenario와 Dimension/Value 근거만 사용한다.
 | Validation check | callback, Change Set, Signpost prepare, mutation probe |
 | Signpost prompt·schema | callback table, persistence enum, 품질 rubric |
 | heartbeat·recovery | lifespan runner, terminal event, multi-worker 테스트 |
+
+
+## 공통 고수준 실행 로그
+
+추천·검증·현행화 POST 응답에 `executionLog`를 추가한다. canonical v4 설계와 품질 평가의 진행 이벤트는
+`payload.executionLog`로 단계·호출·근거·판단을 제공한다. 수정 계획 생성·비교·선택은
+`retrySummary.qualityRepair.planning`에 저장하고, 실제 수정 반영 후 재평가하는 순서는 유지한다.
+로그 계약과 조회 방법: [고수준 실행 로그](11_AGENT_EXECUTION_LOG.md).

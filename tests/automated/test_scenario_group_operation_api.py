@@ -646,7 +646,7 @@ def test_dimension_retry_does_not_repeat_phase_start_and_success_starts_synthesi
             dimension_error_code=None,
             dimension_retryable=False,
             dimension_attempt=2,
-            dimension_draft=SimpleNamespace(dimension_definitions=[]),
+            dimension_draft=SimpleNamespace(dimension_definitions=[], model_dump=lambda **_kwargs: {"dimensionDefinitions": []}),
         )
 
         await recorder.on_node_update("__custom__", retry, None)  # type: ignore[arg-type]

@@ -27,6 +27,7 @@ from typing import Any, ParamSpec, TypeVar
 
 from pydantic import BaseModel
 
+from apps.common.logging.console import full_payloads_enabled
 from apps.common.logging.logger_config import logger
 
 
@@ -50,6 +51,16 @@ def serialize(obj: Any, max_length: int = 2000) -> str:
         JSON string representation of the object.
 
     """
+    if full_payloads_enabled():
+        # Preserve all logged content, including newlines and literal backslash sequences.
+        try:
+            if isinstance(obj, BaseModel):
+                obj = obj.model_dump(mode="json")
+            if isinstance(obj, (dict, list, tuple)):
+                return json.dumps(obj, ensure_ascii=False, indent=2, default=str)
+            return str(obj)
+        except Exception:
+            return repr(obj)
     if obj is None:
         return "None"
 

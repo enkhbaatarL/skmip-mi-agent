@@ -16,6 +16,9 @@ import sys
 
 from loguru import logger
 
+from apps.common.logging.console import format_console_record
+
+
 # Remove default handler
 logger.remove()
 
@@ -47,12 +50,7 @@ def setup_logging(log_level: str | None = None) -> None:
         sys.stdout,
         level=log_level,
         colorize=True,
-        format=(
-            "<green>[{time:YYYY-MM-DD HH:mm:ss.SSS}]</green> "
-            "<level>[{level:8}]</level> "
-            "<cyan>[{name}:{function}:{line}]</cyan> "
-            "{message}"
-        ),
+        format=format_console_record,
     )
 
 

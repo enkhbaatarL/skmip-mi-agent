@@ -103,7 +103,11 @@ Signpost 생성 후나 completed 단계의 수동 평가는 내용을 자동 수
 
 - 최초 평가 A 완료와 후속 평가 B 접수는 같은 group row lock/transaction으로 처리한다.
   B가 queued/running인 동안 기존 활성 작업 검사로 Signpost·Confirmation·편집이 차단된다.
-- B는 `quality_repair` 단계에서 reason/evidence/suggestedFix를 참고한 수정안을 한 번 생성한다.
+- B는 `quality_repair` 단계에서 reason/evidence/suggestedFix를 참고해 서로 다른 수정 계획 A/B를 생성한다.
+  서버가 두 계획의 대상 경로·위반 참조·수정 범위를 확인하고, 별도 LLM 호출로 해결 가능성·근거 보존·최소 변경을
+  각각 1~5점으로 비교한다. 실행 가능한 계획 중 합계가 높은 계획을 선택한다. 동점은 근거 보존 점수, A 순이다.
+  계획 점수는 예상 적합도이며 실제 개선 점수가 아니다. 실행 가능한 계획이 없으면 반영 없이 실패로 종료한다.
+  선택한 계획의 targets 범위에서만 실제 수정안을 한 번 생성한다. 계획 생성/비교로 LLM 호출이 2회 추가된다.
   수정 대상은 그룹 설명, 기존 Dimension/선택값 설명, 시나리오 제목·본문·근거·기존 선택값 조합이다.
   Event 원문, ID, 확률, pressureContribution, 시나리오/Dimension 추가·삭제는 허용하지 않는다.
 - 기존 v4 구조/조합 검증과 별도 LLM 근거 보존 검증을 통과한 경우에만 수정한다. 수정 전 입력 hash와
@@ -115,7 +119,8 @@ Signpost 생성 후나 completed 단계의 수동 평가는 내용을 자동 수
   제한은 최초 평가 A별 한 번이며 새로운 명시적 평가 요청은 별도 실행이다.
 - `scenario-repair-v2`는 최초 WARN/FAIL 해결에 필요한 최소 수정과 기존 유효 정보 보존을 명시한다.
   재평가는 기존 PASS를 포함한 7개 기준 전체를 유지한다. PASS에서 WARN/FAIL로 바뀐 항목을 위한
-  별도 비교 판정·추가 LLM 호출은 없으며, 기존 수정 전 근거 보존 검증과 수정 1회 제한을 유지한다.
+  추가 LLM 호출 없이 점수 차이와 기존 PASS → WARN/FAIL 항목을 계산해 실행 로그에 기록한다.
+  이는 재평가 결과 설명용이며 채택 gate나 rollback이 아니다. 기존 수정 전 근거 보존 검증과 수정 1회 제한을 유지한다.
 - 수정안 없음/검증 차단/입력 변경/LLM 오류이면 B는 failed로 종료하고, 수정 반영 전이라면 원본을 유지한다.
   수정 반영 후 재평가 호출이 실패하면 수정된 데이터는 남고 B의 결과는 null이다.
 - A의 입력·결과는 불변이며 B는 새 operation_id/request_id를 가진다. 별도 Scenario snapshot 테이블은 없다.
@@ -124,6 +129,9 @@ Signpost 생성 후나 completed 단계의 수동 평가는 내용을 자동 수
 연결·회차·수정안은 기존 operation의 `retry_summary.qualityRepair` JSON에 저장한다.
 A의 `reevaluationId`로 B를 조회하며, B에는 `parentEvaluationId`, `attempt=1`, `state`,
 `validationOperationId`, 수정 promptVersion, plan, review, LLM 사용량을 기록한다.
+`scenario-repair-v4`부터 `planning`에 후보·비교 평가·선택 ID·선택 규칙·모델 사용량도 저장한다.
+후보 생성 직후와 비교 완료 직후 각각 저장해 이후 수정/재평가 실패 시에도 계획을 확인할 수 있다.
+실제 패치는 기존 `plan`, 근거 검증은 `review`에 유지한다.
 API 응답은 `retrySummary.qualityRepair`로 노출한다. A의 succeeded만으로 전체 흐름 완료를 판단하지 말고
 reevaluationId가 있으면 B의 종료 상태까지 조회한다. 새로운 DDL은 필요 없다.
 재평가의 점수/판정 개선은 보장하지 않으며, 종료 후 진행 허용 여부는 기존 Validation gate를 따른다.
@@ -172,3 +180,13 @@ envs/.env를 프로세스에 로드한다. 신규 그룹과 평가 결과를 삭
 Event별 입력·SSE·생성 그룹·평가 API 응답·DB 원본 result_payload·factCheck 항목을 보존한다.
 DB와 LLM은 실제 연결을 사용하며 외부 프런트엔드 callback만 생략한다. 자연 생성 결과에
 EXTERNAL_FACT_REQUIRED가 없으면 factCheck 목록은 정상적으로 비어 있을 수 있다.
+
+
+## 고수준 실행 로그
+
+품질 평가 operation의 진행 이벤트 `payload.executionLog`에 Planning → 계획 비교 → 선택 → Self-Correction →
+구조/근거 검증 → 실제 반영 → 재평가 → 전후 비교를 기록한다. 서버 로그는 `[AGENT_EXECUTION]`로 필터링한다.
+`comparison`은 점수 개선/동일/하락, 새로운 위반, 검토 필요 여부를 제공한다. 저장 후 재평가 실패 시에는
+수정 내용이 유지되며 `qualityRepair.state=applied`와 operation 실패 상태를 함께 확인한다.
+원본 A의 평가 결과는 변경하지 않는다. 두 계획 비교는 ToT/시뮬레이션 실행으로 표시하지 않는다.
+전체 기능의 로그 계약은 [고수준 실행 로그](11_AGENT_EXECUTION_LOG.md)를 참고한다.

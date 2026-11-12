@@ -14,7 +14,12 @@ from apps.agents.scenario_group_agent.persistence.scenario_group_operation_servi
 from apps.agents.scenario_group_agent.persistence.scenario_quality_repair_service import ScenarioQualityRepairService
 from apps.agents.scenario_group_agent.persistence.scenario_service import ScenarioService
 from apps.agents.scenario_group_agent.prompts.scenario_quality_evaluation import summarize
-from apps.agents.scenario_group_agent.prompts.scenario_quality_repair import QualityRepairPlan, QualityRepairReview
+from apps.agents.scenario_group_agent.prompts.scenario_quality_repair import (
+    QualityRepairPlan,
+    QualityRepairReview,
+    QualityRepairStrategies,
+    QualityRepairStrategyComparison,
+)
 from apps.common.exceptions.custom import MIBaseError
 from apps.persistence.scenario_group.models import MiScenarioGroupModel
 from apps.persistence.scenario_group_operation.models import MiScenarioGroupOperationModel
@@ -115,12 +120,57 @@ def plan(path="/group/summary", value="공급 회복과 수요 증가에 따른 
     )
 
 
+def strategies():
+    return QualityRepairStrategies.model_validate(
+        {
+            "candidates": [
+                {
+                    "candidateId": key,
+                    "objective": objective,
+                    "targets": [{"judgeId": "J-11", "violationIndex": 0, "path": "/group/summary"}],
+                    "steps": [step],
+                    "preservationNotes": "기존 Event 근거와 선택값 유지",
+                }
+                for key, objective, step in [
+                    ("A", "요약 완성", "잘린 요약의 문장 완성"),
+                    ("B", "요약 정합화", "시나리오 비교 목적에 맞춰 요약 정리"),
+                ]
+            ],
+        },
+    )
+
+
+def comparison(*, feasible=True):
+    return QualityRepairStrategyComparison.model_validate(
+        {
+            "assessments": [
+                {
+                    "candidateId": key,
+                    "feasible": feasible,
+                    "resolutionScore": score,
+                    "evidenceScore": 5,
+                    "minimalChangeScore": 4,
+                    "reason": "원문 근거를 유지하는 최소 수정",
+                }
+                for key, score in [("A", 5), ("B", 4)]
+            ],
+        },
+    )
+
+
 @pytest.mark.parametrize(("before", "after"), [("WARN", "PASS"), ("FAIL", "WARN"), ("FAIL", "FAIL")])
 def test_repair_once_keeps_two_evaluations_and_signpost_gate(before, after, monkeypatch):
     with repair_sandbox(snapshot()) as db:
         first, _ = db.service.prepare(130, 42, str(uuid4()))
         responses = iter(
-            (judgment(before), plan(), QualityRepairReview(can_proceed=True, reason="근거 보존"), judgment(after)),
+            (
+                judgment(before),
+                strategies(),
+                comparison(),
+                plan(),
+                QualityRepairReview(can_proceed=True, reason="근거 보존"),
+                judgment(after),
+            ),
         )
         calls = []
 
@@ -149,7 +199,11 @@ def test_repair_once_keeps_two_evaluations_and_signpost_gate(before, after, monk
             assert retry.retry_summary["qualityRepair"]["attempt"] == 1
             assert retry.retry_summary["qualityRepair"]["state"] == "applied"
             assert retry.status == "succeeded"
-        assert len(calls) == 4
+            planning = retry.retry_summary["qualityRepair"]["planning"]
+            assert planning["selectedCandidateId"] == "A"
+            assert len(planning["candidates"]) == 2
+            assert len(planning["comparison"]["assessments"]) == 2
+        assert len(calls) == 6
         assert ScenarioGroupOperationService().get_active(130) is None
         accepted = ScenarioService().accept_validation_change_set(
             scenario_group_id=130,
@@ -159,7 +213,7 @@ def test_repair_once_keeps_two_evaluations_and_signpost_gate(before, after, monk
         assert accepted["validation_operation_id"]
         # A completed child must never rerun the repair or judge.
         asyncio.run(flow.run_quality_evaluation(130, retry.operation_id))
-        assert len(calls) == 4
+        assert len(calls) == 6
 
 
 @pytest.mark.parametrize(
@@ -210,7 +264,10 @@ def test_stale_repair_cannot_overwrite_newer_data():
 def test_review_block_preserves_original_and_records_failed_retry(monkeypatch):
     with repair_sandbox(snapshot()) as db:
         first, _ = db.service.prepare(130, 42, str(uuid4()))
-        responses = iter((judgment(), plan(), QualityRepairReview(can_proceed=False, reason="근거 왜곡")))
+        responses = iter(
+            (judgment(), strategies(), comparison(), plan(),
+             QualityRepairReview(can_proceed=False, reason="근거 왜곡")),
+        )
 
         async def invoke(**kwargs: object):
             return SimpleNamespace(result=next(responses), model="mock", usage=None)
@@ -246,12 +303,19 @@ def test_no_repair_after_signpost():
         )
 
 
-@pytest.mark.parametrize("step", [1, 2, 3])
+@pytest.mark.parametrize("step", [1, 2, 3, 4, 5])
 @pytest.mark.parametrize("cancelled", [False, True])
 def test_retry_error_or_shutdown_never_creates_third_evaluation(step, cancelled, monkeypatch):
     with repair_sandbox(snapshot()) as db:
         first, _ = db.service.prepare(130, 42, str(uuid4()))
-        responses = [judgment(), plan(), QualityRepairReview(can_proceed=True, reason="통과"), judgment("PASS")]
+        responses = [
+            judgment(),
+            strategies(),
+            comparison(),
+            plan(),
+            QualityRepairReview(can_proceed=True, reason="통과"),
+            judgment("PASS"),
+        ]
         calls = 0
 
         async def invoke(**kwargs: object):
@@ -271,14 +335,70 @@ def test_retry_error_or_shutdown_never_creates_third_evaluation(step, cancelled,
         else:
             asyncio.run(flow.run_quality_evaluation(130, first.operation_id))
         with db.factory() as session:
-            rows = session.scalars(select(MiScenarioQualityEvaluationModel).order_by(
-                MiScenarioQualityEvaluationModel.operation_id,
-            )).all()
+            rows = session.scalars(
+                select(MiScenarioQualityEvaluationModel).order_by(
+                    MiScenarioQualityEvaluationModel.operation_id,
+                ),
+            ).all()
             assert len(rows) == 2
             assert rows[0].verdict == "WARN"
             assert rows[1].result_payload is None
             child = session.get(MiScenarioGroupOperationModel, rows[1].operation_id)
             assert child.status == ("interrupted" if cancelled else "failed")
             assert session.get(MiScenarioGroupModel, 130).summary == (
-                plan().changes[0].value if step == 3 else "잘린 요약"
+                plan().changes[0].value if step == 5 else "잘린 요약"
             )
+
+
+def test_infeasible_plans_do_not_modify_original(monkeypatch):
+    with repair_sandbox(snapshot()) as db:
+        first, _ = db.service.prepare(130, 42, str(uuid4()))
+        responses = iter([judgment(), strategies(), comparison(feasible=False)])
+
+        async def invoke(**kwargs: object):
+            return SimpleNamespace(result=next(responses), model="mock", usage=None)
+
+        monkeypatch.setattr(flow, "invoke_llm_structured_output", invoke)
+        asyncio.run(flow.run_quality_evaluation(130, first.operation_id))
+        with db.factory() as session:
+            assert session.get(MiScenarioGroupModel, 130).summary == "잘린 요약"
+            operations = session.scalars(select(MiScenarioGroupOperationModel)).all()
+            child = next(op for op in operations if op.operation_id != first.operation_id)
+            assert child.status == "failed"
+            assert child.retry_summary["qualityRepair"]["planning"]["selectedCandidateId"] is None
+
+
+def test_patch_cannot_ignore_selected_plan(monkeypatch):
+    with repair_sandbox(snapshot()) as db:
+        first, _ = db.service.prepare(130, 42, str(uuid4()))
+        responses = iter([judgment(), strategies(), comparison(), plan(path="/group/description")])
+
+        async def invoke(**kwargs: object):
+            return SimpleNamespace(result=next(responses), model="mock", usage=None)
+
+        monkeypatch.setattr(flow, "invoke_llm_structured_output", invoke)
+        asyncio.run(flow.run_quality_evaluation(130, first.operation_id))
+        with db.factory() as session:
+            assert session.get(MiScenarioGroupModel, 130).description == "수급 경로 비교"
+            assert session.get(MiScenarioGroupModel, 130).summary == "잘린 요약"
+
+
+def test_plan_selection_rejects_duplicate_candidates_and_infeasible_higher_score():
+    from pydantic import ValidationError
+
+    payload = strategies().model_dump()
+    payload["candidates"][1]["candidate_id"] = "A"
+    with pytest.raises(ValidationError):
+        QualityRepairStrategies.model_validate(payload)
+    ranked = comparison()
+    ranked.assessments[0].feasible = False
+    assert ranked.select().candidate_id == "B"
+
+
+def test_failed_scope_validation_blocks_forbidden_planning():
+    from apps.agents.scenario_group_agent.flows.evaluate_scenarios.repair import validate_repair_strategies
+
+    invalid = strategies()
+    invalid.candidates[0].targets[0].path = "/scenarios/0/probability_score"
+    with pytest.raises(ValueError, match="forbidden"):
+        validate_repair_strategies(snapshot(), judgment(), invalid)

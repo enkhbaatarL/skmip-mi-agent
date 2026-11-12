@@ -153,3 +153,19 @@ Agent는 진입점별로 별도 이미지·배포 단위로 운영한다. Agent 
 - 외부 빌드 Dockerfile은 공개 base image와 PyPI를, 내부(`*.internal`) Dockerfile은 내부 base image와 Nexus PyPI를 사용한다.
 - Event Generate Agent endpoint: `POST /events/generations` → `flows/generate_from_query`
 - `devops/k8s/`의 매니페스트는 참고용 예시다. SKPC dev/prod의 Deployment·Service·ConfigMap·Secret은 AMDP에서 관리한다.
+
+
+## Scenario Agent 실행 관측
+
+`scenario_group_agent/utils/execution_log.py`는 요청별 고수준 실행 로그와 호출 시간 기록을 담당한다.
+공통 API 이벤트 계약은 `schemas/api/execution_log.py`에 두고, Event POST 응답과 기존 operation 이벤트 payload가
+사용한다. operation 기록은 기존 `ScenarioGroupOperationService`를 통해 저장한다.
+품질 수정 계획 후보·평가·선택 스키마는 기존 `prompts/scenario_quality_repair.py`,
+실행은 `flows/evaluate_scenarios/flow.py`, 계획 이력 저장은 기존 repair service가 소유한다.
+새 endpoint/DB 테이블/flow 경계는 도입하지 않는다.
+
+
+Scenario 콘솔 표시용 formatter와 길이 제한 해제 context는 `apps/common/logging/console.py`가 소유한다.
+formatter는 `logger_config.py`의 stdout sink에 적용하며 Agent 구조화 로그의 원문 message/payload를 바꾸지 않는다.
+Scenario `logged_run`과 `main.py`의 request middleware가 실행 범위를 지정한다. 다른 Agent의 로그 본문 길이
+정책은 기본값을 유지한다. 상세 계약: `docs/agents/scenario_group_agent/11_AGENT_EXECUTION_LOG.md`.

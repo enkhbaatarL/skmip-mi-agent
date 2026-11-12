@@ -13,7 +13,7 @@ from apps.agents.scenario_group_agent.flows.validate_scenarios.v4_validation imp
     rebase_v4_pressure_bands,
     validate_v4_pressure_aggregate,
 )
-from apps.agents.scenario_group_agent.prompts.scenario_quality_repair import QualityRepairPlan
+from apps.agents.scenario_group_agent.prompts.scenario_quality_repair import QualityRepairPlan, QualityRepairStrategies
 from apps.agents.scenario_group_agent.utils.pressure_band import uses_unique_strong_bands
 from apps.persistence.scenario_group_operation.schema import ValidationCheckPayload
 from apps.persistence.scenario_quality_evaluation.schema import ScenarioQualityJudgment
@@ -137,3 +137,33 @@ def build_repaired_snapshot(  # noqa: C901
         for field in ("global_pressure_band", "baseline_yn", "scenario_role"):
             row[field] = getattr(model, field)
     return candidate, checks
+
+
+def validate_repair_strategies(
+    snapshot: dict[str, Any], judgment: ScenarioQualityJudgment, strategies: QualityRepairStrategies,
+) -> None:
+    """Check plans against the same scope as actual patches before comparing them."""
+    items = {item.judge_id: item for item in judgment.items}
+    for strategy in strategies.candidates:
+        seen = set()
+        for target in strategy.targets:
+            item = items.get(target.judge_id)
+            if item is None or item.verdict == "PASS" or target.violation_index >= len(item.violations):
+                msg = "Plan must reference an existing WARN/FAIL violation"
+                raise ValueError(msg)
+            if not _ALLOWED_PATH.fullmatch(target.path) or target.path in seen:
+                msg = "Plan path is forbidden or duplicated"
+                raise ValueError(msg)
+            seen.add(target.path)
+            issue = item.violations[target.violation_index]
+            tokens = target.path[1:].split("/")
+            if tokens[0] == "scenarios":
+                if snapshot["scenarios"][int(tokens[1])]["scenario_id"] not in issue.scenario_ids:
+                    msg = "Plan targets an unrelated scenario"
+                    raise ValueError(msg)
+            elif not issue.evidence_path.startswith("/group/"):
+                msg = "Group plan requires group-level evidence"
+                raise ValueError(msg)
+            value = snapshot
+            for token in tokens:
+                value = value[int(token)] if isinstance(value, list) else value[token]

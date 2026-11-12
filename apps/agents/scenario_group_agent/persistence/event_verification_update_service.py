@@ -26,6 +26,11 @@ from apps.agents.scenario_group_agent.schemas.api.event_verification_updates imp
     EventVerificationUpdateOut,
 )
 from apps.agents.scenario_group_agent.schemas.api.event_verifications import EventVerificationItem, VerificationAspect
+from apps.agents.scenario_group_agent.utils.execution_log import (
+    execution_event,
+    logged_run,
+    traced_llm_call,
+)
 from apps.common.configs.config import get_settings
 from apps.common.exceptions.custom import MIBaseError
 from apps.common.logging.logger_config import logger
@@ -171,7 +176,16 @@ def _update_reason(
 
 
 class EventVerificationUpdateService:
+    @logged_run("event_update")
     async def update(self, event_id: int, body: EventVerificationUpdateIn) -> EventVerificationUpdateOut:
+        execution_event(
+            "workflow",
+            "저장 근거 확인 → 수정안 생성 → 재검증 → Snapshot 저장·반영 순서로 진행합니다.",
+            status="started",
+            planningMode="fixed_workflow",
+            eventId=event_id,
+            verificationId=str(body.verification_id),
+        )
         started = perf_counter()
         logger.info("[EVENT_VERIFICATION_UPDATE] START | event_id={}", event_id)
         try:
@@ -223,6 +237,18 @@ class EventVerificationUpdateService:
                 ensure_ascii=False,
             ),
         )
+        execution_event(
+            "outcome",
+            response.message,
+            status="skipped" if response.update_status in {"skipped", "unchanged"} else "completed",
+            eventId=event_id,
+            updateStatus=response.update_status,
+            snapshotId=response.mi_event_snapshot_id,
+            changedFields=response.changed_fields,
+            changes=[change.model_dump(mode="json", by_alias=True) for change in response.changes],
+            verificationStatus=response.verification.status,
+            postVerificationStatus=post.status if post else None,
+        )
         return response
 
     async def _update(self, event_id: int, body: EventVerificationUpdateIn) -> EventVerificationUpdateOut:
@@ -245,6 +271,14 @@ class EventVerificationUpdateService:
             raise MIBaseError(ErrorCode.EVENT_VERIFICATION_INVALID)
         evidence.verification.verification_id = body.verification_id
         evidence.verification.expires_at = record.expires_at
+        execution_event(
+            "evidence",
+            "저장된 검증 결과와 검색 근거를 재사용합니다. 새 검색은 실행하지 않습니다.",
+            eventId=event_id,
+            verificationId=str(body.verification_id),
+            sourceUrls=[source.url for source in evidence.sources],
+            rawStatus=evidence.verification.status,
+        )
         verifier = EventVerificationService()
         cfg = get_settings()
         try:
@@ -268,7 +302,14 @@ class EventVerificationUpdateService:
                         "저장된 검증에서 수정할 오류가 확정되지 않았거나 검색 근거가 없어 업데이트하지 않았습니다."
                     )
                     return response
-                result = await invoke_llm_structured_output(
+                execution_event(
+                    "self_correction",
+                    "확인된 오류에 대해 출처가 뒷받침하는 수정안을 생성합니다.",
+                    status="started",
+                    eventId=event_id,
+                )
+                result = await traced_llm_call(
+                    invoke_llm_structured_output,
                     output_schema=EventUpdateProposal,
                     messages=[
                         {"role": "system", "content": EVENT_UPDATE_SYSTEM_PROMPT},
@@ -296,6 +337,12 @@ class EventVerificationUpdateService:
                 if not changes:
                     response.message = "검증된 수정안을 만들지 못해 업데이트하지 않았습니다."
                     return response
+                execution_event(
+                    "validation",
+                    "허용 필드와 인용문을 확인했습니다. 수정된 값을 재검증합니다.",
+                    eventId=event_id,
+                    changedFields=[change.field for change in changes],
+                )
                 candidate = _candidate(context, changes)
                 response.post_verification = await verifier.compare_evidence(
                     candidate,
@@ -314,6 +361,12 @@ class EventVerificationUpdateService:
         except ValidationError as exc:
             raise MIBaseError(ErrorCode.LLM_INVALID_RESPONSE_ERROR, detail="Event 수정안 형식 오류") from exc
         reason = _update_reason(proposal, changes, evidence, checked_at, response.post_verification)
+        execution_event(
+            "application",
+            "수정안이 재검증 기준을 충족하여 Snapshot 저장과 반영을 시작합니다.",
+            status="started",
+            eventId=event_id,
+        )
         applied = await asyncio.to_thread(
             persistence.apply_verification_update,
             event_id,

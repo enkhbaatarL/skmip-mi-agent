@@ -4,6 +4,7 @@ from typing import Annotated
 
 from pydantic import ConfigDict, Field, field_validator
 
+from apps.agents.scenario_group_agent.schemas.api.execution_log import AgentExecutionEvent
 from apps.agents.scenario_group_agent.schemas.base import ApiModel
 
 
@@ -27,5 +28,6 @@ class RecommendedEvent(ApiModel):
 
 
 class EventRecommendationsOut(ApiModel):
+    execution_log: list[AgentExecutionEvent] = Field(default_factory=list)
     items: list[RecommendedEvent] = Field(max_length=2)
     selection_reason: str

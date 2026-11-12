@@ -20,6 +20,12 @@ from apps.agents.scenario_group_agent.schemas.api.event_verifications import (
     EventVerificationsOut,
     VerificationReason,
 )
+from apps.agents.scenario_group_agent.utils.execution_log import (
+    execution_event,
+    logged_run,
+    traced_call,
+    traced_llm_call,
+)
 from apps.common.configs.config import get_settings
 from apps.common.exceptions.custom import MIBaseError
 from apps.common.logging.logger_config import logger
@@ -161,7 +167,16 @@ def public_verification_result(verification: EventVerificationItem) -> EventVeri
 class EventVerificationService:
     """Verify the published Event and persist the exact evidence for subsequent updates."""
 
+    @logged_run("event_verification")
     async def verify(self, event_ids: list[int], actor: str) -> EventVerificationsOut:
+        execution_event(
+            "workflow",
+            "Event별 웹 검색 → 6개 기준 비교 → 판정·근거 저장 순서로 진행합니다.",
+            status="started",
+            planningMode="fixed_workflow",
+            eventIds=event_ids,
+            maxConcurrentEvents=MAX_CONCURRENT_EVENTS,
+        )
         persistence = EventService()
         contexts = await asyncio.to_thread(persistence.prepare_verifications, event_ids)
         by_id = {context.source.mi_event_id: context for context in contexts}
@@ -173,6 +188,7 @@ class EventVerificationService:
         try:
             provider = WebSearchProviderFactory.create_from_settings()
         except Exception:
+            execution_event("search", "검색 서비스를 초기화하지 못해 검증 불가로 처리합니다.", status="warning")
             logger.exception("[EVENT_VERIFICATION] SEARCH_PROVIDER_INIT_FAILED")
             evidence_items = [
                 VerificationEvidence(
@@ -216,6 +232,19 @@ class EventVerificationService:
                 },
             )
             items.append(item)
+        execution_event(
+            "outcome",
+            "검증 결과와 재사용할 검색 근거를 저장했습니다.",
+            results=[
+                {
+                    "eventId": item.mi_event_id,
+                    "verificationId": str(item.verification_id),
+                    "status": item.status,
+                    "reason": item.reason_code,
+                }
+                for item in items
+            ],
+        )
         return EventVerificationsOut(checked_at=checked_at, items=items)
 
     async def _verify_one(
@@ -242,9 +271,18 @@ class EventVerificationService:
         sources: list[VerificationSource],
         checked_at: datetime,
     ) -> EventVerificationItem:
+        execution_event(
+            "comparison",
+            "대상·지역·시점·수치·최신성·출처 귀속을 검색 근거와 비교합니다.",
+            status="started",
+            eventId=event.mi_event_id,
+            sourceUrls=[source.url for source in sources],
+        )
         cfg = get_settings()
-        result = await invoke_llm_structured_output(
+        result = await traced_llm_call(
+            invoke_llm_structured_output,
             output_schema=EventVerificationOutput,
+            call_name=f"event_verification:event:{event.mi_event_id}",
             messages=[
                 {"role": "system", "content": EVENT_VERIFICATION_SYSTEM_PROMPT},
                 {
@@ -266,7 +304,18 @@ class EventVerificationService:
             log_label="event_verification",
         )
         output = EventVerificationOutput.model_validate(result.result)
-        return _verified_item(event, output, sources)
+        verified = _verified_item(event, output, sources)
+        public = public_verification_result(verified)
+        execution_event(
+            "verification",
+            verified.review,
+            eventId=event.mi_event_id,
+            rawStatus=verified.status,
+            statusForDisplay=public.status,
+            reason=public.reason_code,
+            checks=[check.model_dump(mode="json", by_alias=True) for check in verified.checks],
+        )
+        return verified
 
     async def _verify_evidence(
         self,
@@ -292,7 +341,17 @@ class EventVerificationService:
                         event.mi_event_id,
                         round((search_started - started) * 1000),
                     )
-                    response = await provider.search(
+                    execution_event(
+                        "search",
+                        "사건 확인과 후속 변경·정정 근거를 검색합니다.",
+                        status="started",
+                        eventId=event.mi_event_id,
+                        asOf=checked_at.isoformat(),
+                    )
+                    response = await traced_call(
+                        "tool",
+                        f"web_search:event:{event.mi_event_id}",
+                        provider.search,
                         query=f"{event.one_line_summary}: 사건 사실 확인 및 최신 후속 뉴스·정정·변경 검색",
                         end_date=checked_at.date().isoformat(),
                         context=context,
@@ -306,12 +365,31 @@ class EventVerificationService:
                         round((perf_counter() - search_started) * 1000),
                     )
                 if response.get("status") not in {None, "completed"}:
+                    execution_event(
+                        "search",
+                        "검색이 완료되지 않아 사실 여부를 판단하지 않습니다.",
+                        status="warning",
+                        eventId=event.mi_event_id,
+                    )
                     return VerificationEvidence(
                         verification=_warning(event, "search_error", "웹 검색이 완료되지 않아 검증하지 못했습니다."),
                         sources=[],
                     )
                 sources = _search_sources(response)
+                execution_event(
+                    "evidence",
+                    "비교 가능한 검색 근거를 정리했습니다.",
+                    eventId=event.mi_event_id,
+                    sourceCount=len(sources),
+                    sourceUrls=[source.url for source in sources],
+                )
                 if not sources:
+                    execution_event(
+                        "verification",
+                        "비교 가능한 근거가 없어 검증 불가로 처리합니다.",
+                        status="warning",
+                        eventId=event.mi_event_id,
+                    )
                     return VerificationEvidence(
                         verification=_warning(
                             event,
@@ -339,6 +417,13 @@ class EventVerificationService:
         except Exception:
             # External failures are inconclusive, never evidence that the Event is false.
             # CancelledError is intentionally not caught so disconnect/shutdown can cancel work.
+            execution_event(
+                "verification",
+                "외부 호출 실패로 검증을 완료하지 못했습니다. 사실이 거짓이라는 의미는 아닙니다.",
+                status="warning",
+                eventId=event.mi_event_id,
+                failedStage=stage,
+            )
             logger.exception("[EVENT_VERIFICATION] ITEM_FAILED | event_id={} | stage={}", event.mi_event_id, stage)
             if stage == "search":
                 return VerificationEvidence(

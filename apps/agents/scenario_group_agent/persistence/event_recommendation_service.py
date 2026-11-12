@@ -18,6 +18,12 @@ from apps.agents.scenario_group_agent.schemas.api.event_recommendations import (
 )
 from apps.agents.scenario_group_agent.utils.event_recommendation import validate_event_recommendation_output
 from apps.agents.scenario_group_agent.utils.event_search_document import build_event_search_text
+from apps.agents.scenario_group_agent.utils.execution_log import (
+    execution_event,
+    logged_run,
+    traced_call,
+    traced_llm_call,
+)
 from apps.common.configs.config import get_settings
 from apps.common.exceptions.custom import MIBaseError
 from apps.common.logging.logger_config import logger
@@ -44,7 +50,15 @@ def _payload(source: EventSearchSource) -> EventPayload:
 class EventRecommendationService:
     """Local shared-corpus recommendation; caller backend owns user authentication."""
 
+    @logged_run("event_recommendation")
     async def recommend(self, event_ids: list[int]) -> EventRecommendationsOut:
+        execution_event(
+            "workflow",
+            "기준 Event 조회 → 후보 검색 → 관련성·중복 평가 → 추천 선정 순서로 진행합니다.",
+            status="started",
+            planningMode="fixed_workflow",
+            eventIds=event_ids,
+        )
         started = perf_counter()
         service = EventService()
         sources = await asyncio.to_thread(service.load_search_sources, event_ids=event_ids)
@@ -62,7 +76,10 @@ class EventRecommendationService:
             cfg.event_search_model_cache,
         )
         stage_started = perf_counter()
-        candidate_ids = await asyncio.to_thread(
+        candidate_ids = await traced_call(
+            "tool",
+            "event_vector_search",
+            asyncio.to_thread,
             search.search,
             [source_by_id[event_id].detail_analysis for event_id in event_ids],
             event_ids,
@@ -72,7 +89,11 @@ class EventRecommendationService:
             round((perf_counter() - stage_started) * 1000),
         )
         candidate_ids = list(dict.fromkeys(event_id for event_id in candidate_ids if event_id not in source_by_id))
+        execution_event(
+            "retrieval", "벡터 검색 결과에서 기준 Event와 중복 ID를 제외했습니다.", candidateIds=candidate_ids,
+        )
         if not candidate_ids:
+            execution_event("selection", "검색된 후보가 없어 추천을 생략합니다.", status="skipped")
             return EventRecommendationsOut(items=[], selection_reason="검색된 후보 Event가 없습니다.")
         # Vector payload is a snapshot. Only current published, non-deleted DB rows enter the prompt.
         stage_started = perf_counter()
@@ -83,10 +104,20 @@ class EventRecommendationService:
         )
         candidate_by_id = {row.mi_event_id: _payload(row) for row in rows}
         candidates = [candidate_by_id[event_id] for event_id in candidate_ids if event_id in candidate_by_id][:10]
+        execution_event(
+            "candidate_filter",
+            "현재 게시·미삭제 조건을 확인하고 최대 10개 후보를 평가 대상으로 정했습니다.",
+            candidateIds=[candidate.mi_event_id for candidate in candidates],
+        )
         if not candidates:
+            execution_event("selection", "현재 게시 상태인 후보가 없어 추천을 생략합니다.", status="skipped")
             return EventRecommendationsOut(items=[], selection_reason="현재 게시 상태인 후보 Event가 없습니다.")
         stage_started = perf_counter()
-        result = await invoke_llm_structured_output(
+        execution_event(
+            "comparison", "영향 경로·기간 적합성·추가 정보·중복 여부로 추천 조합을 평가합니다.", status="started",
+        )
+        result = await traced_llm_call(
+            invoke_llm_structured_output,
             output_schema=MultiEventRecommendationOutput,
             messages=[
                 {
@@ -140,5 +171,11 @@ class EventRecommendationService:
         logger.info(
             "[EVENT_RECOMMENDATION] TIMING | stage=total | elapsed_ms={}",
             round((perf_counter() - started) * 1000),
+        )
+        execution_event(
+            "selection",
+            output.selection_reason,
+            selected=[item.model_dump(mode="json", by_alias=True) for item in items],
+            evidence=[item.model_dump(mode="json", by_alias=True) for item in output.items],
         )
         return EventRecommendationsOut(items=items, selection_reason=output.selection_reason)

@@ -143,7 +143,10 @@ async def invoke_stage_structured_output[T: BaseModel](
         stage_trace_context = trace_context.model_copy(
             update={"tags": {**trace_context.tags, "stage": stage}},
         )
-    response = await invoke_llm_structured_output(
+    from apps.agents.scenario_group_agent.utils.execution_log import traced_llm_call
+
+    response = await traced_llm_call(
+        invoke_llm_structured_output,
         output_schema=output_schema,
         messages=[
             {"role": "system", "content": system_prompt},

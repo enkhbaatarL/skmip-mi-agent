@@ -19,6 +19,7 @@ from apps.agents.scenario_group_agent.persistence.scenario_group_operation_servi
     ScenarioGroupOperationService,
 )
 from apps.agents.scenario_group_agent.persistence.scenario_group_service import ScenarioGroupService
+from apps.agents.scenario_group_agent.utils.execution_log import execution_event, execution_events, logged_run
 from apps.common.logging.logger_config import logger
 from apps.common.tracing.context import TraceContext, mlflow_trace_context, new_transaction_id
 
@@ -54,6 +55,7 @@ class V4OperationProgressRecorder:
         self.scenario_group_id = scenario_group_id
         self.operation_id = operation_id
         self.trace_id = trace_id
+        self._log_offset = 0
         self._started_phases: set[str] = set()
         self.current_phase: str | None = None
         self._recorded_retries: set[tuple[str, int, str | None, tuple[str, ...]]] = set()
@@ -66,6 +68,14 @@ class V4OperationProgressRecorder:
 
     async def on_node_start(self, node_name: str) -> None:
         phase = _NODE_PHASES.get(node_name)
+        execution_event(
+            "node",
+            f"{node_name} 단계를 시작합니다.",
+            status="started",
+            node=node_name,
+            groupId=self.scenario_group_id,
+            operationId=self.operation_id,
+        )
         if phase is not None:
             await self._ensure_phase_started(phase)
 
@@ -108,6 +118,13 @@ class V4OperationProgressRecorder:
             )
             return
         if error is not None:
+            await self._append(
+                event_type="progress",
+                phase=phase,
+                title=f"{label} 검증을 통과하지 못했습니다",
+                message_markdown=f"{label} 검증 기준을 충족하지 못했습니다.",
+                payload={"validationCode": error_code, "attempt": attempt},
+            )
             return
         title = f"{label}이 완료되었습니다"
         message_markdown = f"{label} 결과가 검증되었습니다."
@@ -119,7 +136,11 @@ class V4OperationProgressRecorder:
             phase=phase,
             title=title,
             message_markdown=message_markdown,
-            payload={"attempt": attempt, "maxAttempts": MAX_STAGE_ATTEMPTS},
+            payload={
+                "attempt": attempt,
+                "maxAttempts": MAX_STAGE_ATTEMPTS,
+                "decision": self._decision_details(prefix, state),
+            },
         )
         section = self._safe_section(prefix, state)
         if section is not None:
@@ -200,7 +221,30 @@ class V4OperationProgressRecorder:
             retry_summary=retry_summary,
         )
 
+    @property
+    def log_offset(self) -> int:
+        return self._log_offset
+
     async def _append(self, **kwargs: Any) -> None:
+        event_type = kwargs.get("event_type")
+        execution_event(
+            "retry" if event_type == "retrying" else str(kwargs.get("phase") or "design"),
+            str(kwargs.get("message_markdown") or kwargs["title"]),
+            status="started"
+            if event_type == "phase_started"
+            else "warning"
+            if event_type == "retrying" or (kwargs.get("payload") or {}).get("validationCode")
+            else "completed",
+            groupId=self.scenario_group_id,
+            operationId=self.operation_id,
+            eventType=event_type,
+            context=kwargs.get("payload") or {},
+        )
+        events = execution_events()
+        kwargs["payload"] = {
+            **(kwargs.get("payload") or {}),
+            "executionLog": [event.model_dump(mode="json", by_alias=True) for event in events[self._log_offset :]],
+        }
         await asyncio.to_thread(
             ScenarioGroupOperationService().append_event,
             self.scenario_group_id,
@@ -208,6 +252,41 @@ class V4OperationProgressRecorder:
             mlflow_trace_id=self.trace_id,
             **kwargs,
         )
+        self._log_offset = len(events)
+
+    @staticmethod
+    def _decision_details(prefix: str, state: V4MultiEventGenerationState) -> dict[str, Any]:
+        """Expose existing validated explanations and references, without generating new reasoning."""
+        if prefix in {"analysis", "interaction"}:
+            result = getattr(state, "analysis_draft", None)
+            data = result.model_dump(mode="json", by_alias=True) if result else {}
+            return {
+                "factCount": len(data.get("eventFacts", [])),
+                "forecastClaimCount": len(data.get("forecastClaims", [])),
+                "decisionBasis": data.get("decisionBasis", []),
+                "excludedEvents": data.get("eventExclusions", []),
+                "impactPaths": [
+                    {key: item.get(key) for key in ("impactPathId", "eventId", "sourceFactIds", "mechanism")}
+                    for item in data.get("impactPaths", [])
+                ],
+                "interactions": data.get("interactions", []),
+                "validationWarnings": data.get("validationWarnings", []),
+            }
+        result = getattr(state, "dimension_draft" if prefix == "dimension" else "finalized_result", None)
+        data = result.model_dump(mode="json", by_alias=True) if result else {}
+        return {
+            "dimensions": [
+                {
+                    key: item.get(key)
+                    for key in ("dimensionId", "label", "rationale", "sourceImpactPathIds", "sourceUncertaintyIds")
+                }
+                for item in data.get("dimensionDefinitions", [])
+            ],
+            "excludedDimensions": data.get("excludedDimensions", []),
+            "scenarioCount": len(data.get("scenarios", [])),
+            "excludedScenarios": data.get("excludedScenarios", []),
+            "validationWarnings": data.get("validationWarnings", []),
+        }
 
     @staticmethod
     def _safe_section(prefix: str, state: V4MultiEventGenerationState) -> dict[str, Any] | None:
@@ -248,6 +327,7 @@ class V4OperationProgressRecorder:
         return f"{V4OperationProgressRecorder._phase_label(phase)}을 진행하고 있습니다."
 
 
+@logged_run("scenario_design", operation_arg=1)
 async def run_v4_create_operation(prepared: dict[str, Any], operation_id: str) -> None:
     group = prepared["scenario_group"]
     scenario_group_id = int(group.scenario_group_id)
@@ -263,6 +343,14 @@ async def run_v4_create_operation(prepared: dict[str, Any], operation_id: str) -
         api_identifier=API_IDENTIFIER_CREATE_SCENARIOS,
         session_id=str(scenario_group_id),
         tags={"api_version": "v4", "operation_id": operation_id},
+    )
+    execution_event(
+        "workflow",
+        "Event 영향·상호작용 분석 → Dimension 설계 → 시나리오 합성 → 검증·저장 순서로 진행합니다.",
+        status="started",
+        planningMode="fixed_workflow",
+        groupId=scenario_group_id,
+        operationId=operation_id,
     )
     recorder = V4OperationProgressRecorder(scenario_group_id, operation_id, trace_id)
     try:
@@ -317,6 +405,12 @@ async def run_v4_create_operation(prepared: dict[str, Any], operation_id: str) -
         presentation.setdefault("generationDiagnostics", {})["additionalDimensionGeneration"] = (
             AdditionalDimensionGeneration.model_validate(generation).model_dump(mode="json", by_alias=True)
         )
+        execution_event(
+            "outcome",
+            "검증된 시나리오를 저장했습니다.",
+            groupId=scenario_group_id,
+            scenarioCount=len(output.data.table.rows),
+        )
         await asyncio.to_thread(
             service.append_event,
             scenario_group_id,
@@ -325,7 +419,12 @@ async def run_v4_create_operation(prepared: dict[str, Any], operation_id: str) -
             phase="persistence",
             title="시나리오 그룹 생성이 완료되었습니다",
             message_markdown=f"{len(output.data.table.rows)}개 Scenario를 생성했습니다.",
-            payload={"status": "succeeded"},
+            payload={
+                "status": "succeeded",
+                "executionLog": [
+                    event.model_dump(mode="json", by_alias=True) for event in execution_events()[recorder.log_offset :]
+                ],
+            },
             status="succeeded",
             presentation_snapshot=presentation,
             mlflow_trace_id=trace_id,
@@ -359,6 +458,7 @@ async def run_v4_create_operation(prepared: dict[str, Any], operation_id: str) -
                     exc,
                 )
     except asyncio.CancelledError:
+        execution_event("outcome", "서버 종료로 시나리오 설계가 중단되었습니다.", status="interrupted")
         await asyncio.shield(
             asyncio.to_thread(
                 service.append_event,
@@ -368,7 +468,13 @@ async def run_v4_create_operation(prepared: dict[str, Any], operation_id: str) -
                 phase=recorder.current_phase or "event_analysis",
                 title="서버 종료로 작업이 중단되었습니다",
                 message_markdown="서버가 종료되어 작업이 중단되었습니다. 자동 재개는 아직 지원하지 않습니다.",
-                payload={"status": "interrupted"},
+                payload={
+                    "status": "interrupted",
+                    "executionLog": [
+                        event.model_dump(mode="json", by_alias=True)
+                        for event in execution_events()[recorder.log_offset :]
+                    ],
+                },
                 status="interrupted",
                 last_error={"code": "SERVER_SHUTDOWN", "message": "Operation producer was interrupted"},
                 mlflow_trace_id=trace_id,
@@ -376,6 +482,7 @@ async def run_v4_create_operation(prepared: dict[str, Any], operation_id: str) -
         )
         raise
     except OperationAlreadyTerminalError:
+        execution_event("outcome", "이미 종료된 작업이므로 실행을 중단합니다.", status="interrupted")
         logger.warning(
             "Scenario Group operation producer stopped because the operation is already terminal | "
             "group_id={} | operation_id={}",
@@ -383,6 +490,7 @@ async def run_v4_create_operation(prepared: dict[str, Any], operation_id: str) -
             operation_id,
         )
     except Exception as exc:
+        execution_event("outcome", "시나리오 설계 실행에 실패했습니다.", status="failed", errorType=type(exc).__name__)
         error_message = str(exc)[:1000]
         logger.error(
             "Scenario Group operation failed | group_id={} | operation_id={} | error={!r}",
@@ -398,7 +506,13 @@ async def run_v4_create_operation(prepared: dict[str, Any], operation_id: str) -
             phase=recorder.current_phase or "event_analysis",
             title="시나리오 그룹 생성에 실패했습니다",
             message_markdown="시나리오 그룹 생성 중 오류가 발생했습니다.",
-            payload={"status": "failed", "errorCode": type(exc).__name__},
+            payload={
+                "status": "failed",
+                "errorCode": type(exc).__name__,
+                "executionLog": [
+                    event.model_dump(mode="json", by_alias=True) for event in execution_events()[recorder.log_offset :]
+                ],
+            },
             status="failed",
             last_error={"code": type(exc).__name__, "message": error_message},
             mlflow_trace_id=trace_id,

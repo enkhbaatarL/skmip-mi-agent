@@ -7,6 +7,7 @@ from uuid import UUID
 from pydantic import ConfigDict, Field, JsonValue, field_validator
 
 from apps.agents.scenario_group_agent.schemas.api.event_verifications import EventVerificationItem
+from apps.agents.scenario_group_agent.schemas.api.execution_log import AgentExecutionEvent
 from apps.agents.scenario_group_agent.schemas.base import ApiModel
 
 
@@ -34,6 +35,7 @@ class EventContentChange(ApiModel):
 
 
 class EventVerificationUpdateOut(ApiModel):
+    execution_log: list[AgentExecutionEvent] = Field(default_factory=list)
     mi_event_id: int
     verification_id: UUID
     checked_at: datetime

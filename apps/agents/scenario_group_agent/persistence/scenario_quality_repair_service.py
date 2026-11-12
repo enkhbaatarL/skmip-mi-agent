@@ -55,7 +55,8 @@ class ScenarioQualityRepairService:
                 return None
             if group is None or group.stage != "scenario_validated":
                 raise MIBaseError(
-                    ErrorCode.SCENARIO_GROUP_OPERATION_CONFLICT, detail="Repair requires pre-Signpost stage",
+                    ErrorCode.SCENARIO_GROUP_OPERATION_CONFLICT,
+                    detail="Repair requires pre-Signpost stage",
                 )
             parent = ScenarioQualityEvaluationRepository(session=session).fetch_by_operation_id(
                 metadata["parentEvaluationId"],
@@ -64,13 +65,39 @@ class ScenarioQualityRepairService:
             if parent is None or snapshot_hash(current) != parent.input_hash:
                 raise MIBaseError(ErrorCode.SCENARIO_VALIDATION_STALE, detail="Evaluation input changed before repair")
             diagnostics = dict(group.generation_diagnostics or {})
-            operation.retry_summary = {"qualityRepair": {
-                **metadata, "state": "generating", "diagnosticsHash": snapshot_hash({"diagnostics": diagnostics}),
-            }}
+            operation.retry_summary = {
+                "qualityRepair": {
+                    **metadata,
+                    "state": "generating",
+                    "diagnosticsHash": snapshot_hash({"diagnostics": diagnostics}),
+                },
+            }
             return {
                 "inputSnapshot": current,
                 "judgment": parent.result_payload,
                 "diagnostics": diagnostics,
+            }
+
+    def record_planning(self, group_id: int, operation_id: str, planning: dict[str, Any]) -> None:
+        with get_sync_session() as session, session.begin():
+            operation = ScenarioGroupOperationRepository(session=session).fetch_by_id(
+                group_id,
+                operation_id,
+                for_update=True,
+            )
+            if operation is None:
+                raise MIBaseError(ErrorCode.ENTITY_NOT_FOUND)
+            if operation.status in TERMINAL_OPERATION_STATUSES:
+                raise OperationAlreadyTerminalError(operation_id, operation.status)
+            metadata = dict((operation.retry_summary or {}).get("qualityRepair") or {})
+            if metadata.get("state") != "generating":
+                raise MIBaseError(ErrorCode.INVALID_REQUEST, detail="Repair planning requires a claimed operation")
+            operation.retry_summary = {
+                **(operation.retry_summary or {}),
+                "qualityRepair": {
+                    **metadata,
+                    "planning": planning,
+                },
             }
 
     def apply(
@@ -103,7 +130,8 @@ class ScenarioQualityRepairService:
             before = ScenarioQualityEvaluationService.build_snapshot(session, group)
             policy_hash = snapshot_hash({"diagnostics": dict(group.generation_diagnostics or {})})
             if (
-                parent is None or snapshot_hash(before) != parent.input_hash
+                parent is None
+                or snapshot_hash(before) != parent.input_hash
                 or metadata.get("diagnosticsHash") != policy_hash
             ):
                 raise MIBaseError(ErrorCode.SCENARIO_VALIDATION_STALE, detail="Evaluation input or policy changed")

@@ -78,6 +78,7 @@ def test_http_contract(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> N
     response = client.post("/events/recommendations", json={"miEventIds": [1, 2]})
     assert response.status_code == 200
     assert response.json() == {
+        "executionLog": [],
         "items": [{"miEventId": 3, "title": "Event 3", "reason": "Relevant"}],
         "selectionReason": "Supply and demand",
     }
@@ -118,6 +119,10 @@ def dependencies(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
 def test_multi_source_excludes_selected_duplicate_and_unpublished(dependencies: SimpleNamespace) -> None:
     result = asyncio.run(service_module.EventRecommendationService().recommend([1, 2]))
     assert [item.mi_event_id for item in result.items] == [3]
+    assert len({event.run_id for event in result.execution_log}) == 1
+    selected = next(event for event in result.execution_log if event.phase == "selection")
+    assert selected.details["selected"][0]["miEventId"] == 3
+    assert any(event.details.get("kind") == "tool" for event in result.execution_log)
     assert dependencies.calls == [[1, 2], [3, 4]]
     prompt = json.loads(dependencies.llm.call_args.kwargs["messages"][1]["content"])
     assert [event["mi_event_id"] for event in prompt["source_events"]] == [1, 2]

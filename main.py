@@ -93,7 +93,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-app.add_middleware(RequestLoggingMiddleware)
+app.add_middleware(RequestLoggingMiddleware, full_payloads=True)
 register_local_openapi_docs(app, INGRESS_PREFIX)
 
 
